@@ -16,7 +16,7 @@ import { PlayerController } from './player';
 import { GrenadeManager } from './throwables';
 import type { AmmoType, DestructibleLike, GameStats, LootKind, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
-import { AMMO_NAME, AMMO_PACK, MELEE, THROWABLES, WEAPONS, applySpread, hitscan, makeShotResult } from './weapons';
+import { AMMO_BOX, AMMO_LOOT_KIND, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan, makeShotResult } from './weapons';
 import { MUZZLE_SCALE } from './weaponmodels';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
@@ -905,12 +905,18 @@ export class Game {
     const gy = this.world.getHeight(gx, gz);
     const held = victim.heldGun();
     if (held) {
-      this.loot.spawn(held.def.id, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5), held.mag, Math.floor(AMMO_PACK[held.def.ammo] / 2));
+      this.loot.spawn(held.def.id, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5), held.mag, 0);
     } else if (victim.melee.def.id === 'knife') {
       this.loot.spawn('knife', gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
     } else {
-      const kind: LootKind = Math.random() < 0.4 ? 'bandage' : 'ammo';
+      const kinds: LootKind[] = ['ammoRifle', 'ammoSmg', 'ammoPistol', 'ammoSniper'];
+      const kind: LootKind = Math.random() < 0.4 ? 'bandage' : (kinds[Math.floor(Math.random() * kinds.length)] as LootKind);
       this.loot.spawn(kind, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
+    }
+    // 弹药储备按类型成包掉落
+    for (const t of ['pistol', 'rifle', 'smg', 'sniper'] as const) {
+      const n = victim.ammo[t];
+      if (n > 0) this.loot.spawn(AMMO_LOOT_KIND[t], gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7), -1, n);
     }
     // 恢复品掉落(成叠, ammo 字段携带数量)
     for (const id of HEAL_ORDER) {
@@ -1088,6 +1094,14 @@ export class Game {
     }
   }
 
+  // 空枪干打提示(节流 1.5s): 报所需弹种
+  private dryToastT = -10;
+  dryFireToast(t: AmmoType): void {
+    if (this.now - this.dryToastT < 1.5) return;
+    this.dryToastT = this.now;
+    this.hud.toast(`没有子弹, 需要${AMMO_NAME[t]}`);
+  }
+
   // 弹药/恢复品/投掷物: 走近自动拾取(玩家受负重限制, bot 不受限)
   applyAutoPickup(c: Character, item: LootItem): boolean {
     if (item.kind === 'frag' || item.kind === 'smoke') {
@@ -1115,39 +1129,25 @@ export class Game {
       }
       return true;
     }
-    if (item.kind === 'ammo') {
-      // 按负重逐种拾取(步枪弹优先), 拿不下的留在地上
-      const content = item.pack ?? AMMO_PACK;
-      let weightLeft = c.isPlayer ? carryCapacity(c.pack) - carryWeight(c) : Infinity;
-      let took = 0;
-      let anyLeft = false;
-      const remain: Partial<Record<AmmoType, number>> = {};
-      for (const t of ['rifle', 'smg', 'pistol', 'sniper'] as const) {
-        const n = content[t] ?? 0;
-        if (n <= 0) continue;
-        const afford = Math.floor((weightLeft + 1e-6) / ROUND_WEIGHT);
-        const take = Math.min(n, afford);
-        if (take > 0) {
-          c.ammo[t] += take;
-          weightLeft -= take * ROUND_WEIGHT;
-          took += take;
-        }
-        if (take < n) {
-          remain[t] = n - take;
-          anyLeft = true;
-        }
-      }
-      if (took <= 0) {
+    // 分类弹药包: 按负重限量拾取, 剩余弹量留地
+    const ammoT = ammoTypeFromLoot(item.kind);
+    if (ammoT) {
+      const n = item.ammo > 0 ? item.ammo : AMMO_BOX[ammoT];
+      const weightLeft = c.isPlayer ? carryCapacity(c.pack) - carryWeight(c) : Infinity;
+      const afford = Math.floor((weightLeft + 1e-6) / ROUND_WEIGHT);
+      const take = Math.min(n, afford);
+      if (take <= 0) {
         if (c.isPlayer) this.toastCapacityFull();
         return false;
       }
-      if (anyLeft) {
-        item.pack = remain;
+      c.ammo[ammoT] += take;
+      if (take < n) {
+        item.ammo = n - take;
       } else {
         this.loot.consume(item);
       }
       if (c.isPlayer) {
-        this.hud.toast(anyLeft ? `拾取部分弹药 (${took} 发)` : '拾取弹药包');
+        this.hud.toast(`拾取${AMMO_NAME[ammoT]}${take < n ? ` (${take} 发)` : ''}`);
         this.audio.pickup();
       }
       return true;
@@ -1238,6 +1238,8 @@ export class Game {
     this.hud.setHP(c.hp);
     this.hud.setHeals(`绷带×${c.heals.bandage}  医疗包×${c.heals.medkit}  饮料×${c.heals.drink}`);
     const gun = c.heldGun();
+    const noAmmo = gun !== null && gun.mag <= 0 && c.ammo[gun.def.ammo] <= 0;
+    this.hud.setNoAmmo(noAmmo);
     if (c.curSlot === 3) {
       this.hud.setWeapon(c.melee.def.name, '—', '', '近战');
     } else if (c.curSlot === 4) {
@@ -1247,7 +1249,7 @@ export class Game {
       this.hud.setWeapon(
         gun.def.name,
         player.reloading ? '--' : String(gun.mag),
-        `/ ${c.ammo[gun.def.ammo]}`,
+        noAmmo ? '无弹' : `/ ${c.ammo[gun.def.ammo]}`,
         player.reloading ? '换弹中…' : gun.def.auto ? '全自动' : '半自动',
       );
     } else {

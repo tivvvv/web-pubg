@@ -1,8 +1,8 @@
-// 战利品: 漂浮旋转发光物; 枪械/护具需按 F 拾取, 弹药/医疗包走近自动拾取
+// 战利品: 漂浮旋转发光物; 枪械/护具/背包需按 F 拾取, 弹药/恢复品走近自动拾取
 import * as THREE from 'three';
 import type { AmmoType, LootKind, WeaponId } from './types';
 import { rand } from './utils';
-import { AMMO_PACK, WEAPONS } from './weapons';
+import { AMMO_BOX, AMMO_CLASS_COLOR, AMMO_LOOT_KIND, WEAPONS } from './weapons';
 import { armorFromLoot, buildHelmetModel, buildVestModel, isArmorKind } from './armor';
 import { buildPackModel, isPackKind, packLevelFromLoot } from './backpack';
 import { buildWeaponModel } from './weaponmodels';
@@ -15,15 +15,15 @@ export interface LootItem {
   baseY: number;
   phase: number;
   mag: number;   // 枪械: 已装弹数(-1 = 非武器)
-  ammo: number;  // 枪械: 附带备弹
-  pack?: Partial<Record<AmmoType, number>>; // 弹药包: 部分拾取后剩余弹量(缺省 = 整包)
+  ammo: number;  // 枪械: 附带备弹; 弹药包: 剩余弹量; 叠放物: 数量; 护具: 耐久
 }
 
-const LOOT_CAP = 150;
+const LOOT_CAP = 175; // 武器+配套弹药配对后总数上升
 
 // 共享几何/材质
 const GEO = {
   ammo: new THREE.BoxGeometry(0.26, 0.18, 0.2),
+  ammoBand: new THREE.BoxGeometry(0.28, 0.07, 0.22),
   medBody: new THREE.BoxGeometry(0.34, 0.12, 0.26),
   crossV: new THREE.BoxGeometry(0.06, 0.03, 0.18),
   crossH: new THREE.BoxGeometry(0.18, 0.03, 0.06),
@@ -32,12 +32,22 @@ const GEO = {
   ring: new THREE.TorusGeometry(0.42, 0.025, 6, 24),
 };
 const MAT = {
-  ammo: new THREE.MeshBasicMaterial({ color: 0x7be06a }),
+  ammoBody: new THREE.MeshBasicMaterial({ color: 0x4a4a42 }),
   medkit: new THREE.MeshBasicMaterial({ color: 0xf2f2f2 }),
   cross: new THREE.MeshBasicMaterial({ color: 0xe33e3e }),
   bandage: new THREE.MeshBasicMaterial({ color: 0xf5f0e2 }),
   drink: new THREE.MeshBasicMaterial({ color: 0x3fc98e }),
 };
+// 弹药色带材质(按枪种配色, 与武器光环同色)
+const BAND_MAT = new Map<AmmoType, THREE.MeshBasicMaterial>();
+function bandMat(t: AmmoType): THREE.MeshBasicMaterial {
+  let m = BAND_MAT.get(t);
+  if (!m) {
+    m = new THREE.MeshBasicMaterial({ color: AMMO_CLASS_COLOR[t] });
+    BAND_MAT.set(t, m);
+  }
+  return m;
+}
 // 每种类型的光环颜色(沿用旧配色编码)
 const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   rifle: new THREE.MeshBasicMaterial({ color: 0xff7a29, transparent: true, opacity: 0.5 }),
@@ -45,7 +55,10 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   sniper: new THREE.MeshBasicMaterial({ color: 0xc05cff, transparent: true, opacity: 0.5 }),
   pistol: new THREE.MeshBasicMaterial({ color: 0xffd24d, transparent: true, opacity: 0.5 }),
   knife: new THREE.MeshBasicMaterial({ color: 0xdfe6ee, transparent: true, opacity: 0.5 }),
-  ammo: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
+  ammoRifle: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
+  ammoSmg: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
+  ammoSniper: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
+  ammoPistol: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
   // 恢复品: 绿色系光环
   bandage: new THREE.MeshBasicMaterial({ color: 0xbfe6b0, transparent: true, opacity: 0.5 }),
   medkit: new THREE.MeshBasicMaterial({ color: 0x6fd88a, transparent: true, opacity: 0.5 }),
@@ -106,8 +119,11 @@ function buildLootMesh(kind: LootKind): THREE.Group {
   } else if (kind === 'drink') {
     // 饮料小罐
     holder.add(new THREE.Mesh(GEO.drinkCan, MAT.drink));
-  } else if (kind === 'ammo') {
-    holder.add(new THREE.Mesh(GEO.ammo, MAT.ammo));
+  } else if (kind === 'ammoRifle' || kind === 'ammoSmg' || kind === 'ammoSniper' || kind === 'ammoPistol') {
+    // 分类弹药盒: 深灰盒体 + 枪种色带
+    const t = kind === 'ammoRifle' ? 'rifle' : kind === 'ammoSmg' ? 'smg' : kind === 'ammoSniper' ? 'sniper' : 'pistol';
+    holder.add(new THREE.Mesh(GEO.ammo, MAT.ammoBody));
+    holder.add(new THREE.Mesh(GEO.ammoBand, bandMat(t)));
   } else {
     holder.add(new THREE.Mesh(GEO.medBody, MAT.medkit));
     const cv = new THREE.Mesh(GEO.crossV, MAT.cross);
@@ -138,7 +154,7 @@ export class LootManager {
     scene.add(this.root);
   }
 
-  // 初始散布 ~122 个: 先摆室内点位(房屋生成时给出), 再野外补齐
+  // 初始散布: 先摆室内点位(房屋生成时给出), 再野外补齐; 武器按比例配一盒匹配弹药
   populate(world: World): void {
     this.clear();
     let count = 0;
@@ -146,17 +162,41 @@ export class LootManager {
     for (const s of world.buildings.lootSpots) {
       if (count >= LOOT_CAP) break;
       if (Math.random() < 0.12) continue; // 少量留空, 避免每栋必刷
-      this.spawn(this.rollKind(s.premium ? 'premium' : 'indoor'), s.x, s.y, s.z);
+      const kind = this.rollKind(s.premium ? 'premium' : 'indoor');
+      this.spawn(kind, s.x, s.y, s.z);
       count++;
+      count += this.pairAmmo(kind, s.x, s.y, s.z, 0.8);
     }
     // 野外散布补齐
-    for (let t = 0; t < 1200 && count < 122; t++) {
+    for (let t = 0; t < 1200 && count < 138; t++) {
       const x = rand(-320, 320);
       const z = rand(-320, 320);
       if (!world.pointFree(x, z, 0.4, WATER_Y + 0.5, 14)) continue;
-      this.spawn(this.rollKind('wild'), x, world.getHeight(x, z), z);
+      const kind = this.rollKind('wild');
+      const y = world.getHeight(x, z);
+      this.spawn(kind, x, y, z);
       count++;
+      count += this.pairAmmo(kind, x, y, z, 0.6);
     }
+  }
+
+  // 地面武器按概率在 1~2m 内配一盒匹配弹药(返回生成数)
+  private pairAmmo(kind: LootKind, x: number, y: number, z: number, chance: number): number {
+    if (!isWeaponKind(kind) || kind === 'knife') return 0;
+    if (Math.random() >= chance) return 0;
+    const a = Math.random() * Math.PI * 2;
+    const d = 0.8 + Math.random() * 1.2;
+    const it = this.spawn(AMMO_LOOT_KIND[WEAPONS[kind].ammo], x + Math.cos(a) * d, y, z + Math.sin(a) * d);
+    return it ? 1 : 0;
+  }
+
+  // 弹药包按类型子掷: 步枪弹/冲锋枪弹偏多
+  private rollAmmo(): LootKind {
+    const r = Math.random();
+    if (r < 0.35) return 'ammoRifle';
+    if (r < 0.65) return 'ammoSmg';
+    if (r < 0.85) return 'ammoPistol';
+    return 'ammoSniper';
   }
 
   private rollKind(table: 'wild' | 'indoor' | 'premium'): LootKind {
@@ -172,10 +212,10 @@ export class LootManager {
       if (r < 0.8) return 'vest3';
       if (r < 0.83) return 'helmet2';
       if (r < 0.86) return 'vest2';
-      if (r < 0.88) return 'ammo';
-      if (r < 0.92) return 'pack2';
-      if (r < 0.95) return 'pack3'; // 三级背包主要在高级房
-      if (r < 0.97) return 'bandage';
+      if (r < 0.9) return this.rollAmmo();
+      if (r < 0.93) return 'pack2';
+      if (r < 0.96) return 'pack3'; // 三级背包主要在高级房
+      if (r < 0.98) return 'bandage';
       if (r < 0.99) return 'drink';
       return 'medkit'; // 高级房才有像样概率
     }
@@ -191,11 +231,11 @@ export class LootManager {
       if (r < 0.67) return 'vest1';
       if (r < 0.69) return 'helmet2';
       if (r < 0.71) return 'vest2';
-      if (r < 0.79) return 'ammo';
-      if (r < 0.85) return 'pack1';
-      if (r < 0.87) return 'pack2';
-      if (r < 0.94) return 'bandage';
-      if (r < 0.98) return 'drink';
+      if (r < 0.83) return this.rollAmmo();
+      if (r < 0.89) return 'pack1';
+      if (r < 0.91) return 'pack2';
+      if (r < 0.97) return 'bandage';
+      if (r < 0.99) return 'drink';
       return 'medkit';
     }
     if (r < 0.08) return 'rifle';
@@ -209,11 +249,11 @@ export class LootManager {
     if (r < 0.56) return 'vest1';
     if (r < 0.58) return 'helmet2';
     if (r < 0.6) return 'vest2';
-    if (r < 0.75) return 'ammo';
-    if (r < 0.8) return 'pack1';
-    if (r < 0.82) return 'pack2';
-    if (r < 0.92) return 'bandage';
-    if (r < 0.97) return 'drink';
+    if (r < 0.78) return this.rollAmmo();
+    if (r < 0.83) return 'pack1';
+    if (r < 0.85) return 'pack2';
+    if (r < 0.94) return 'bandage';
+    if (r < 0.98) return 'drink';
     return 'medkit';
   }
 
@@ -233,13 +273,16 @@ export class LootManager {
       item.kind = kind;
     }
     if (kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol') {
-      const def = WEAPONS[kind];
-      item.mag = mag >= 0 ? mag : def.magSize;
-      item.ammo = ammo > 0 ? ammo : Math.max(1, Math.floor(AMMO_PACK[def.ammo] * 0.6));
+      item.mag = Math.max(0, mag); // 地面武器默认空弹匣; 死亡掉落携带剩余弹匣
+      item.ammo = Math.max(0, ammo);
     } else if (kind === 'frag' || kind === 'smoke') {
       item.mag = -1;
       // 投掷物掉落用 ammo 字段携带堆叠数(死亡掉落时为 >1 的 stack)
       item.ammo = Math.max(1, ammo);
+    } else if (kind === 'ammoRifle' || kind === 'ammoSmg' || kind === 'ammoSniper' || kind === 'ammoPistol') {
+      item.mag = -1;
+      const t = kind === 'ammoRifle' ? 'rifle' : kind === 'ammoSmg' ? 'smg' : kind === 'ammoSniper' ? 'sniper' : 'pistol';
+      item.ammo = ammo > 0 ? ammo : AMMO_BOX[t]; // 弹药包: ammo 字段为剩余弹量
     } else {
       item.mag = -1;
       // 护具用 ammo 字段携带剩余耐久(0 = 满耐久新刷)
@@ -248,7 +291,6 @@ export class LootManager {
     item.active = true;
     item.baseY = groundY + 1.0;
     item.phase = Math.random() * Math.PI * 2;
-    item.pack = undefined; // 弹药包恢复整包(复用池项可能带部分余量)
     item.group.position.set(x, item.baseY, z);
     item.group.visible = true;
     return item;
@@ -324,6 +366,25 @@ export class LootManager {
     let bestD = maxDist * maxDist;
     for (const it of this.items) {
       if (!it.active || !isArmorKind(it.kind)) continue;
+      const dx = it.group.position.x - x;
+      const dy = it.group.position.y - y - 1;
+      const dz = it.group.position.z - z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = it;
+      }
+    }
+    return best;
+  }
+
+  // 最近的匹配类型弹药包(bot 寻弹用)
+  nearestAmmoOfType(x: number, y: number, z: number, maxDist: number, t: AmmoType): LootItem | null {
+    const kind = AMMO_LOOT_KIND[t];
+    let best: LootItem | null = null;
+    let bestD = maxDist * maxDist;
+    for (const it of this.items) {
+      if (!it.active || it.kind !== kind) continue;
       const dx = it.group.position.x - x;
       const dy = it.group.position.y - y - 1;
       const dz = it.group.position.z - z;

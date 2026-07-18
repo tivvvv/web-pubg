@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import type { Character, HitTestResult } from './character';
 import type {
-  AmmoType, GunState, MeleeDef, MeleeId, SurfaceKind, ThrowableId, WeaponDef, WeaponId,
+  AmmoType, GunState, LootKind, MeleeDef, MeleeId, SurfaceKind, ThrowableId, WeaponDef, WeaponId,
 } from './types';
 import type { World, StaticHit } from './world';
 
@@ -40,11 +40,26 @@ export const THROWABLES: Record<ThrowableId, { id: ThrowableId; name: string; ma
   smoke: { id: 'smoke', name: '烟雾弹', max: 5 },
 };
 
-// 弹药箱补给量(每种类型)
-export const AMMO_PACK: Record<AmmoType, number> = { pistol: 16, rifle: 30, smg: 40, sniper: 8 };
-
 export const AMMO_NAME: Record<AmmoType, string> = {
   pistol: '手枪弹', rifle: '步枪弹', smg: '冲锋枪弹', sniper: '狙击弹',
+};
+
+// 地面弹药包(分类型): 每包含量 / loot 类型映射 / 类别配色(与武器光环一致)
+export const AMMO_BOX: Record<AmmoType, number> = { rifle: 30, smg: 40, sniper: 10, pistol: 20 };
+export const AMMO_LOOT_KIND: Record<AmmoType, LootKind> = {
+  rifle: 'ammoRifle', smg: 'ammoSmg', sniper: 'ammoSniper', pistol: 'ammoPistol',
+};
+export function ammoTypeFromLoot(kind: LootKind): AmmoType | null {
+  switch (kind) {
+    case 'ammoRifle': return 'rifle';
+    case 'ammoSmg': return 'smg';
+    case 'ammoSniper': return 'sniper';
+    case 'ammoPistol': return 'pistol';
+    default: return null;
+  }
+}
+export const AMMO_CLASS_COLOR: Record<AmmoType, number> = {
+  rifle: 0xff7a29, smg: 0x37e0d8, sniper: 0xc05cff, pistol: 0xffd24d,
 };
 
 export function makeWeapon(id: WeaponId, mag?: number): GunState {

@@ -1,7 +1,7 @@
 // Bot AI: 游走/拾取 ↔ 交战 状态机; 赤手空拳开局, 优先找枪, 近身用近战
 import * as THREE from 'three';
 import { Character } from './character';
-import type { WeaponId } from './types';
+import type { AmmoType, WeaponId } from './types';
 import { WEAPONS } from './weapons';
 import { WATER_Y } from './world';
 import { isWeaponKind } from './loot';
@@ -132,6 +132,17 @@ export class BotController {
     if (!info) return false;
     const cur = info.kind === 'helmet' ? this.char.helmet : this.char.vest;
     return !cur || cur.level < info.level;
+  }
+
+  // 最优枪空弹匣且无匹配备弹 → 返回所需弹种(bot 寻弹用)
+  private needsAmmoType(): AmmoType | null {
+    const c = this.char;
+    const slot = c.bestGunSlot();
+    if (slot < 0) return null;
+    const g = c.guns[slot];
+    if (!g) return null;
+    const t = g.def.ammo;
+    return g.mag > 0 || c.ammo[t] > 0 ? null : t;
   }
 
   // 附近有活手雷: 反向全速逃离
@@ -428,11 +439,20 @@ export class BotController {
       this.pickWanderPoint(game);
     }
 
-    // 没枪时强烈优先找武器; 枪差时也会捡顺路的; 缺甲时顺路找更好的甲
+    // 没枪时强烈优先找武器; 有枪无弹时强烈优先寻匹配弹药; 枪差时捡顺路的; 缺甲时找更好的甲
     const bestSlot = c.bestGunSlot();
     const tier = bestSlot >= 0 ? (c.guns[bestSlot]?.def.tier ?? 0) : 0;
     let gearFound = false;
-    if (!outside && tier < 3) {
+    const needT = this.needsAmmoType();
+    if (!outside && needT) {
+      const ai = game.loot.nearestAmmoOfType(c.pos.x, c.pos.y, c.pos.z, 45, needT);
+      if (ai) {
+        this.moveTarget.copy(ai.group.position);
+        this.hasMoveTarget = true;
+        gearFound = true;
+      }
+    }
+    if (!outside && !gearFound && tier < 3) {
       const item = game.loot.nearestWeapon(c.pos.x, c.pos.y, c.pos.z, tier === 0 ? 50 : 16);
       if (item) {
         const k = item.kind;

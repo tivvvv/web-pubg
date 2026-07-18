@@ -138,6 +138,12 @@ export class Hud {
     this.fireMode.textContent = mode;
   }
 
+  // 弹匣空且无备弹: 弹药计数标红
+  setNoAmmo(on: boolean): void {
+    this.ammoMag.classList.toggle('noammo', on);
+    this.ammoReserve.classList.toggle('noammo', on);
+  }
+
   setSlots(names: (string | null)[], active: number): void {
     for (let i = 0; i < this.slotEls.length; i++) {
       const e = this.slotEls[i] as HTMLElement;

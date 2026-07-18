@@ -144,6 +144,7 @@ export class PlayerController {
       if (wantFire && !this.reloading && this.fireTimer <= 0) {
         if (gun.mag <= 0) {
           game.audio.empty();
+          if (c.ammo[gun.def.ammo] <= 0) game.dryFireToast(gun.def.ammo); // 空枪且无备弹: 报所需弹种
           this.startReload(game);
         } else if (game.playerShot()) {
           this.fireTimer = gun.def.fireInterval;
@@ -208,7 +209,8 @@ export class PlayerController {
       game.hud.setPickupPrompt(`按 F 拾取 ${MELEE.knife.name}`);
     } else if (isWeaponKind(k)) {
       const def = WEAPONS[k];
-      game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${item.mag}+${item.ammo}）`);
+      const state = item.mag > 0 ? `${item.mag} 发` : item.ammo > 0 ? `无弹, 备弹 ${item.ammo}` : '无弹';
+      game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${state}）`);
     } else {
       const info = armorFromLoot(k);
       if (info) game.hud.setPickupPrompt(`按 F 拾取 ${ARMORS[info.kind][info.level].name}`);

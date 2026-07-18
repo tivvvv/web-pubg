@@ -293,6 +293,10 @@ body {
   margin-left: 6px;
 }
 
+#bottom-right .noammo {
+  color: #ff6a5e;
+}
+
 /* 准星 */
 #crosshair {
   --gap: 10px;
