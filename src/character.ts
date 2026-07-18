@@ -204,6 +204,13 @@ export class Character {
     return m.getWorldPosition(out);
   }
 
+  // 第一人称切换: 隐藏头部+头盔防穿模, 武器锚点上抬靠向视线中心(每帧幂等调用, 零分配)
+  setFirstPerson(fpp: boolean): void {
+    this.parts.head.visible = !fpp;
+    if (this.helmetMesh) this.helmetMesh.visible = !fpp;
+    this.parts.gun.position.set(fpp ? 0.14 : 0.19, fpp ? 1.38 : 1.26, 0.34);
+  }
+
   // 护具外观同步(装备变化时重建挂载, 平时零分配)
   private swapArmor(): void {
     const p = this.parts;

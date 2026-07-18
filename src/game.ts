@@ -41,6 +41,7 @@ export class Game {
   promptItem: LootItem | null = null;   // 当前可拾取武器提示
   promptDoor: Destructible | null = null; // 当前可开/关的门提示(优先于武器当看得更正)
   backpackOpen = false;
+  viewFpp = false;                     // 第一人称(V 切换, 会话内跨对局记忆)
   healT = -1;                            // >0 = 恢复品读条中(剩余秒)
   healKind: HealId | null = null;        // 读条中的恢复品种类
   drinkT = -1;                           // >0 = 饮料 buff 剩余秒(20s/40HP 预算)
@@ -165,6 +166,10 @@ export class Game {
       case 'pickup': this.playerPick(); break;
       case 'slot5': this.selectThrowable(); break;
       case 'heal': this.quickHeal(this.player.char); break;
+      case 'viewmode':
+        this.viewFpp = !this.viewFpp;
+        this.hud.toast(this.viewFpp ? '第一人称' : '第三人称');
+        break;
       case 'wheelUp': this.cycleSlot(-1); break;
       case 'wheelDown': this.cycleSlot(1); break;
       default: break;

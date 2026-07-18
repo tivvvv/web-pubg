@@ -1,4 +1,4 @@
-// 玩家: 第三人称越肩视角 + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力 + 投掷
+// 玩家: 第一/第三人称可切换(V) + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力 + 投掷
 import * as THREE from 'three';
 import { Character } from './character';
 import type { Input } from './input';
@@ -217,6 +217,16 @@ export class PlayerController {
     }
   }
 
+  // 投掷起点: TPP 从胸前出手, FPP 从眼位前方出手(不穿脸)
+  private throwStart(c: Character, out: THREE.Vector3, dir: THREE.Vector3, fpp: boolean): void {
+    if (fpp) {
+      out.set(c.pos.x, c.pos.y + 1.55, c.pos.z).addScaledVector(dir, 0.35);
+    } else {
+      c.chestPos(out);
+      out.addScaledVector(dir, 0.4);
+    }
+  }
+
   // 投掷物: 按住左键蓄力瞄准(轨迹预览), 松开投出; 蓄力 0.8s 达满速
   private updateThrow(dt: number, input: Input, game: Game): boolean {
     const c = this.char;
@@ -229,8 +239,7 @@ export class PlayerController {
       this.holdT += dt;
       const speed = THROW_SPEED * (0.6 + 0.4 * Math.min(1, this.holdT / 0.8));
       this.getViewDir(this.throwDir);
-      c.chestPos(this.throwOrigin);
-      this.throwOrigin.addScaledVector(this.throwDir, 0.4);
+      this.throwStart(c, this.throwOrigin, this.throwDir, game.viewFpp);
       game.grenades.showPreview(game.world, this.throwOrigin, this.throwDir, speed);
       return false;
     }
@@ -240,8 +249,7 @@ export class PlayerController {
       game.grenades.hidePreview();
       const speed = THROW_SPEED * (0.6 + 0.4 * Math.min(1, this.holdT / 0.8));
       this.getViewDir(this.throwDir);
-      c.chestPos(this.throwOrigin);
-      this.throwOrigin.addScaledVector(this.throwDir, 0.4);
+      this.throwStart(c, this.throwOrigin, this.throwDir, game.viewFpp);
       game.throwGrenade(c, c.throwKind, this.throwOrigin, this.throwDir, speed);
       c.throwables[c.throwKind]--;
       c.swingT = 1; // 挥臂动作
@@ -283,52 +291,67 @@ export class PlayerController {
   private updateCamera(dt: number, game: Game): void {
     const c = this.char;
     const dir = this.getViewDir(this.viewDir);
-    this.pivot.set(c.pos.x, c.pos.y + 1.58, c.pos.z);
-
     const gun = c.heldGun();
     const zoom = this.aiming && gun ? gun.def.zoom : 1;
-    const targetDist = this.aiming ? (gun?.def === WEAPONS.sniper ? 1.5 : 1.9) : 3.4;
-    const shoulder = this.aiming ? 0.55 : 0.5;
+    const fpp = game.viewFpp;
+    c.setFirstPerson(fpp);
 
-    // 期望机位
-    this.camDir.copy(dir).multiplyScalar(-1);
-    this.camTarget.copy(this.pivot).addScaledVector(this.camDir, targetDist);
-    // 肩部偏移(右 = cross(dir, up) 的水平分量)
-    const rx = -dir.z;
-    const rz = dir.x;
-    const rl = Math.hypot(rx, rz) || 1;
-    this.camTarget.x += (rx / rl) * shoulder;
-    this.camTarget.z += (rz / rl) * shoulder;
-    this.camTarget.y += 0.22;
-
-    // 相机防穿: 从 pivot 向期望机位做射线
-    this.camDir.subVectors(this.camTarget, this.pivot);
-    const wantLen = this.camDir.length();
-    if (wantLen > 0.001) {
-      this.camDir.divideScalar(wantLen);
-      let allowed = wantLen;
-      const tTerr = game.world.raycastTerrain(this.pivot, this.camDir, wantLen);
-      if (tTerr < allowed) allowed = tTerr;
-      if (game.world.raycastStatics(this.pivot, this.camDir, wantLen, game.staticHit)) {
-        if (game.staticHit.t < allowed) allowed = game.staticHit.t;
+    if (fpp) {
+      // 第一人称: 相机即眼位(1.62m), 直接看向, 无防穿拉近(camDist 保留供 TPP 恢复)
+      this.camera.position.set(c.pos.x, c.pos.y + 1.62, c.pos.z);
+      if (game.shakeAmp > 0.002) {
+        this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+        this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+        this.camera.position.z += (Math.random() - 0.5) * game.shakeAmp * 0.22;
       }
-      allowed = Math.max(allowed - 0.24, 0.25);
-      // 被遮挡时快速拉近, 无遮挡缓慢恢复
-      const k = allowed < this.camDist ? 26 : 10;
-      this.camDist = lerp(this.camDist, allowed, Math.min(1, dt * k));
+      this.lookAt.copy(this.camera.position).addScaledVector(dir, 14);
+      this.camera.lookAt(this.lookAt);
+    } else {
+      this.pivot.set(c.pos.x, c.pos.y + 1.58, c.pos.z);
+
+      const targetDist = this.aiming ? (gun?.def === WEAPONS.sniper ? 1.5 : 1.9) : 3.4;
+      const shoulder = this.aiming ? 0.55 : 0.5;
+
+      // 期望机位
+      this.camDir.copy(dir).multiplyScalar(-1);
+      this.camTarget.copy(this.pivot).addScaledVector(this.camDir, targetDist);
+      // 肩部偏移(右 = cross(dir, up) 的水平分量)
+      const rx = -dir.z;
+      const rz = dir.x;
+      const rl = Math.hypot(rx, rz) || 1;
+      this.camTarget.x += (rx / rl) * shoulder;
+      this.camTarget.z += (rz / rl) * shoulder;
+      this.camTarget.y += 0.22;
+
+      // 相机防穿: 从 pivot 向期望机位做射线
+      this.camDir.subVectors(this.camTarget, this.pivot);
+      const wantLen = this.camDir.length();
+      if (wantLen > 0.001) {
+        this.camDir.divideScalar(wantLen);
+        let allowed = wantLen;
+        const tTerr = game.world.raycastTerrain(this.pivot, this.camDir, wantLen);
+        if (tTerr < allowed) allowed = tTerr;
+        if (game.world.raycastStatics(this.pivot, this.camDir, wantLen, game.staticHit)) {
+          if (game.staticHit.t < allowed) allowed = game.staticHit.t;
+        }
+        allowed = Math.max(allowed - 0.24, 0.25);
+        // 被遮挡时快速拉近, 无遮挡缓慢恢复
+        const k = allowed < this.camDist ? 26 : 10;
+        this.camDist = lerp(this.camDist, allowed, Math.min(1, dt * k));
+      }
+      this.camera.position.copy(this.pivot).addScaledVector(this.camDir, this.camDist);
+      // 不钻地
+      const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.28;
+      if (this.camera.position.y < minY) this.camera.position.y = minY;
+      // 爆炸震动
+      if (game.shakeAmp > 0.002) {
+        this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+        this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+        this.camera.position.z += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+      }
+      this.lookAt.copy(this.pivot).addScaledVector(dir, 14);
+      this.camera.lookAt(this.lookAt);
     }
-    this.camera.position.copy(this.pivot).addScaledVector(this.camDir, this.camDist);
-    // 不钻地
-    const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.28;
-    if (this.camera.position.y < minY) this.camera.position.y = minY;
-    // 爆炸震动
-    if (game.shakeAmp > 0.002) {
-      this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-      this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-      this.camera.position.z += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-    }
-    this.lookAt.copy(this.pivot).addScaledVector(dir, 14);
-    this.camera.lookAt(this.lookAt);
 
     // FOV 缩放
     const targetFov = BASE_FOV / zoom;
