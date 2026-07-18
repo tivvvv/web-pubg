@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import type { AabbCollider, DestructibleLike } from './types';
-import type { World } from './world';
+import { riverZAt, type World } from './world';
 
 export interface LootSpot {
   x: number; y: number; z: number;
@@ -31,12 +31,6 @@ const ARCHS: Record<ArchId, { w: [number, number]; d: [number, number]; weight: 
   shop: { w: [5.0, 6.0], d: [4.0, 5.0], weight: 12 },
   gym: { w: [38, 40], d: [23, 25], weight: 0 },
 };
-const ARCH_PICK: ArchId[] = ['cottage1', 'cottage2', 'terrace', 'apartment', 'barn', 'shop'];
-const TOTAL_WEIGHT = ARCH_PICK.reduce((a, k) => a + ARCHS[k].weight, 0);
-const GYM_COUNT = 2;
-const PLOT_TARGET = 30;
-const PLOT_MIN = 20;
-
 // 调色板: 墙面(白/米/浅红砖/淡蓝/灰绿/原色系), 屋顶(红瓦/灰/锈), 统一装饰色
 const WALL_COLORS = [0xe8e4da, 0xd8cbb0, 0xc08a6e, 0xa8bcc8, 0x9aa88e, 0xc9b18a, 0xd3b9a0, 0xc7c3b5];
 const ROOF_COLORS = [0xa05545, 0x8a8f96, 0x8a5f3c, 0x9a6a4f];
@@ -146,19 +140,10 @@ export class Buildings {
     color: PANE_C, transparent: true, opacity: 0.55, depthWrite: false,
   });
 
-  // ── 村庄规划（确定性种子）───────────────────────────────────────────────
+  // ── 区域规划（确定性种子; 城区/竞技场/农场/密林/山地/渔村定点）──────────────
   plan(world: World): void {
     const rng = mulberry32(20240);
     const taken: { minX: number; minZ: number; maxX: number; maxZ: number }[] = [];
-    const centers: { x: number; z: number }[] = [];
-    for (let tries = 0; tries < 320 && centers.length < 7; tries++) {
-      const x = (rng() * 2 - 1) * 245;
-      const z = (rng() * 2 - 1) * 245;
-      const h = world.getHeight(x, z);
-      if (h < 3 || h > 9.5) continue;              // 避水避峰
-      if (centers.some((c) => Math.hypot(c.x - x, c.z - z) < 135)) continue;
-      centers.push({ x, z });
-    }
     // AABB 间净距 clear 米
     const boxOk = (minX: number, minZ: number, maxX: number, maxZ: number, clear: number) => {
       if (minX < -BOUND || maxX > BOUND || minZ < -BOUND || maxZ > BOUND) return false;
@@ -174,6 +159,9 @@ export class Buildings {
       const minX = cx - w / 2 - 2, maxX = cx + w / 2 + 2;
       const minZ = cz - d / 2 - 2, maxZ = cz + d / 2 + 2;
       if (!boxOk(minX, minZ, maxX, maxZ, clear)) return null;
+      // 河道禁建(桥位另算)
+      const rd = Math.abs(cz - riverZAt(cx));
+      if (rd < 15 + d / 2) return null;
       // 平整高度：内区五角均值
       const ix0 = cx - w / 2, ix1 = cx + w / 2, iz0 = cz - d / 2, iz1 = cz + d / 2;
       const hs = [
@@ -186,61 +174,55 @@ export class Buildings {
       if (hs.some((h) => Math.abs(h - flatH) > slopeTol)) return null; // 坡太陡
       return { minX, minZ, maxX, maxZ, flatH, arch, w, d };
     };
-    // 体育馆: 2 座, 靠村中心但要有大片平地
-    let gyms = 0;
-    for (const c of centers) {
-      if (gyms >= GYM_COUNT) break;
-      for (let t = 0; t < 120 && gyms < GYM_COUNT; t++) {
-        const p = footprintAt(c.x + (rng() * 2 - 1) * 22, c.z + (rng() * 2 - 1) * 22, 'gym', 5.5, 12);
-        if (!p) continue;
-        this.plots.push(p);
-        taken.push({ minX: p.minX, minZ: p.minZ, maxX: p.maxX, maxZ: p.maxZ });
-        gyms++;
-      }
-    }
-    // 村庄房屋: 按权重选原型
-    const pickArch = (): ArchId => {
-      let r = rng() * TOTAL_WEIGHT;
-      for (const k of ARCH_PICK) {
-        r -= ARCHS[k].weight;
-        if (r <= 0) return k;
-      }
-      return 'cottage1';
-    };
-    for (const c of centers) {
-      const n = 3 + Math.floor(rng() * 4); // 3..6
-      for (let i = 0; i < n && this.plots.length < PLOT_TARGET; i++) {
-        for (let t = 0; t < 14; t++) {
-          const px = c.x + (rng() * 2 - 1) * 28;
-          const pz = c.z + (rng() * 2 - 1) * 28;
-          const p = footprintAt(px, pz, pickArch(), 4.5, 8);
-          if (!p) continue;
+    const tryPlace = (arch: ArchId, cx: number, cz: number, maxR: number, slopeTol = 4.5, clear = 7): boolean => {
+      for (let t = 0; t < 40; t++) {
+        const a = rng() * Math.PI * 2;
+        const d = rng() * maxR;
+        const p = footprintAt(cx + Math.cos(a) * d, cz + Math.sin(a) * d, arch, slopeTol, clear);
+        if (p) {
           this.plots.push(p);
           taken.push({ minX: p.minX, minZ: p.minZ, maxX: p.maxX, maxZ: p.maxZ });
-          break;
+          return true;
         }
       }
+      return false;
+    };
+
+    // 中央城区 (-60,-20, r~90): 行列式 12 栋 — 三层×2 露台×3 小店×2 其余民居
+    const townArchs: ArchId[] = [
+      'apartment', 'apartment', 'terrace', 'terrace', 'terrace',
+      'shop', 'shop', 'cottage2', 'cottage2', 'cottage1', 'cottage1', 'cottage2',
+    ];
+    for (const arch of townArchs) {
+      // 双街布局: x≈-82 或 x≈-38 两排, z 散开
+      const streetX = rng() < 0.5 ? -82 : -38;
+      tryPlace(arch, streetX + (rng() * 2 - 1) * 14, -20 + (rng() * 2 - 1) * 60, 26, 4.5, 5);
     }
-    // 原型保底: 稀有原型至少各有 N 栋(确保每局都有露台房/三层楼)
-    const MIN_ARCH: [ArchId, number][] = [['apartment', 1], ['terrace', 2], ['shop', 2], ['barn', 1]];
-    for (const [arch, min] of MIN_ARCH) {
-      let have = this.plots.filter((p) => p.arch === arch).length;
-      for (let t = 0; t < 120 && have < min && this.plots.length < PLOT_TARGET + 4; t++) {
-        const c = centers[Math.floor(rng() * centers.length)] as { x: number; z: number };
-        const p = footprintAt(c.x + (rng() * 2 - 1) * 30, c.z + (rng() * 2 - 1) * 30, arch, 4.5, 7);
-        if (!p) continue;
-        this.plots.push(p);
-        taken.push({ minX: p.minX, minZ: p.minZ, maxX: p.maxX, maxZ: p.maxZ });
-        have++;
-      }
-    }
-    // 兜底：不足 PLOT_MIN 栋就随机补撒
-    for (let t = 0; t < 500 && this.plots.length < PLOT_MIN; t++) {
-      const p = footprintAt((rng() * 2 - 1) * 240, (rng() * 2 - 1) * 240, pickArch(), 4.5, 8);
-      if (!p) continue;
-      this.plots.push(p);
-      taken.push({ minX: p.minX, minZ: p.minZ, maxX: p.maxX, maxZ: p.maxZ });
-    }
+
+    // 东部竞技场 (+180,-40): 体育馆地标 + 2 民居
+    tryPlace('gym', 180, -40, 18, 5.5, 13);
+    tryPlace('cottage1', 180 + 30, -40 + 22, 16, 4.5, 8);
+    tryPlace('cottage2', 180 - 28, -40 - 20, 16, 4.5, 8);
+
+    // 南部农场 (-40,+200, r~100): 谷仓×3 + 民居×2
+    tryPlace('barn', -40, 200, 70);
+    tryPlace('barn', -40, 200, 70);
+    tryPlace('barn', -40, 200, 70);
+    tryPlace('cottage1', -40, 200, 70);
+    tryPlace('cottage2', -40, 200, 70);
+
+    // 北境密林 (z<-150): 仅 1 谷仓 + 1 民居
+    tryPlace('barn', 0, -170, 80);
+    tryPlace('cottage1', 30, -180, 80);
+
+    // 西部山地 (-220,+20): 1 民居(狙击高地)
+    tryPlace('cottage1', -220, 20, 50, 6);
+
+    // 东北渔村 (+200,-220): 3~4 民居
+    tryPlace('cottage1', 200, -220, 45, 5);
+    tryPlace('cottage2', 200, -220, 45, 5);
+    tryPlace('cottage1', 200, -220, 45, 5);
+    tryPlace('cottage2', 200, -220, 45, 5);
   }
 
   flattenTerrain(world: World): void {

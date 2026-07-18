@@ -10,6 +10,11 @@ export const WORLD_SIZE = 700;
 export const WORLD_HALF = 350;
 export const WATER_Y = 0.9;
 
+// 河流中心线: z ≈ +80, 正弦蜿蜒 ±22
+export function riverZAt(x: number): number {
+  return 80 + 22 * Math.sin(x * 0.012 + 1.3);
+}
+
 const GRID = 150; // 地形网格分段
 const CELL = WORLD_SIZE / GRID;
 
@@ -47,7 +52,20 @@ export class World {
       const mask = smoothstep(360, 242, d); // 岛屿边缘下沉入海
       const base = fbm(n1, x * 0.0062, z * 0.0062, 4) * 12.5;
       const detail = fbm(n2, x * 0.021, z * 0.021, 2) * 2.2;
-      return (base + detail + 7.0) * mask - 3.4;
+      let h = (base + detail + 7.0) * mask - 3.4;
+      // 西部山地抬升: 滚丘 +8~12m, 平滑融入基础起伏
+      const hd = Math.hypot(x + 220, z - 20);
+      if (hd < 140) {
+        const f = 1 - hd / 140;
+        h += 11 * f * f * (0.65 + 0.7 * (fbm(n2, x * 0.03 + 3, z * 0.03 - 5, 2) * 0.5 + 0.5));
+      }
+      // 河流下切: z≈80 正弦蜿蜒, 河床没入水下(后于抬升, 先于一马平川)
+      const rd = Math.abs(z - riverZAt(x));
+      if (rd < 14) {
+        const t = smoothstep(13, 5, rd); // 0 岸 → 1 河心
+        h = h * (1 - t) + -1.6 * t;
+      }
+      return h;
     };
 
     // 填充高度栅格
@@ -252,8 +270,8 @@ export class World {
     // ---- 房屋村庄(先生成, 树木岩石随后避开) ----
     this.buildings.build(scene, this);
 
-    // ---- 树木(松树 60% + 阔叶 40%, 树干/碰撞体逻辑不变) ----
-    const treeCap = 350;
+    // ---- 树木(松树 60% + 阔叶 40%, 树干/碰撞体逻辑不变; 北境密林加密) ----
+    const treeCap = 470; // 全图 350 + 密林加密 120
     const upY = new THREE.Vector3(0, 1, 0);
     const trunkMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.2, 0.34, 3.4, 6),
@@ -274,22 +292,15 @@ export class World {
     let pineCount = 0;
     let broadCount = 0;
     let treeCount = 0;
-    for (let t = 0; t < 4000 && treeCount < treeCap; t++) {
-      const x = (rng() * 2 - 1) * 330;
-      const z = (rng() * 2 - 1) * 330;
+    const tryTree = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.8 || h > 13 || this.slopeAt(x, z) > 0.6) continue;
-      if (this.inPlot(x, z, 2.5)) continue;
-      let ok = true;
+      if (h < WATER_Y + 0.8 || h > 13 || this.slopeAt(x, z) > 0.6) return false;
+      if (this.inPlot(x, z, 2.5)) return false;
       for (let i = 0; i < placedPts.length; i += 2) {
         const dx = x - (placedPts[i] as number);
         const dz = z - (placedPts[i + 1] as number);
-        if (dx * dx + dz * dz < 8.4) {
-          ok = false;
-          break;
-        }
+        if (dx * dx + dz * dz < 8.4) return false;
       }
-      if (!ok) continue;
       placedPts.push(x, z);
       const s = 0.8 + rng() * 0.55;
       q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
@@ -325,6 +336,14 @@ export class World {
       }
       treeCount++;
       this.addCollider({ kind: 'cyl', x, z, r: 0.42 * s, y0: h - 0.5, y1: h + 3.4 * s, tag: 'tree' });
+      return true;
+    };
+    // 先撒密林加密树(z<-150 带状), 再全图散布
+    for (let t = 0; t < 1600 && treeCount < 130; t++) {
+      tryTree((rng() * 2 - 1) * 320, -160 - rng() * 170);
+    }
+    for (let t = 0; t < 4000 && treeCount < treeCap; t++) {
+      tryTree((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
     trunkMesh.count = treeCount;
     canopyMesh.count = pineCount;
@@ -341,8 +360,8 @@ export class World {
     scene.add(canopyMesh);
     scene.add(broadMesh);
 
-    // ---- 岩石 ----
-    const rockCap = 120;
+    // ---- 岩石(西部山地加密) ----
+    const rockCap = 200; // 全图 120 + 山地加密 80
     const rockMesh = new THREE.InstancedMesh(
       new THREE.IcosahedronGeometry(1, 0),
       new THREE.MeshLambertMaterial({ color: 0x8f8f8b }),
@@ -351,12 +370,10 @@ export class World {
     rockMesh.castShadow = true;
     rockMesh.receiveShadow = true;
     let rockCount = 0;
-    for (let t = 0; t < 2000 && rockCount < rockCap; t++) {
-      const x = (rng() * 2 - 1) * 330;
-      const z = (rng() * 2 - 1) * 330;
+    const tryRock = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.3 || h > 15) continue;
-      if (this.inPlot(x, z, 2.5)) continue;
+      if (h < WATER_Y + 0.3 || h > 15) return false;
+      if (this.inPlot(x, z, 2.5)) return false;
       const s = 0.7 + rng() * 1.7;
       const sy = s * (0.55 + rng() * 0.4);
       vPos.set(x, h + sy * 0.25, z);
@@ -369,14 +386,22 @@ export class World {
       rockMesh.setColorAt(rockCount, canopyC);
       rockCount++;
       this.addCollider({ kind: 'cyl', x, z, r: s * 0.92, y0: h - 1, y1: h + sy * 0.95, tag: 'rock' });
+      return true;
+    };
+    // 山地加密岩
+    for (let t = 0; t < 900 && rockCount < 80; t++) {
+      tryRock(-220 + (rng() * 2 - 1) * 120, 20 + (rng() * 2 - 1) * 120);
+    }
+    for (let t = 0; t < 2000 && rockCount < rockCap; t++) {
+      tryRock((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
     rockMesh.count = rockCount;
     rockMesh.instanceMatrix.needsUpdate = true;
     if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
     scene.add(rockMesh);
 
-    // ---- 灌木丛(无碰撞体: 子弹/移动均可穿过, 供隐蔽判定) ----
-    const bushCap = 300;
+    // ---- 灌木丛(无碰撞体: 子弹/移动均可穿过, 供隐蔽判定; 密林加密) ----
+    const bushCap = 420; // 全图 300 + 密林加密 120
     const bushGeo = new THREE.IcosahedronGeometry(1, 1);
     const BUSH_COLORS = [0x2f5c2a, 0x3f7a33, 0x5c6e2e, 0x8a9438];
     const bushMeshes: THREE.InstancedMesh[] = [];
@@ -391,22 +416,15 @@ export class World {
     }
     const bushPts: number[] = [];
     let bushCount = 0;
-    for (let t = 0; t < bushCap * 8 && bushCount < bushCap; t++) {
-      const x = (rng() * 2 - 1) * 330;
-      const z = (rng() * 2 - 1) * 330;
+    const tryBush = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.5 || h > 13 || this.slopeAt(x, z) > 0.5) continue;
-      if (this.inPlot(x, z, 2.5)) continue;
-      let ok = true;
+      if (h < WATER_Y + 0.5 || h > 13 || this.slopeAt(x, z) > 0.5) return false;
+      if (this.inPlot(x, z, 2.5)) return false;
       for (let i = 0; i < bushPts.length; i += 2) {
         const dx = x - (bushPts[i] as number);
         const dz = z - (bushPts[i + 1] as number);
-        if (dx * dx + dz * dz < 6.2) {
-          ok = false;
-          break;
-        }
+        if (dx * dx + dz * dz < 6.2) return false;
       }
-      if (!ok) continue;
       bushPts.push(x, z);
       const s = 0.6 + rng() * 0.45; // 幅宽 1.2~2.0, 高 0.9~1.4
       const colorIdx = Math.floor(rng() * BUSH_COLORS.length);
@@ -426,12 +444,14 @@ export class World {
       }
       this.bushes.push({ x, z, r: s * 1.5 });
       bushCount++;
+      return true;
+    };
+    // 密林加密灌木(z<-150)
+    for (let t = 0; t < 1200 && bushCount < 130; t++) {
+      tryBush((rng() * 2 - 1) * 320, -160 - rng() * 170);
     }
-    for (const mesh of bushMeshes) {
-      mesh.count = bushCount;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.computeBoundingSphere();
+    for (let t = 0; t < bushCap * 8 && bushCount < bushCap; t++) {
+      tryBush((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
 
     // ---- 草丛(纯装饰: 无碰撞体, 不挡子弹/视线) ----
@@ -439,7 +459,7 @@ export class World {
     const grassGeo = makeGrassGeo();
     const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.addSway(grassMat, 0.06, 0.0, 0.55, true, true);
-    const grassMesh = new THREE.InstancedMesh(grassGeo, grassMat, grassCap);
+    const grassMesh = new THREE.InstancedMesh(grassGeo, grassMat, grassCap + 800);
     grassMesh.receiveShadow = true;
     const cG1 = new THREE.Color(0x5e9440); // 与地形草地同管线(sRGB→线性)
     const cG2 = new THREE.Color(0xa8ad5e);
@@ -475,6 +495,182 @@ export class World {
     if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
     grassMesh.computeBoundingSphere();
     scene.add(grassMesh);
+
+    // 密林下植被加密草(z<-150 带状, 下植被感)
+    let forestGrass = 0;
+    for (let t = 0; t < 5000 && forestGrass < 800; t++) {
+      const x = (rng() * 2 - 1) * 320;
+      const z = -160 - rng() * 170;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.55) continue;
+      if (this.inPlot(x, z, 1.5)) continue;
+      const s = 0.9 + rng() * 0.6;
+      vPos.set(x, h - 0.02, z);
+      vScale.set(s, s, s);
+      q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
+      m4.compose(vPos, q0, vScale);
+      grassMesh.setMatrixAt(grassCount + forestGrass, m4);
+      canopyC.copy(cG1).lerp(cG2, rng() * rng());
+      grassMesh.setColorAt(grassCount + forestGrass, canopyC);
+      forestGrass++;
+    }
+    grassMesh.count = grassCount + forestGrass;
+    grassMesh.instanceMatrix.needsUpdate = true;
+    if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
+
+    // ---- 农田作物行(南部农场, 黄绿短苗, 纯装饰) ----
+    const cropGeo = makeGrassGeo();
+    const cropMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    this.addSway(cropMat, 0.06, 0.0, 0.55, true, true);
+    const cropCap = 1500;
+    const cropMesh = new THREE.InstancedMesh(cropGeo, cropMat, cropCap);
+    cropMesh.receiveShadow = true;
+    const cropC = new THREE.Color();
+    let cropCount = 0;
+    for (let rz = -18; rz <= 18 && cropCount < cropCap; rz += 2.4) {
+      for (let rx = -26; rx <= 26 && cropCount < cropCap; rx += 0.95) {
+        const x = -40 + rx + (rng() * 2 - 1) * 0.2;
+        const z = 195 + rz + (rng() * 2 - 1) * 0.2;
+        const h = this.getHeight(x, z);
+        if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.5) continue;
+        if (this.inPlot(x, z, 1.2)) continue;
+        const s = 0.6 + rng() * 0.3;
+        vPos.set(x, h - 0.02, z);
+        vScale.set(s, s * 1.15, s);
+        q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
+        m4.compose(vPos, q0, vScale);
+        cropMesh.setMatrixAt(cropCount, m4);
+        cropC.setHex(0x8fa540).lerp(new THREE.Color(0xb5b048), rng());
+        cropMesh.setColorAt(cropCount, cropC);
+        cropCount++;
+      }
+    }
+    cropMesh.count = cropCount;
+    cropMesh.instanceMatrix.needsUpdate = true;
+    if (cropMesh.instanceColor) cropMesh.instanceColor.needsUpdate = true;
+    cropMesh.computeBoundingSphere();
+    scene.add(cropMesh);
+
+    // ---- 干草捆(农场掩体, 圆柱碰撞) ----
+    const baleMesh = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(1.05, 1.05, 1.5, 10),
+      new THREE.MeshLambertMaterial({ color: 0xc2a54e }),
+      14,
+    );
+    baleMesh.castShadow = true;
+    baleMesh.receiveShadow = true;
+    let baleCount = 0;
+    for (let t = 0; t < 300 && baleCount < 12; t++) {
+      const x = -40 + (rng() * 2 - 1) * 85;
+      const z = 200 + (rng() * 2 - 1) * 85;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.5) continue;
+      if (this.inPlot(x, z, 1.5)) continue;
+      vPos.set(x, h + 1.02, z);
+      vScale.set(1, 1, 1);
+      q0.setFromEuler(new THREE.Euler(Math.PI / 2, 0, rng() * Math.PI));
+      m4.compose(vPos, q0, vScale);
+      baleMesh.setMatrixAt(baleCount, m4);
+      baleCount++;
+      this.addCollider({ kind: 'cyl', x, z, r: 1.05, y0: h - 0.2, y1: h + 1.4, tag: 'rock' });
+    }
+    baleMesh.count = baleCount;
+    baleMesh.instanceMatrix.needsUpdate = true;
+    scene.add(baleMesh);
+
+    // ---- 渔村小船(搁浅, 装饰+圆碰撞) ----
+    const boatMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshLambertMaterial({ color: 0x7a5c38 }),
+      9,
+    );
+    boatMesh.castShadow = true;
+    let boatCount = 0;
+    for (let t = 0; t < 200 && boatCount < 3; t++) {
+      const x = 200 + (rng() * 2 - 1) * 40;
+      const z = -222 + (rng() * 2 - 1) * 25;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y - 0.1 || h > WATER_Y + 1.2) continue; // 搁浅带
+      if (this.inPlot(x, z, 2)) continue;
+      const rotY = rng() * Math.PI * 2;
+      q0.setFromAxisAngle(upY, rotY);
+      // 船体(拉长) + 翘头
+      vPos.set(x, h + 0.3, z);
+      vScale.set(3.2, 0.62, 1.15);
+      m4.compose(vPos, q0, vScale);
+      boatMesh.setMatrixAt(boatCount * 3, m4);
+      vPos.set(x + Math.sin(rotY) * 1.8, h + 0.48, z + Math.cos(rotY) * 1.8);
+      vScale.set(0.8, 0.5, 0.9);
+      m4.compose(vPos, q0, vScale);
+      boatMesh.setMatrixAt(boatCount * 3 + 1, m4);
+      vPos.set(x, h + 0.62, z);
+      vScale.set(0.5, 0.35, 0.6);
+      m4.compose(vPos, q0, vScale);
+      boatMesh.setMatrixAt(boatCount * 3 + 2, m4);
+      boatCount++;
+      this.addCollider({ kind: 'cyl', x, z, r: 1.7, y0: h - 0.3, y1: h + 0.9, tag: 'rock' });
+    }
+    boatMesh.count = boatCount * 3;
+    boatMesh.instanceMatrix.needsUpdate = true;
+    scene.add(boatMesh);
+
+    // ---- 双桥(木板面+护栏+桥墩, 可走平台) ----
+    this.addBridge(scene, -50);
+    this.addBridge(scene, 170);
+  }
+
+  // 单座桥: 桥面(floor 可走) + 两端踏步 + 侧护栏 + 桥墩, ≤20 AABB
+  private addBridge(scene: THREE.Scene, bx: number): void {
+    const rzC = riverZAt(bx);
+    const z0 = rzC - 14;
+    const z1 = rzC + 14;
+    const hBank0 = this.getHeight(bx, z0 - 3);
+    const hBank1 = this.getHeight(bx, z1 + 3);
+    // 桥面贴近较低岸 +0.5 (高岸下坡自然接上, 低岸 1~2 级踏步)
+    const deckY = Math.min(hBank0, hBank1) + 0.5;
+    const wood = new THREE.MeshLambertMaterial({ color: 0x8a6a42 });
+    const box = (
+      tag: 'wall' | 'floor', x0: number, y0: number, z0_: number, x1: number, y1: number, z1_: number,
+      opts: { collider?: boolean; platform?: boolean } = {},
+    ): THREE.Mesh => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1_ - z0_), wood);
+      mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0_ + z1_) / 2);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      if (opts.collider !== false) {
+        this.addCollider({ kind: 'aabb', minX: x0, minY: y0, minZ: z0_, maxX: x1, maxY: y1, maxZ: z1_, tag });
+      }
+      if (opts.platform) {
+        this.platforms.push({ minX: x0, minZ: z0_, maxX: x1, maxZ: z1_, top: y1 });
+      }
+      return mesh;
+    };
+    // 桥面(可走)
+    box('floor', bx - 2, deckY - 0.24, z0, bx + 2, deckY, z1, { platform: true });
+    // 两端踏步(从桥面降到岸, 每级 ≤0.45)
+    for (const [ze, dir] of [[z0, -1], [z1, 1]] as const) {
+      const bankH = this.getHeight(bx, ze + dir * 3);
+      const drop = deckY - bankH;
+      if (drop > 0.4) {
+        const steps = Math.min(3, Math.ceil(drop / 0.42));
+        for (let i = 0; i < steps; i++) {
+          const top = deckY - ((i + 1) * drop) / (steps + 1);
+          const zc = ze + dir * (0.8 + i * 1.1);
+          box('floor', bx - 2, top - 0.2, zc - 0.6, bx + 2, top, zc + 0.6, { collider: false, platform: true });
+        }
+      }
+    }
+    // 侧护栏(矮碰撞)
+    box('wall', bx - 2.12, deckY, z0, bx - 1.92, deckY + 0.85, z1);
+    box('wall', bx + 1.92, deckY, z0, bx + 2.12, deckY + 0.85, z1);
+    // 桥墩(入水立柱)
+    for (const pz of [z0 + 4.5, z1 - 4.5]) {
+      for (const px of [bx - 1.5, bx + 1.5]) {
+        const bedH = this.getHeight(px, pz);
+        box('wall', px - 0.18, bedH - 0.5, pz - 0.18, px + 0.18, deckY - 0.2, pz + 0.18);
+      }
+    }
   }
 
   // 植被顶点位移摇摆(InstancedMesh 顶点着色器注入, 零 CPU 逐帧开销)

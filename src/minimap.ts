@@ -1,8 +1,18 @@
-// 小地图: 地形底色离屏预渲染 + 圈/玩家/枪声红点
-import { WORLD_HALF, WATER_Y, type World } from './world';
+// 小地图: 地形底色离屏预渲染 + 区域标注(河带/地名) + 圈/玩家/枪声红点
+import { WORLD_HALF, WATER_Y, riverZAt, type World } from './world';
 import type { Zone } from './zone';
 
 const BASE_RES = 150;
+
+// 区域锚点(与 buildings/world 布点一致)
+const REGION_LABELS: { x: number; z: number; label: string }[] = [
+  { x: 0, z: -200, label: '密林' },
+  { x: -60, z: -20, label: '城区' },
+  { x: 180, z: -40, label: '竞技场' },
+  { x: -40, z: 200, label: '农场' },
+  { x: -220, z: 20, label: '山地' },
+  { x: 200, z: -220, label: '渔村' },
+];
 
 export class Minimap {
   private ctx: CanvasRenderingContext2D;
@@ -40,6 +50,27 @@ export class Minimap {
       }
     }
     bctx.putImageData(img, 0, 0);
+    // 河流带(蓝色, 描河道中心线)
+    bctx.strokeStyle = 'rgba(70,130,190,0.85)';
+    bctx.lineWidth = 2.2;
+    bctx.beginPath();
+    for (let px = 0; px <= BASE_RES; px += 3) {
+      const x = (px / BASE_RES) * WORLD_HALF * 2 - WORLD_HALF;
+      const z = riverZAt(x);
+      const py = ((z + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      if (px === 0) bctx.moveTo(px, py);
+      else bctx.lineTo(px, py);
+    }
+    bctx.stroke();
+    // 区域名标注(低透明, 压在最底层)
+    bctx.fillStyle = 'rgba(255,255,255,0.55)';
+    bctx.font = '7px sans-serif';
+    bctx.textAlign = 'center';
+    for (const r of REGION_LABELS) {
+      const px = ((r.x + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      const py = ((r.z + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      bctx.fillText(r.label, px, py);
+    }
     // 房屋地块标记(含 2m 安全边, 画内圈 footprint)
     bctx.fillStyle = 'rgba(122,110,94,0.95)';
     for (const p of world.buildings.plots) {
