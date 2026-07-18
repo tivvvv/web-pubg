@@ -148,10 +148,28 @@ export class AudioSys {
     this.blip(440, 430, 0.07, 0.12, 'sine');
   }
 
-  // 近战挥击(风声)
+  // 近战挥击(风声): 噪声经带通高频→低频快速下扫, 软起音 —— 与枪声的短促爆音区分
   melee(dist: number, pan: number): void {
+    if (!this.ctx || !this.noiseBuf) return;
+    const dst = this.out(pan);
+    if (!dst) return;
     const att = clamp(1.2 / (1 + dist * 0.03), 0.02, 1);
-    this.noiseBurst(0.28 * att, pan, 520, 0.6, 0.13);
+    const t = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.playbackRate.value = 0.7 + Math.random() * 0.15;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 1.1;
+    bp.frequency.setValueAtTime(2600, t);
+    bp.frequency.exponentialRampToValueAtTime(320, t + 0.16);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.34 * att, t + 0.035);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.19);
+    src.connect(bp).connect(g).connect(dst);
+    src.start(t);
+    src.stop(t + 0.24);
   }
 
   // 木质命中(门未被打破)

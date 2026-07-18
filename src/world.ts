@@ -141,8 +141,8 @@ export class World {
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-  transformed.z += sin(position.x * 0.08 + uTime * 1.2) * 0.05
-                 + cos(position.y * 0.06 + uTime * 0.9) * 0.05;`,
+  // 只向下波动(峰值 ≤ 0): 波峰永不越过水线, 避免在略高于水面的浅滩上"涨"出蓝色假水面
+  transformed.z += (sin(position.x * 0.08 + uTime * 1.2) + cos(position.y * 0.06 + uTime * 0.9)) * 0.022 - 0.045;`,
         );
     };
     waterMat.customProgramCacheKey = () => 'water-bob';

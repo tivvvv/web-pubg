@@ -37,10 +37,25 @@ export class Zone {
 
   constructor(scene: THREE.Scene) {
     const geo = new THREE.CylinderGeometry(1, 1, 1, 96, 1, true);
+    // 顶部渐隐 alphaMap: 墙顶硬边会在天上画出一个灰色圆罩(叠加混合+双面两层)
+    const cv = document.createElement('canvas');
+    cv.width = 1;
+    cv.height = 64;
+    const cx = cv.getContext('2d');
+    if (cx) {
+      const gr = cx.createLinearGradient(0, 0, 0, 64);
+      gr.addColorStop(0, '#000000'); // canvas 顶 = 圆柱顶(v=1): 全透明
+      gr.addColorStop(0.25, '#000000');
+      gr.addColorStop(0.5, '#ffffff');
+      gr.addColorStop(1, '#ffffff');
+      cx.fillStyle = gr;
+      cx.fillRect(0, 0, 1, 64);
+    }
+    const fadeTex = new THREE.CanvasTexture(cv);
     const mat = new THREE.MeshBasicMaterial({
       color: 0x3f9fff, transparent: true, opacity: 0.16,
       side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
-      depthWrite: false, fog: false,
+      depthWrite: false, fog: false, alphaMap: fadeTex,
     });
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.frustumCulled = false;
