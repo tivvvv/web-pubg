@@ -748,6 +748,53 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     return g;
   }
 
+  // 载具碰撞: 大圆 vs 静态碰撞体推出, 返回是否发生碰撞(墙/树/岩/桥栏)
+  resolveVehicle(p: THREE.Vector3, r: number): boolean {
+    let hit = false;
+    for (const c of this.cyls) {
+      if (p.y > c.y1 - 0.05) continue;
+      const dx = p.x - c.x;
+      const dz = p.z - c.z;
+      const rr = r + c.r;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= rr * rr) continue;
+      const d = Math.sqrt(d2);
+      if (d < 0.0001) {
+        p.x += rr;
+      } else {
+        p.x = c.x + (dx / d) * rr;
+        p.z = c.z + (dz / d) * rr;
+      }
+      hit = true;
+    }
+    for (const b of this.aabbs) {
+      if (b.off) continue;
+      if (b.tag === 'floor' || b.tag === 'roof') continue;
+      if (p.y >= b.maxY - 0.02 || p.y + 1.4 <= b.minY) continue;
+      const cx = clamp(p.x, b.minX, b.maxX);
+      const cz = clamp(p.z, b.minZ, b.maxZ);
+      const dx = p.x - cx;
+      const dz = p.z - cz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > r * r) continue;
+      hit = true;
+      if (d2 > 0.000001) {
+        const d = Math.sqrt(d2);
+        p.x = cx + (dx / d) * r;
+        p.z = cz + (dz / d) * r;
+      } else {
+        const pushW = Math.min(p.x - b.minX + r, b.maxX - p.x + r);
+        const pushD = Math.min(p.z - b.minZ + r, b.maxZ - p.z + r);
+        if (pushW < pushD) {
+          p.x = p.x - b.minX < b.maxX - p.x ? b.minX - r : b.maxX + r;
+        } else {
+          p.z = p.z - b.minZ < b.maxZ - p.z ? b.minZ - r : b.maxZ + r;
+        }
+      }
+    }
+    return hit;
+  }
+
   // 2D 圆 vs 静态碰撞体推出(仅竖直障碍: 墙/门/窗; 地板屋顶只作站立面不参与推挤)
   resolveCollision(p: THREE.Vector3, r: number): void {
     for (const c of this.cyls) {

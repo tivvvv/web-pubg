@@ -5,7 +5,8 @@ import type { Input } from './input';
 import { isWeaponKind } from './loot';
 import { ARMORS, armorFromLoot } from './armor';
 import { MELEE, WEAPONS } from './weapons';
-import { WATER_Y } from './world';
+import { WATER_Y, WORLD_HALF } from './world';
+import { VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { clamp, lerp } from './utils';
 import type { Game } from './game';
 
@@ -23,6 +24,7 @@ export class PlayerController {
   descent: 'plane' | 'freefall' | 'canopy' | null = null;
   planeS = 0;          // 航线里程(m)
   vy = 0;              // 垂直速度(m/s, 负=下降)
+  driving: Vehicle | null = null; // 驾驶中的载具
 
   private recoilP = 0;
   private fireTimer = 0;
@@ -55,6 +57,7 @@ export class PlayerController {
   update(dt: number, input: Input, game: Game): void {
     const c = this.char;
     if (!c.alive) {
+      if (this.driving) this.exitVehicle(game, false);
       this.updateCamera(dt, game);
       return;
     }
@@ -71,6 +74,16 @@ export class PlayerController {
       this.updateDescent(dt, input, game);
       this.updateCamera(dt, game);
       return;
+    }
+
+    // ---- 驾驶阶段: 载具运动学 + 追逐相机(禁射击/道具) ----
+    if (this.driving) {
+      if (this.driving.dead) {
+        this.exitVehicle(game, false);
+      } else {
+        this.driveVehicle(dt, input, game);
+        return;
+      }
     }
 
     const gun = c.heldGun();
@@ -210,10 +223,18 @@ export class PlayerController {
     const door = game.findDoorInteraction(c.pos.x, c.pos.y, c.pos.z, fx, fz);
     game.promptItem = null;
     game.promptDoor = null;
+    game.promptVehicle = null;
     // 两者同时在场: 看得更正的优先
     if (door && (!item || door.dot >= itemDot)) {
       game.promptDoor = door.d;
       game.hud.setPickupPrompt(door.d.open ? '按 F 关门' : '按 F 开门');
+      return;
+    }
+    // 载具候选: 2.6m 内可驾驶载具
+    const veh = game.vehicles.nearest(c.pos.x, c.pos.z, 2.6);
+    if (veh) {
+      game.promptVehicle = veh;
+      game.hud.setPickupPrompt('按 F 驾驶');
       return;
     }
     if (!item) {
@@ -364,6 +385,160 @@ export class PlayerController {
     // 着陆(groundHeight 含屋顶/桥面)
     const g = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y);
     if (c.pos.y <= g) this.land(game, g);
+  }
+
+  // ---- 载具驾驶 ----
+
+  // 上车(F 近驾驶座)
+  enterVehicle(v: Vehicle, game: Game): void {
+    if (this.driving || this.descent) return;
+    this.driving = v;
+    v.driver = this.char;
+    const c = this.char;
+    c.airPose = 'sit';
+    c.stance = 'stand';
+    c.stanceF = 0;
+    seatWorld(v, c.pos);
+    c.yaw = v.yaw;
+    this.yaw = v.yaw;
+    game.audio.vehicleDoor();
+    game.hud.toast('W/S 油门刹车 · A/D 转向 · Space 手刹 · F 下车');
+  }
+
+  // 下车(F, 需低速)
+  tryExitVehicle(game: Game): void {
+    const v = this.driving;
+    if (!v) return;
+    if (Math.abs(v.speed) > 3) {
+      game.hud.toast('速度太快, 无法下车');
+      return;
+    }
+    this.exitVehicle(game, false);
+  }
+
+  // 落座右侧下车(强制下车也走这里)
+  exitVehicle(game: Game, forced: boolean): void {
+    const v = this.driving;
+    if (!v) return;
+    const c = this.char;
+    const rx = Math.cos(v.yaw);
+    const rz = -Math.sin(v.yaw);
+    c.pos.set(v.pos.x + rx * 2.0, 0, v.pos.z + rz * 2.0);
+    c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, v.pos.y + 1);
+    c.airPose = null;
+    c.stance = 'stand';
+    c.stanceF = 0;
+    c.vy = 0;
+    v.driver = null;
+    this.driving = null;
+    game.audio.engineStop();
+    if (!forced) game.audio.vehicleDoor();
+  }
+
+  // 载具运动学: 油门/刹车/倒车/手刹 + 转向(高速衰减) + 地形跟随 + 碰撞滑动
+  private driveVehicle(dt: number, input: Input, game: Game): void {
+    const v = this.driving as Vehicle;
+    const spec = VEHICLE_SPEC[v.kind];
+    const W = input.keys.has('KeyW');
+    const S = input.keys.has('KeyS');
+    const hb = input.keys.has('Space');
+    // 油门/刹车/倒车
+    if (W) v.speed += spec.accel * dt;
+    else if (S) {
+      if (v.speed > 0.5) v.speed -= spec.brake * dt;
+      else v.speed -= spec.accel * 0.5 * dt;
+    }
+    // 自然阻力 + 滚动摩擦 + 手刹
+    v.speed -= v.speed * 0.4 * dt;
+    if (!W && !S) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 1.0 * dt);
+    if (hb) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 20 * dt);
+    v.speed = clamp(v.speed, -spec.revMax, spec.vmax);
+    // 转向(随速度衰减, 倒车反向)
+    const steerIn = (input.keys.has('KeyA') ? 1 : 0) - (input.keys.has('KeyD') ? 1 : 0);
+    const auth = 1 - Math.min(0.75, (Math.abs(v.speed) / spec.vmax) * 0.75);
+    v.yaw += steerIn * spec.steer * auth * (v.speed >= 0 ? 1 : -1) * dt;
+    // 位移 + 碰撞(圆)
+    v.pos.x += Math.sin(v.yaw) * v.speed * dt;
+    v.pos.z += Math.cos(v.yaw) * v.speed * dt;
+    const hit = game.world.resolveVehicle(v.pos, spec.radius);
+    if (hit) {
+      const impact = Math.abs(v.speed);
+      if (impact > 12) {
+        game.vehicles.damage(v, impact * 6);
+        game.soundAt(v.pos, (d2, p2) => game.audio.vehicleImpact(d2, p2));
+        game.addShakeFrom(v.pos);
+      }
+      v.speed *= 0.55;
+    }
+    v.pos.x = clamp(v.pos.x, -WORLD_HALF + 2, WORLD_HALF - 2);
+    v.pos.z = clamp(v.pos.z, -WORLD_HALF + 2, WORLD_HALF - 2);
+    // 地形跟随(桥面/屋顶可走) + 坡度姿态
+    const gh = game.world.groundHeight(v.pos.x, v.pos.z, v.pos.y + 1);
+    v.pos.y = gh;
+    const sin = Math.sin(v.yaw);
+    const cos = Math.cos(v.yaw);
+    const r = spec.radius;
+    const ghF = game.world.getHeight(v.pos.x + sin * r, v.pos.z + cos * r);
+    const ghB = game.world.getHeight(v.pos.x - sin * r, v.pos.z - cos * r);
+    const ghL = game.world.getHeight(v.pos.x + cos * r, v.pos.z - sin * r);
+    const ghR = game.world.getHeight(v.pos.x - cos * r, v.pos.z + sin * r);
+    const targetPitch = Math.atan2(ghB - ghF, 2 * r);
+    const targetRoll = Math.atan2(ghR - ghL, 2 * r);
+    v.pitch = lerp(v.pitch, clamp(targetPitch, -0.4, 0.4), Math.min(1, dt * 8));
+    v.roll = lerp(v.roll, clamp(targetRoll, -0.4, 0.4), Math.min(1, dt * 8));
+    v.spinWheels(dt, steerIn);
+    // 涉水熄火
+    if (gh < WATER_Y - 0.05) {
+      game.vehicles.stall(v, game);
+      this.driving = null;
+      return;
+    }
+    // 碾压(>6m/s)
+    if (Math.abs(v.speed) > 6) game.runOverCheck(v, this.char);
+    // 角色随座
+    seatWorld(v, this.char.pos);
+    this.char.yaw = v.yaw;
+    this.yaw = v.yaw;
+    this.driveCamera(dt, game, v);
+    game.audio.engineSet(Math.abs(v.speed) / spec.vmax);
+  }
+
+  // 追逐相机(车后上方, 与 TPP 同款防穿)
+  private driveCamera(dt: number, game: Game, v: Vehicle): void {
+    const dirX = Math.sin(v.yaw);
+    const dirZ = Math.cos(v.yaw);
+    const dist = v.kind === 'car' ? 6.2 : 5.0;
+    this.pivot.set(v.pos.x, v.pos.y + 1.4, v.pos.z);
+    this.camTarget.set(v.pos.x - dirX * dist, v.pos.y + 2.4, v.pos.z - dirZ * dist);
+    this.camDir.subVectors(this.camTarget, this.pivot);
+    const len = this.camDir.length();
+    if (len > 0.001) {
+      this.camDir.divideScalar(len);
+      let allowed = len;
+      const tTerr = game.world.raycastTerrain(this.pivot, this.camDir, len);
+      if (tTerr < allowed) allowed = tTerr;
+      if (game.world.raycastStatics(this.pivot, this.camDir, len, game.staticHit)) {
+        allowed = Math.min(allowed, game.staticHit.t);
+      }
+      allowed = Math.max(allowed - 0.25, 0.4);
+      const k = allowed < this.camDist ? 26 : 12;
+      this.camDist = lerp(this.camDist, allowed, Math.min(1, dt * k));
+    }
+    this.camera.position.copy(this.pivot).addScaledVector(this.camDir, this.camDist);
+    const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.3;
+    if (this.camera.position.y < minY) this.camera.position.y = minY;
+    if (game.shakeAmp > 0.002) {
+      this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+      this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+      this.camera.position.z += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+    }
+    this.lookAt.set(v.pos.x + dirX * 6, v.pos.y + 1.2, v.pos.z + dirZ * 6);
+    this.camera.lookAt(this.lookAt);
+    this.fov = lerp(this.fov, BASE_FOV + Math.abs(v.speed) * 0.5, Math.min(1, dt * 6));
+    if (Math.abs(this.fov - this.camera.fov) > 0.05) {
+      this.camera.fov = this.fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   startReload(game: Game): void {

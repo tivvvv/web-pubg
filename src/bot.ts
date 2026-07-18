@@ -73,6 +73,8 @@ export class BotController {
       this.updateDescent(dt, game);
       return;
     }
+    // 闪避驶来载具(便宜版: 侧向急躲)
+    if (this.dodgeVehicle(dt, game)) return;
     this.fireTimer -= dt;
 
     // 换弹(仅枪械, 消耗对应类型弹药)
@@ -212,6 +214,26 @@ export class BotController {
     c.stance = 'stand';
     c.stanceF = 0;
     c.removeCanopy();
+  }
+
+  // 闪避驶来载具: 车速>5 且朝我来(13m 内) → 侧向急躲
+  private dodgeVehicle(dt: number, game: Game): boolean {
+    const c = this.char;
+    for (const v of game.vehicles.list) {
+      if (Math.abs(v.speed) < 5) continue;
+      const dx = c.pos.x - v.pos.x;
+      const dz = c.pos.z - v.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 13) continue;
+      const sign = v.speed >= 0 ? 1 : -1;
+      const hx = Math.sin(v.yaw) * sign;
+      const hz = Math.cos(v.yaw) * sign;
+      if ((dx * hx + dz * hz) / (d || 1) < 0.55) continue; // 不朝我来
+      const side = dx * hz - dz * hx > 0 ? 1 : -1;
+      c.applyMove(hz * side * 4.8, -hx * side * 4.8, dt, game.world);
+      return true;
+    }
+    return false;
   }
 
   // 是否想要地上这件武器

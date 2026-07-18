@@ -887,3 +887,44 @@ body {
 #alt-meter.show {
   display: block;
 }
+
+/* 载具仪表 */
+#vehicle-panel {
+  position: absolute;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  background: rgba(10, 12, 10, 0.55);
+  color: #ffe9c4;
+  font-size: 15px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+#vehicle-panel.show {
+  display: flex;
+}
+
+#vehicle-hp {
+  width: 90px;
+  height: 8px;
+  background: rgba(8, 10, 8, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#vehicle-hp-fill {
+  height: 100%;
+  background: #d8b878;
+}
+
+#vehicle-hint {
+  font-size: 12px;
+  color: #b9c0a4;
+}

@@ -46,6 +46,9 @@ export class Hud {
   private hud = el('hud');
   private pickupPrompt = el('pickup-prompt');
   private altMeter = el('alt-meter');
+  private vehiclePanel = el('vehicle-panel');
+  private vehicleSpeed = el('vehicle-speed');
+  private vehicleHpFill = el('vehicle-hp-fill');
   private healCast = el('heal-cast');
   private healFill = el('heal-fill');
   private healCountsEl = el('heal-counts');
@@ -192,6 +195,17 @@ export class Hud {
     }
     this.altMeter.classList.add('show');
     this.altMeter.textContent = `高度 ${Math.max(0, Math.round(alt))}m · 下降 ${Math.round(Math.abs(vy))} m/s`;
+  }
+
+  // 载具仪表(速度 km/h + 车况条; kmh<0 隐藏)
+  setVehicle(kmh: number, hpFrac: number): void {
+    if (kmh < 0) {
+      this.vehiclePanel.classList.remove('show');
+      return;
+    }
+    this.vehiclePanel.classList.add('show');
+    this.vehicleSpeed.textContent = `${Math.round(kmh)} km/h`;
+    this.vehicleHpFill.style.width = `${Math.round(Math.max(0, Math.min(1, hpFrac)) * 100)}%`;
   }
 
   // frac in [0,1] 显示包扎进度, 其他值隐藏

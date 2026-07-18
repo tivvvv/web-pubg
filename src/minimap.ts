@@ -91,11 +91,18 @@ export class Minimap {
     px: number, pz: number, yaw: number,
     recentShots: readonly { x: number; z: number }[],
     shotCount: number,
+    vehicles: readonly { x: number; z: number; dead: boolean }[],
   ): void {
     const ctx = this.ctx;
     const s = this.size;
     ctx.clearRect(0, 0, s, s);
     ctx.drawImage(this.base, 0, 0, s, s);
+
+    // 载具标记(深灰方块, 残骸变暗)
+    for (const v of vehicles) {
+      ctx.fillStyle = v.dead ? 'rgba(60,60,60,0.8)' : 'rgba(150,150,150,0.9)';
+      ctx.fillRect(this.toMap(v.x) - 2, this.toMap(v.z) - 2, 4, 4);
+    }
 
     // 下一个圈(蓝)
     ctx.strokeStyle = 'rgba(80,150,255,0.95)';

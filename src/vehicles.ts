@@ -1,0 +1,336 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// vehicles.ts — 载具系统: 汽车(吉普)/摩托车 生成/模型/射线/损毁/残骸
+// 驾驶物理在 player.ts(街机运动学); 这里管对象/模型/命中/爆炸熄火
+// ─────────────────────────────────────────────────────────────────────────────
+import * as THREE from 'three';
+import type { World } from './world';
+import type { Character } from './character';
+import type { Game } from './game';
+
+export type VehicleKind = 'car' | 'moto';
+
+export interface VehicleSpec {
+  hp: number;
+  seats: number;
+  radius: number;   // 碰撞圆半径
+  accel: number;
+  vmax: number;
+  steer: number;    // 基础转向速率 rad/s
+  brake: number;
+  revMax: number;
+  half: [number, number, number]; // OBB 半尺寸(宽/高/长)
+  seat: [number, number, number]; // 驾驶座局部偏移
+}
+
+export const VEHICLE_SPEC: Record<VehicleKind, VehicleSpec> = {
+  car: { hp: 800, seats: 4, radius: 1.4, accel: 9.5, vmax: 22, steer: 1.8, brake: 15, revMax: 7, half: [0.85, 0.8, 1.7], seat: [-0.5, 0.95, 0.15] },
+  moto: { hp: 400, seats: 2, radius: 0.9, accel: 12, vmax: 27, steer: 2.5, brake: 17, revMax: 6, half: [0.4, 0.7, 1.05], seat: [0, 0.72, -0.15] },
+};
+
+interface SpawnDef { kind: VehicleKind; x: number; z: number; yaw: number }
+const SPAWNS: SpawnDef[] = [
+  { kind: 'car', x: -52, z: -12, yaw: 0.4 },   // 城区街道
+  { kind: 'car', x: -18, z: 196, yaw: 1.2 },   // 农场
+  { kind: 'car', x: 158, z: -28, yaw: -0.6 },  // 竞技场边
+  { kind: 'car', x: 198, z: -212, yaw: 2.4 },  // 渔村
+  { kind: 'moto', x: -70, z: -32, yaw: 0.9 },  // 城区
+  { kind: 'moto', x: -58, z: 212, yaw: -0.3 }, // 农场
+  { kind: 'moto', x: -52, z: 62, yaw: 1.7 },   // 桥边
+];
+
+const CAR_COLORS = [0x6a7a52, 0x8a4a3a, 0x8a8578, 0x4a5e6e];
+const MOTO_COLORS = [0xa03a30, 0x3a6ea5, 0x555555];
+
+// 驾驶座世界坐标
+export function seatWorld(v: Vehicle, out: THREE.Vector3): THREE.Vector3 {
+  const s = VEHICLE_SPEC[v.kind].seat;
+  const sin = Math.sin(v.yaw);
+  const cos = Math.cos(v.yaw);
+  out.set(v.pos.x + s[0] * cos + s[2] * sin, v.pos.y + s[1], v.pos.z - s[0] * sin + s[2] * cos);
+  return out;
+}
+
+export class Vehicle {
+  speed = 0;             // 有符号速度(倒挡为负)
+  hp: number;
+  driver: Character | null = null;
+  dead = false;          // 熄火/残骸(不可再驾驶)
+  exploded = false;
+  burnT = -1;            // 燃烧计时(2s 后爆炸)
+  yaw: number;
+  pitch = 0;
+  roll = 0;
+  fireT = 0;
+  readonly kind: VehicleKind;
+  readonly pos: THREE.Vector3;
+  readonly group = new THREE.Group();
+  private wheels: THREE.Object3D[] = [];
+  private steerWheels: THREE.Object3D[] = [];
+  private mats: THREE.MeshLambertMaterial[] = [];
+
+  constructor(kind: VehicleKind, pos: THREE.Vector3, yaw0: number) {
+    this.kind = kind;
+    this.pos = pos;
+    this.yaw = yaw0;
+    this.hp = VEHICLE_SPEC[kind].hp;
+    this.buildModel();
+    this.sync();
+  }
+
+  private buildModel(): void {
+    const g = this.group;
+    if (this.kind === 'car') {
+      const bodyC = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)] as number;
+      const body = this.mat(bodyC);
+      const dark = this.mat(0x2e2e2e);
+      const frame = this.mat(0x3a3f35);
+      const add = (geo: THREE.BoxGeometry, m: THREE.MeshLambertMaterial, x: number, y: number, z: number): THREE.Mesh => {
+        const mesh = new THREE.Mesh(geo, m);
+        mesh.position.set(x, y, z);
+        mesh.castShadow = true;
+        g.add(mesh);
+        return mesh;
+      };
+      // 底盘/引擎盖/座舱框架/车顶/防滚架
+      add(new THREE.BoxGeometry(1.6, 0.55, 3.1), body, 0, 0.62, 0);
+      add(new THREE.BoxGeometry(1.5, 0.3, 1.0), body, 0, 0.86, 1.15);
+      for (const [px, pz] of [[-0.72, 0.55], [0.72, 0.55], [-0.72, -0.75], [0.72, -0.75]] as const) {
+        add(new THREE.BoxGeometry(0.09, 0.85, 0.09), frame, px, 1.32, pz);
+      }
+      add(new THREE.BoxGeometry(1.55, 0.09, 1.7), body, 0, 1.78, -0.1);
+      add(new THREE.BoxGeometry(1.4, 0.5, 0.08), frame, 0, 1.25, -0.85);
+      // 座椅暗示
+      add(new THREE.BoxGeometry(1.2, 0.4, 0.9), dark, 0, 0.98, -0.1);
+      // 轮(前可转向)
+      const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 10);
+      for (const [wx, wz, front] of [[-0.82, 1.0, 1], [0.82, 1.0, 1], [-0.82, -1.0, 0], [0.82, -1.0, 0]] as const) {
+        const w = new THREE.Group();
+        w.position.set(wx, 0.34, wz);
+        const tire = new THREE.Mesh(wheelGeo, dark);
+        tire.rotation.z = Math.PI / 2;
+        tire.castShadow = true;
+        w.add(tire);
+        g.add(w);
+        this.wheels.push(w);
+        if (front) this.steerWheels.push(w);
+      }
+    } else {
+      const bodyC = MOTO_COLORS[Math.floor(Math.random() * MOTO_COLORS.length)] as number;
+      const body = this.mat(bodyC);
+      const dark = this.mat(0x222222);
+      const add = (geo: THREE.BoxGeometry, m: THREE.MeshLambertMaterial, x: number, y: number, z: number, rx = 0): THREE.Mesh => {
+        const mesh = new THREE.Mesh(geo, m);
+        mesh.position.set(x, y, z);
+        mesh.rotation.x = rx;
+        mesh.castShadow = true;
+        g.add(mesh);
+        return mesh;
+      };
+      // 车架/油箱/座垫/车把
+      add(new THREE.BoxGeometry(0.16, 0.2, 1.3), body, 0, 0.62, 0.1, -0.12);
+      add(new THREE.BoxGeometry(0.28, 0.22, 0.45), body, 0, 0.72, 0.35);
+      add(new THREE.BoxGeometry(0.26, 0.1, 0.55), dark, 0, 0.72, -0.3);
+      add(new THREE.BoxGeometry(0.55, 0.06, 0.08), dark, 0, 0.95, 0.82);
+      add(new THREE.BoxGeometry(0.07, 0.4, 0.07), dark, -0.2, 0.78, 0.8);
+      add(new THREE.BoxGeometry(0.07, 0.4, 0.07), dark, 0.2, 0.78, 0.8);
+      const wheelGeo = new THREE.CylinderGeometry(0.33, 0.33, 0.14, 10);
+      for (const [wz, front] of [[0.85, 1], [-0.7, 0]] as const) {
+        const w = new THREE.Group();
+        w.position.set(0, 0.33, wz);
+        const tire = new THREE.Mesh(wheelGeo, dark);
+        tire.rotation.z = Math.PI / 2;
+        tire.castShadow = true;
+        w.add(tire);
+        g.add(w);
+        this.wheels.push(w);
+        if (front) this.steerWheels.push(w);
+      }
+    }
+  }
+
+  private mat(color: number): THREE.MeshLambertMaterial {
+    const m = new THREE.MeshLambertMaterial({ color });
+    this.mats.push(m);
+    return m;
+  }
+
+  // 模型位姿同步(位置/朝向/坡度)
+  sync(): void {
+    this.group.position.copy(this.pos);
+    this.group.rotation.set(this.pitch, this.yaw, this.roll, 'YXZ');
+  }
+
+  // 轮自转与前轮转向(视觉)
+  spinWheels(dt: number, steerIn: number): void {
+    const r = 0.34;
+    for (const w of this.wheels) w.rotation.x += (this.speed / r) * dt;
+    for (const w of this.steerWheels) w.rotation.y = steerIn * 0.42;
+  }
+
+  // 烧毁变暗
+  darken(): void {
+    for (const m of this.mats) m.color.setHex(0x1c1c1c);
+  }
+}
+
+export class VehicleManager {
+  readonly list: Vehicle[] = [];
+  private scene: THREE.Scene;
+
+  constructor(scene: THREE.Scene) {
+    this.scene = scene;
+  }
+
+  // 全量重生(对局开始/重开)
+  populate(world: World): void {
+    for (const v of this.list) this.scene.remove(v.group);
+    this.list.length = 0;
+    for (const s of SPAWNS) {
+      const y = world.groundHeight(s.x, s.z, 30);
+      const v = new Vehicle(s.kind, new THREE.Vector3(s.x, y, s.z), s.yaw);
+      this.list.push(v);
+      this.scene.add(v.group);
+    }
+  }
+
+  nearest(x: number, z: number, maxD: number): Vehicle | null {
+    let best: Vehicle | null = null;
+    let bestD = maxD * maxD;
+    for (const v of this.list) {
+      if (v.dead || v.driver) continue;
+      const dx = v.pos.x - x;
+      const dz = v.pos.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  // 射线 vs 载具 OBB(最近命中), 返回载具与 t
+  raycast(o: THREE.Vector3, d: THREE.Vector3, maxT: number): { v: Vehicle; t: number } | null {
+    let best: { v: Vehicle; t: number } | null = null;
+    let bestT = maxT;
+    for (const v of this.list) {
+      const half = VEHICLE_SPEC[v.kind].half;
+      const cy = v.pos.y + 0.72;
+      const cosY = Math.cos(v.yaw);
+      const sinY = Math.sin(v.yaw);
+      const lox0 = o.x - v.pos.x;
+      const loz0 = o.z - v.pos.z;
+      const lox = lox0 * cosY - loz0 * sinY;
+      const loz = lox0 * sinY + loz0 * cosY;
+      const ldx = d.x * cosY - d.z * sinY;
+      const ldz = d.x * sinY + d.z * cosY;
+      const loy = o.y - cy;
+      let tmin = 0;
+      let tmax = bestT;
+      let ok = true;
+      // x
+      if (Math.abs(ldx) < 1e-9) {
+        if (lox < -half[0] || lox > half[0]) ok = false;
+      } else {
+        let t1 = (-half[0] - lox) / ldx;
+        let t2 = (half[0] - lox) / ldx;
+        if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) ok = false;
+      }
+      // y
+      if (ok) {
+        if (Math.abs(d.y) < 1e-9) {
+          if (loy < -0.72 || loy > half[1]) ok = false;
+        } else {
+          let t1 = (-0.72 - loy) / d.y;
+          let t2 = (half[1] - loy) / d.y;
+          if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; }
+          if (t1 > tmin) tmin = t1;
+          if (t2 < tmax) tmax = t2;
+          if (tmin > tmax) ok = false;
+        }
+      }
+      // z
+      if (ok) {
+        if (Math.abs(ldz) < 1e-9) {
+          if (loz < -half[2] || loz > half[2]) ok = false;
+        } else {
+          let t1 = (-half[2] - loz) / ldz;
+          let t2 = (half[2] - loz) / ldz;
+          if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; }
+          if (t1 > tmin) tmin = t1;
+          if (t2 < tmax) tmax = t2;
+          if (tmin > tmax) ok = false;
+        }
+      }
+      if (ok && tmin > 0 && tmin < bestT) {
+        bestT = tmin;
+        best = { v, t: tmin };
+      }
+    }
+    return best;
+  }
+
+  // 掉血: 归零点燃计时, 2s 后爆炸
+  damage(v: Vehicle, dmg: number): void {
+    if (v.dead) return;
+    v.hp -= dmg;
+    if (v.hp <= 0) {
+      v.hp = 0;
+      if (v.burnT < 0) v.burnT = 2;
+    }
+  }
+
+  // 爆炸: 半径伤害 + 残骸变暗 + 静态碰撞 + 强制下车
+  private explode(v: Vehicle, game: Game): void {
+    v.exploded = true;
+    v.dead = true;
+    v.speed = 0;
+    game.effects.explosion(v.pos);
+    game.soundAt(v.pos, (d, p) => game.audio.explosion(d, p));
+    game.addShakeFrom(v.pos);
+    for (const c of game.chars) {
+      if (!c.alive) continue;
+      const d = Math.hypot(c.pos.x - v.pos.x, c.pos.y + 0.9 - v.pos.y, c.pos.z - v.pos.z);
+      if (d > 8) continue;
+      game.damageChar(c, 100 - 85 * (d / 8), false, v.driver, '载具爆炸', true);
+    }
+    v.darken();
+    // 残骸成为静态障碍
+    game.world.addCollider({ kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9, y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock' });
+    if (v.driver) game.forceExitVehicle(v.driver, 55);
+  }
+
+  // 涉水熄火: 死火变暗 + 强制下车
+  stall(v: Vehicle, game: Game): void {
+    if (v.dead) return;
+    v.dead = true;
+    v.speed = 0;
+    v.darken();
+    game.world.addCollider({ kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9, y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock' });
+    game.hud.toast('车辆进水熄火');
+    if (v.driver) game.forceExitVehicle(v.driver, 0);
+  }
+
+  update(dt: number, game: Game): void {
+    for (const v of this.list) {
+      // 燃烧→爆炸
+      if (v.burnT > 0) {
+        v.burnT -= dt;
+        v.fireT -= dt;
+        if (v.fireT <= 0) {
+          v.fireT = 0.22;
+          game.effects.burst(v.pos, 7, 1.0, 0.62, 0.2, 4.2);
+          game.effects.burst(v.pos, 4, 0.3, 0.3, 0.32, 2.4);
+        }
+        if (v.burnT <= 0) {
+          v.burnT = -1;
+          this.explode(v, game);
+        }
+      }
+      v.sync();
+    }
+  }
+}

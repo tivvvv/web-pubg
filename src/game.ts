@@ -51,6 +51,7 @@ import { LootManager, isWeaponKind, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
 import { GrenadeManager } from './throwables';
+import { VEHICLE_SPEC, VehicleManager, type Vehicle } from './vehicles';
 import type { AmmoType, DestructibleLike, GameStats, LootKind, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
 import { AMMO_BOX, AMMO_LOOT_KIND, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan, makeShotResult } from './weapons';
@@ -68,6 +69,7 @@ export class Game {
   readonly zone: Zone;
   readonly loot: LootManager;
   readonly grenades: GrenadeManager;
+  readonly vehicles: VehicleManager;
   readonly hud: Hud;
   readonly audio: AudioSys;
   readonly input: Input;
@@ -77,6 +79,7 @@ export class Game {
 
   promptItem: LootItem | null = null;   // 当前可拾取武器提示
   promptDoor: Destructible | null = null; // 当前可开/关的门提示(优先于武器当看得更正)
+  promptVehicle: Vehicle | null = null;   // 当前可驾驶载具提示
   backpackOpen = false;
   viewFpp = false;                     // 第一人称(V 切换, 会话内跨对局记忆)
   healT = -1;                            // >0 = 恢复品读条中(剩余秒)
@@ -108,6 +111,7 @@ export class Game {
   private hudSlotsKey = '';
   private hudArmorKey = '';
   private shotDots: { x: number; z: number }[] = [];
+  private mapVehicles: { x: number; z: number; dead: boolean }[] = [];
 
   private shotRes = makeShotResult();
   private tmpDir = new THREE.Vector3();
@@ -166,6 +170,7 @@ export class Game {
     this.zone = new Zone(this.scene);
     this.loot = new LootManager(this.scene);
     this.grenades = new GrenadeManager(this.scene);
+    this.vehicles = new VehicleManager(this.scene);
     this.audio = new AudioSys();
     this.hud = new Hud();
     this.minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, this.world);
@@ -247,7 +252,11 @@ export class Game {
       case 'slot2': this.player.switchSlot(1, this); break;
       case 'slot3': this.player.switchSlot(2, this); break;
       case 'slot4': this.player.switchSlot(3, this); break;
-      case 'pickup': this.playerPick(); break;
+      case 'pickup': {
+        if (this.player.driving) this.player.tryExitVehicle(this);
+        else this.playerPick();
+        break;
+      }
       case 'slot5': this.selectThrowable(); break;
       case 'heal': this.quickHeal(this.player.char); break;
       case 'viewmode':
@@ -553,8 +562,12 @@ export class Game {
     this.grenades.reset();
     this.shakeAmp = 0;
     this.loot.populate(this.world);
+    this.vehicles.populate(this.world);
+    this.mapVehicles = this.vehicles.list.map(() => ({ x: 0, z: 0, dead: false }));
     this.zone.reset();
     this.effects.reset();
+    this.promptVehicle = null;
+    this.audio.engineStop();
     this.now = 0;
     this.damageDealt = 0;
     this.deathT = -1;
@@ -687,6 +700,7 @@ export class Game {
     this.loot.update(dt);
     this.effects.update(dt);
     this.grenades.update(dt, this);
+    this.vehicles.update(dt, this);
     this.world.buildings.update(dt); // 门扇开关动画
     this.shakeAmp *= Math.exp(-6 * dt);
     this.updateHeal(dt);
@@ -756,6 +770,35 @@ export class Game {
     }
   }
 
+  // 载具爆炸/熄火时强制司机下车(可带伤害; 目前仅玩家驾驶)
+  forceExitVehicle(driver: Character, dmg: number): void {
+    if (driver.isPlayer && this.player) {
+      this.player.exitVehicle(this, true);
+    }
+    if (dmg > 0 && driver.alive) this.damageChar(driver, dmg, false, null, '载具爆炸', true);
+  }
+
+  // 碾压判定: 车速 >6m/s 撞人(重伤害+推开+减速)
+  runOverCheck(v: Vehicle, driver: Character): void {
+    const spec = VEHICLE_SPEC[v.kind];
+    const sp = Math.abs(v.speed);
+    for (const c of this.chars) {
+      if (!c.alive || c === driver) continue;
+      const dx = c.pos.x - v.pos.x;
+      const dz = c.pos.z - v.pos.z;
+      const rr = spec.radius + c.radius * 0.8;
+      if (dx * dx + dz * dz > rr * rr) continue;
+      if (Math.abs(c.pos.y - v.pos.y) > 2.2) continue;
+      const dmg = Math.min(130, sp * 5);
+      this.damageChar(c, dmg, false, driver, '载具撞击', true);
+      const dl = Math.hypot(dx, dz) || 1;
+      c.pos.x += (dx / dl) * 1.4;
+      c.pos.z += (dz / dl) * 1.4;
+      v.speed *= 0.8;
+      this.effects.impactBlood(c.chestPos(this.tmpA));
+    }
+  }
+
   // ---- 射击结算 ----
 
   playerShot(): boolean {
@@ -776,7 +819,14 @@ export class Game {
     shooter.muzzleWorld(this.tmpMuzzle);
     this.effects.muzzleFlash(this.tmpMuzzle, MUZZLE_SCALE[gun.def.id]);
     const res = this.shotRes;
-    if (res.hit) {
+    // 载具命中判定: 命中比当前更近且非"打中该车司机"时, 视为车身中弹
+    const vHit = this.vehicles.raycast(origin, this.tmpA, res.hit ? res.t : 260);
+    if (vHit && (!res.hit || vHit.t < res.t) && !(res.char && res.char === vHit.v.driver && res.t < vHit.t + 0.6)) {
+      this.tmpEnd.copy(origin).addScaledVector(this.tmpA, vHit.t);
+      this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
+      this.effects.impactSpark(this.tmpEnd);
+      this.vehicles.damage(vHit.v, gun.def.damage);
+    } else if (res.hit) {
       this.effects.tracer(this.tmpMuzzle, res.point, 0xffd27a);
       if (res.char) {
         const victim = res.char;
@@ -1216,6 +1266,13 @@ export class Game {
   private playerPick(): void {
     const player = this.player;
     if (!player) return;
+    // 载具优先(近驾驶座)
+    if (this.promptVehicle) {
+      player.enterVehicle(this.promptVehicle, this);
+      this.promptVehicle = null;
+      this.hud.setPickupPrompt(null);
+      return;
+    }
     const door = this.promptDoor;
     if (door && door.alive) {
       this.toggleDoor(door);
@@ -1443,6 +1500,13 @@ export class Game {
     } else {
       this.hud.setAltitude(-1, 0);
     }
+    // 载具仪表(驾驶中显示)
+    if (player.driving) {
+      const v = player.driving;
+      this.hud.setVehicle(Math.abs(v.speed) * 3.6, v.hp / VEHICLE_SPEC[v.kind].hp);
+    } else {
+      this.hud.setVehicle(-1, 0);
+    }
     const gun = c.heldGun();
     const noAmmo = gun !== null && gun.mag <= 0 && c.ammo[gun.def.ammo] <= 0;
     this.hud.setNoAmmo(noAmmo);
@@ -1511,6 +1575,13 @@ export class Game {
         n++;
       }
     }
-    this.minimap.draw(this.zone, player.char.pos.x, player.char.pos.z, player.yaw, this.shotDots, n);
+    for (let i = 0; i < this.vehicles.list.length; i++) {
+      const v = this.vehicles.list[i] as Vehicle;
+      const m = this.mapVehicles[i] as { x: number; z: number; dead: boolean };
+      m.x = v.pos.x;
+      m.z = v.pos.z;
+      m.dead = v.dead;
+    }
+    this.minimap.draw(this.zone, player.char.pos.x, player.char.pos.z, player.yaw, this.shotDots, n, this.mapVehicles);
   }
 }

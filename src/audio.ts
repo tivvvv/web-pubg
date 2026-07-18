@@ -292,6 +292,60 @@ export class AudioSys {
     this.noiseBurst(0.3, 0, 1400, 0.7, 0.3);
   }
 
+  // 车门
+  vehicleDoor(): void {
+    this.thump(0.35, 0, 160, 70, 0.12);
+  }
+
+  // 载具撞击
+  vehicleImpact(dist: number, pan: number): void {
+    const att = clamp(1.6 / (1 + dist * 0.03), 0.02, 1);
+    this.noiseBurst(0.6 * att, pan, 240, 0.8, 0.22);
+    this.thump(0.5 * att, pan, 120, 40, 0.2);
+  }
+
+  // 引擎循环(锯齿波 + 低通, 转速随速度)
+  private engOsc: OscillatorNode | null = null;
+  private engGain: GainNode | null = null;
+  engineSet(rpm: number): void {
+    if (!this.ctx || !this.master) return;
+    if (!this.engOsc) {
+      const o = this.ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = 70;
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 420;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      o.connect(lp).connect(g).connect(this.master);
+      o.start();
+      this.engOsc = o;
+      this.engGain = g;
+    }
+    const t = this.ctx.currentTime;
+    this.engOsc.frequency.setTargetAtTime(62 + rpm * 115, t, 0.08);
+    (this.engGain as GainNode).gain.setTargetAtTime(0.04 + rpm * 0.055, t, 0.08);
+  }
+
+  engineStop(): void {
+    if (this.engGain && this.ctx) {
+      this.engGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
+    }
+    const o = this.engOsc;
+    this.engOsc = null;
+    this.engGain = null;
+    if (o) {
+      window.setTimeout(() => {
+        try {
+          o.stop();
+        } catch {
+          /* 已停止 */
+        }
+      }, 400);
+    }
+  }
+
   // 风声(自由落体/滑翔, 速度跟随, 落地停止)
   private windSrc: AudioBufferSourceNode | null = null;
   private windGain: GainNode | null = null;

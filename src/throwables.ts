@@ -429,6 +429,12 @@ export class GrenadeManager {
       const dmg = 110 - 95 * (d / 9);
       game.damageChar(c, dmg, false, s.thrower, '手雷', true); // 爆炸无视护甲
     }
+    // 载具: 重伤害(近点 320 → 远点 40)
+    for (const v of game.vehicles.list) {
+      const d = Math.hypot(v.pos.x - s.pos.x, v.pos.y + 0.6 - s.pos.y, v.pos.z - s.pos.z);
+      if (d > 9) continue;
+      game.vehicles.damage(v, 320 - 280 * (d / 9));
+    }
     // 5m 内门窗全部摧毁
     for (const dst of game.world.buildings.destructibles) {
       if (!dst.alive) continue;

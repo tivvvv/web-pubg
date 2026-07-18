@@ -183,7 +183,7 @@ export class Character {
   stance: Stance = 'stand'; // 姿态: 站/蹲/趴
   stanceF = 0;         // 姿态插值 0站→1蹲→2趴(平滑过渡)
   groundH = 0;         // 脚下地面高(供贴地阴影)
-  airPose: 'fall' | 'canopy' | null = null; // 空降姿势(跳伞自由落体/开伞滑翔)
+  airPose: 'fall' | 'canopy' | 'sit' | null = null; // 空降姿势/驾驶坐姿(驾驶时收枪)
   canopyGroup: THREE.Group | null = null;   // 降落伞模型(开伞挂载, 落地卸载)
   private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
   lastAttackerId = 0;
@@ -423,7 +423,7 @@ export class Character {
       }
       return;
     }
-    // 空降姿势覆盖: 自由落体(展开俯冲) / 开伞(悬挂)
+    // 空降姿势覆盖: 自由落体(展开俯冲) / 开伞(悬挂) / 驾驶(坐姿)
     if (this.airPose) {
       if (this.airPose === 'fall') {
         p.inner.rotation.x = Math.PI / 2 * 0.92; // 面朝下俯冲
@@ -432,13 +432,21 @@ export class Character {
         p.armR.rotation.set(-0.3, 0, -1.15);
         p.legL.rotation.set(0.28, 0, 0.25);
         p.legR.rotation.set(-0.18, 0, -0.25);
-      } else {
+      } else if (this.airPose === 'canopy') {
         p.inner.rotation.x = 0.12; // 悬挂微后仰
         p.inner.position.y = 0;
         p.armL.rotation.set(-2.7, 0, 0.5);
         p.armR.rotation.set(-2.7, 0, -0.5);
         p.legL.rotation.set(0.32, 0, 0.06);
         p.legR.rotation.set(0.18, 0, -0.06);
+      } else {
+        // 驾驶坐姿: 腿前伸, 手扶方向盘
+        p.inner.rotation.x = 0.05;
+        p.inner.position.y = -0.35;
+        p.armL.rotation.set(-1.15, 0, 0.35);
+        p.armR.rotation.set(-1.15, 0, -0.35);
+        p.legL.rotation.set(-1.35, 0, 0.08);
+        p.legR.rotation.set(-1.3, 0, -0.08);
       }
       return;
     }
