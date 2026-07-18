@@ -29,6 +29,7 @@ export class World {
   readonly aabbs: Extract<Collider, { kind: 'aabb' }>[] = [];
   readonly platforms: Platform[] = []; // 楼梯踏步等"可站立但无碰撞体"平台
   readonly buildings = new Buildings();
+  readonly bushes: { x: number; z: number; r: number }[] = []; // 灌木足迹(隐蔽判定)
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -231,6 +232,16 @@ export class World {
     return false;
   }
 
+  // 点是否落在任一灌木足迹内(隐蔽判定, 线性扫描 ~300 项成本可忽略)
+  inBush(x: number, z: number): boolean {
+    for (const b of this.bushes) {
+      const dx = x - b.x;
+      const dz = z - b.z;
+      if (dx * dx + dz * dz < b.r * b.r) return true;
+    }
+    return false;
+  }
+
   private buildStatics(scene: THREE.Scene): void {
     const rng = mulberry32(424242);
     const m4 = new THREE.Matrix4();
@@ -364,6 +375,65 @@ export class World {
     if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
     scene.add(rockMesh);
 
+    // ---- 灌木丛(无碰撞体: 子弹/移动均可穿过, 供隐蔽判定) ----
+    const bushCap = 300;
+    const bushGeo = new THREE.IcosahedronGeometry(1, 1);
+    const BUSH_COLORS = [0x2f5c2a, 0x3f7a33, 0x5c6e2e, 0x8a9438];
+    const bushMeshes: THREE.InstancedMesh[] = [];
+    for (let layer = 0; layer < 3; layer++) {
+      const bm = new THREE.MeshLambertMaterial({ color: 0xffffff });
+      this.addSway(bm, 0.07, -1.0, 1.2, true, false, 180, 200);
+      const mesh = new THREE.InstancedMesh(bushGeo, bm, bushCap);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      bushMeshes.push(mesh);
+      scene.add(mesh);
+    }
+    const bushPts: number[] = [];
+    let bushCount = 0;
+    for (let t = 0; t < bushCap * 8 && bushCount < bushCap; t++) {
+      const x = (rng() * 2 - 1) * 330;
+      const z = (rng() * 2 - 1) * 330;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.5 || h > 13 || this.slopeAt(x, z) > 0.5) continue;
+      if (this.inPlot(x, z, 2.5)) continue;
+      let ok = true;
+      for (let i = 0; i < bushPts.length; i += 2) {
+        const dx = x - (bushPts[i] as number);
+        const dz = z - (bushPts[i + 1] as number);
+        if (dx * dx + dz * dz < 6.2) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      bushPts.push(x, z);
+      const s = 0.6 + rng() * 0.45; // 幅宽 1.2~2.0, 高 0.9~1.4
+      const colorIdx = Math.floor(rng() * BUSH_COLORS.length);
+      const q2 = new THREE.Quaternion().setFromAxisAngle(upY, rng() * Math.PI * 2);
+      for (let layer = 0; layer < 3; layer++) {
+        const ls = s * (layer === 0 ? 1 : layer === 1 ? 0.72 : 0.52);
+        const lx = x + (layer === 1 ? 0.32 * s : layer === 2 ? -0.26 * s : 0);
+        const lz = z + (layer === 1 ? 0.2 * s : layer === 2 ? -0.18 * s : 0);
+        const ly = h + (layer === 0 ? 0.45 : layer === 1 ? 0.62 : 0.78) * s;
+        vPos.set(lx, ly, lz);
+        vScale.set(ls, ls * 0.75, ls);
+        m4.compose(vPos, q2, vScale);
+        const mesh = bushMeshes[layer] as THREE.InstancedMesh;
+        mesh.setMatrixAt(bushCount, m4);
+        canopyC.setHex(BUSH_COLORS[colorIdx] as number).multiplyScalar(0.85 + rng() * 0.3);
+        mesh.setColorAt(bushCount, canopyC);
+      }
+      this.bushes.push({ x, z, r: s * 1.5 });
+      bushCount++;
+    }
+    for (const mesh of bushMeshes) {
+      mesh.count = bushCount;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.computeBoundingSphere();
+    }
+
     // ---- 草丛(纯装饰: 无碰撞体, 不挡子弹/视线) ----
     const grassCap = navigator.hardwareConcurrency <= 4 ? 2600 : 4500;
     const grassGeo = makeGrassGeo();
@@ -408,9 +478,18 @@ export class World {
   }
 
   // 植被顶点位移摇摆(InstancedMesh 顶点着色器注入, 零 CPU 逐帧开销)
-  // fade=true 时按与相机距离把实例缩成退化三角形(草丛远距消退)
+  // fade=true 时按与相机距离把实例缩成退化三角形(远距消退)
   // upNormal=true 时片元法线强制朝上(双面草叶背光面不发黑, 与地形光照一致)
-  private addSway(mat: THREE.Material, amp: number, lo: number, hi: number, fade = false, upNormal = false): void {
+  private addSway(
+    mat: THREE.Material,
+    amp: number,
+    lo: number,
+    hi: number,
+    fade = false,
+    upNormal = false,
+    fadeNear = 95,
+    fadeFar = 120,
+  ): void {
     const timeU = this.timeU;
     const camU = this.camU;
     mat.onBeforeCompile = (shader) => {
@@ -427,7 +506,7 @@ export class World {
   float swayW = smoothstep(${lo.toFixed(2)}, ${hi.toFixed(2)}, transformed.y);
   transformed.x += sin(uTime * 1.15 + swayPhase) * ${amp.toFixed(3)} * swayW;
   transformed.z += cos(uTime * 0.9 + swayPhase * 1.31) * ${amp.toFixed(3)} * swayW;
-  ${fade ? 'transformed *= 1.0 - smoothstep(95.0, 120.0, distance(swayIP, uCamPos.xz));' : ''}
+  ${fade ? `transformed *= 1.0 - smoothstep(${fadeNear.toFixed(1)}, ${fadeFar.toFixed(1)}, distance(swayIP, uCamPos.xz));` : ''}
 #endif`,
         );
       if (upNormal) {
@@ -438,7 +517,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
         );
       }
     };
-    mat.customProgramCacheKey = () => `sway:${amp}:${lo}:${hi}:${fade}:${upNormal}`;
+    mat.customProgramCacheKey = () => `sway:${amp}:${lo}:${hi}:${fade}:${upNormal}:${fadeNear}:${fadeFar}`;
   }
 
   // 每帧视觉更新: 水面波浪 / 植被摇摆 / 云漂移(所有相机状态下都执行)

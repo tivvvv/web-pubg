@@ -183,7 +183,13 @@ export class BotController {
     for (const other of game.chars) {
       if (!other.alive || other === c) continue;
       const d = Math.hypot(other.pos.x - c.pos.x, other.pos.z - c.pos.z);
-      if (d >= nearestD) continue;
+      // 灌木隐蔽: 目标在灌木足迹内按姿态压缩可侦距离; 开火暴露 2s 恢复常规
+      let detect = ENGAGE_DIST;
+      if (game.world.inBush(other.pos.x, other.pos.z) && game.nowSec - other.lastShotT > 2) {
+        if (other.stance === 'prone') detect = other.speed2d < 0.3 ? 12 : 40;
+        else if (other.stance === 'crouch') detect = other.speed2d < 0.3 ? 40 : 65;
+      }
+      if (d >= nearestD || d >= detect) continue;
       other.chestPos(this.tgtPos);
       if (game.isLOSBlocked(this.eye, this.tgtPos, this.dir)) continue;
       nearest = other;
