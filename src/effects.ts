@@ -162,6 +162,14 @@ export class Effects {
   debrisWood(p: THREE.Vector3): void { this.burst(p, 22, 0.5, 0.36, 0.2, 4.5); }
   debrisGlass(p: THREE.Vector3): void { this.burst(p, 22, 0.8, 0.92, 0.98, 4.5); }
 
+  /** 手雷爆炸: 闪光 + 泥土碎石 + 浓烟 + 火星 */
+  explosion(p: THREE.Vector3): void {
+    this.muzzleFlash(p, 5);
+    this.burst(p, 26, 0.5, 0.38, 0.2, 7);      // 泥土碎块
+    this.burst(p, 16, 0.35, 0.35, 0.38, 3.2);   // 浓烟
+    this.burst(p, 10, 1.0, 0.75, 0.3, 9);       // 火星
+  }
+
   update(dt: number): void {
     for (const t of this.tracers) {
       if (t.life > 0) {

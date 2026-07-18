@@ -13,6 +13,7 @@ export type HitKind = 'hit' | 'head' | 'kill';
 export interface BackpackData {
   slots: { key: string; label: string; name: string; mag: string }[];
   ammo: { name: string; count: number }[];
+  throwables: { name: string; count: number }[];
   medkits: number;
 }
 
@@ -23,7 +24,7 @@ export class Hud {
   private ammoMag = el('ammo-mag');
   private ammoReserve = el('ammo-reserve');
   private fireMode = el('fire-mode');
-  private slotEls = [el('slot-0'), el('slot-1'), el('slot-2'), el('slot-3')];
+  private slotEls = [el('slot-0'), el('slot-1'), el('slot-2'), el('slot-3'), el('slot-4')];
   private aliveEl = el('alive-count');
   private killsEl = el('kill-count');
   private zoneStatus = el('zone-status');
@@ -106,7 +107,7 @@ export class Hud {
   }
 
   setSlots(names: (string | null)[], active: number): void {
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.slotEls.length; i++) {
       const e = this.slotEls[i] as HTMLElement;
       const label = names[i];
       e.textContent = `${i + 1} ${label ?? '空'}`;
@@ -157,9 +158,13 @@ export class Hud {
     const ammoRows = data.ammo
       .map((a) => `<div class="bp-row"><span class="bp-name">${a.name}</span><span class="bp-mag">× ${a.count}</span></div>`)
       .join('');
+    const throwRows = data.throwables
+      .map((t) => `<div class="bp-row"><span class="bp-name">${t.name}</span><span class="bp-mag">× ${t.count}</span></div>`)
+      .join('');
     this.bpContent.innerHTML =
       `<div class="bp-section">武器</div>${slotRows}` +
       `<div class="bp-section">弹药</div>${ammoRows}` +
+      `<div class="bp-section">投掷物</div>${throwRows}` +
       `<div class="bp-section">物资</div>` +
       `<div class="bp-row"><span class="bp-name">医疗包</span><span class="bp-mag">× ${data.medkits}</span>` +
       `<button id="bp-use-medkit" class="bp-btn" ${data.medkits > 0 ? '' : 'disabled'}>使用 (X)</button></div>`;

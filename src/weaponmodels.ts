@@ -3,9 +3,9 @@
 // 约定: 原点 = 握把顶端(右手持握点), 枪管朝 +Z, 上为 +Y; 步枪全长约 0.9m
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import type { WeaponId } from './types';
+import type { ThrowableId, WeaponId } from './types';
 
-export type WeaponModelId = WeaponId | 'knife';
+export type WeaponModelId = WeaponId | 'knife' | ThrowableId;
 
 export interface WeaponModel {
   group: THREE.Group;
@@ -18,15 +18,18 @@ export const MUZZLE_SCALE: Record<WeaponId, number> = {
   pistol: 0.65, smg: 0.85, rifle: 1.0, sniper: 1.5,
 };
 
-// 共享几何: 单位盒 / 单位圆柱(沿 Y, 半径 1 高 1)
+// 共享几何: 单位盒 / 单位圆柱(沿 Y, 半径 1 高 1) / 单位球
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const CYL = new THREE.CylinderGeometry(1, 1, 1, 10);
+const SPH = new THREE.SphereGeometry(1, 12, 10);
 
 // 共享材质: 深金属 / 亮金属 / 聚合物 / 木色家具
 const MAT_DK = new THREE.MeshLambertMaterial({ color: 0x2b2e33 }); // 深金属(机匣/枪管)
 const MAT_LT = new THREE.MeshLambertMaterial({ color: 0xb9c1c9 }); // 亮金属(刃口/导轨/枪口)
 const MAT_PO = new THREE.MeshLambertMaterial({ color: 0x3d4148 }); // 聚合物(护木/枪托/握把)
 const MAT_TN = new THREE.MeshLambertMaterial({ color: 0x9a7a52 }); // 木色/沙色家具
+const MAT_FG = new THREE.MeshLambertMaterial({ color: 0x39543a }); // 手雷墨绿
+const MAT_BD = new THREE.MeshLambertMaterial({ color: 0xc8503c }); // 烟雾弹色带
 
 function b(
   parent: THREE.Group, mat: THREE.Material,
@@ -173,6 +176,29 @@ function buildKnife(): WeaponModel {
   return { group: g, muzzle: muzzleAt(g, 0, 0, 0.45), mag: null };
 }
 
+// ── 手雷: 墨绿球体 + 银色压柄 + 顶部引信 ──
+function buildFrag(): WeaponModel {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(SPH, MAT_FG);
+  body.scale.set(0.05, 0.055, 0.05);
+  body.castShadow = true;
+  g.add(body);
+  cz(g, MAT_DK, 0.015, 0.03, 0, 0.06, 0);                 // 引信座
+  b(g, MAT_LT, 0.012, 0.02, 0.075, 0.045, 0.045, 0, 0.45); // 压柄
+  cx(g, MAT_LT, 0.012, 0.035, -0.025, 0.07, 0);           // 拉环柄
+  return { group: g, muzzle: muzzleAt(g, 0, 0.1, 0), mag: null };
+}
+
+// ── 烟雾弹: 浅灰罐体 + 红色识别带 + 顶盖 ──
+function buildSmoke(): WeaponModel {
+  const g = new THREE.Group();
+  cz(g, MAT_LT, 0.045, 0.12, 0, 0, 0);        // 罐体
+  cz(g, MAT_BD, 0.047, 0.03, 0, 0.02, 0);     // 色带
+  cz(g, MAT_DK, 0.02, 0.02, 0, 0.07, 0);      // 顶盖
+  cx(g, MAT_DK, 0.01, 0.03, -0.02, 0.075, 0); // 保险销
+  return { group: g, muzzle: muzzleAt(g, 0, 0.1, 0), mag: null };
+}
+
 // 原型缓存: 每型只建一次, 之后一律 clone(true)(共享几何/材质)
 const protos = new Map<WeaponModelId, WeaponModel>();
 function proto(id: WeaponModelId): WeaponModel {
@@ -184,6 +210,8 @@ function proto(id: WeaponModelId): WeaponModel {
       case 'sniper': p = buildSniper(); break;
       case 'pistol': p = buildPistol(); break;
       case 'knife': p = buildKnife(); break;
+      case 'frag': p = buildFrag(); break;
+      case 'smoke': p = buildSmoke(); break;
     }
     protos.set(id, p);
   }

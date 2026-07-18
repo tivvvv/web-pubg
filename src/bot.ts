@@ -4,7 +4,8 @@ import { Character } from './character';
 import type { WeaponId } from './types';
 import { WEAPONS } from './weapons';
 import { WATER_Y } from './world';
-import { angleDiff, rand, randInt, turnToward } from './utils';
+import { isWeaponKind } from './loot';
+import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import type { Game } from './game';
 
 const ENGAGE_DIST = 92;
@@ -33,6 +34,10 @@ export class BotController {
   private blockT = 0;
   private blockCheckT = 0;
   private blockedDoor: import('./types').DestructibleLike | null = null;
+  // 手雷: 每局最多扔 1 颗; stillT 记录目标静止时长
+  private fragUsed = false;
+  private stillT = 0;
+  private fragOut = { x: 0, z: 0 };
 
   private eye = new THREE.Vector3();
   private tgtPos = new THREE.Vector3();
@@ -70,6 +75,9 @@ export class BotController {
       this.scan(game);
     }
 
+    // 手雷威胁: 6m 内有活着的雷, 掉头全速跑
+    if (this.fleeGrenade(dt, game)) return;
+
     if (this.state === 'engage' && this.target) {
       this.updateEngage(dt, game);
     } else {
@@ -83,16 +91,28 @@ export class BotController {
     // 被门/窗挡路 >1s: 开枪或挥刀破门
     this.updateDoorBreak(dt, game);
 
-    // 拾取: 弹药/医疗包直接拿; 武器按需求拿(bot 自动)
+    // 拾取: 弹药/医疗包/投掷物直接拿; 武器按需求拿(bot 自动)
     const item = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
     if (item) {
       const k = item.kind;
-      if (k === 'ammo' || k === 'medkit') {
+      if (!isWeaponKind(k)) {
         game.applyAutoPickup(c, item);
       } else if (this.wantsWeapon(k)) {
         game.tryPickupWeapon(c, item);
       }
     }
+  }
+
+  // 附近有活手雷: 反向全速逃离
+  private fleeGrenade(dt: number, game: Game): boolean {
+    const c = this.char;
+    if (!game.grenades.nearestLiveFrag(c.pos.x, c.pos.y, c.pos.z, 6, this.fragOut)) return false;
+    const dx = c.pos.x - this.fragOut.x;
+    const dz = c.pos.z - this.fragOut.z;
+    const d = Math.hypot(dx, dz) || 1;
+    c.yaw = Math.atan2(dx / d, dz / d);
+    c.applyMove((dx / d) * 6.2, (dz / d) * 6.2, dt, game.world);
+    return true;
   }
 
   // 是否想要地上这件武器
@@ -122,7 +142,7 @@ export class BotController {
       const d = Math.hypot(other.pos.x - c.pos.x, other.pos.z - c.pos.z);
       if (d >= nearestD) continue;
       other.chestPos(this.tgtPos);
-      if (game.world.isLOSBlocked(this.eye, this.tgtPos, this.dir)) continue;
+      if (game.isLOSBlocked(this.eye, this.tgtPos, this.dir)) continue;
       nearest = other;
       nearestD = d;
     }
@@ -165,7 +185,7 @@ export class BotController {
       this.losT = 0.35;
       c.eyePos(this.eye);
       t.chestPos(this.tgtPos);
-      this.losOk = !game.world.isLOSBlocked(this.eye, this.tgtPos, this.dir);
+      this.losOk = !game.isLOSBlocked(this.eye, this.tgtPos, this.dir);
     }
     if (this.losOk) {
       this.lostT = 0;
@@ -180,6 +200,19 @@ export class BotController {
         this.repathT = rand(2, 4);
         return;
       }
+    }
+
+    // 扔雷: 持步枪/冲锋枪、目标在 8-30m 且几乎静止超过 2.5s, 扔出唯一一颗手雷
+    const gunId = c.heldGun()?.def.id;
+    if (!this.fragUsed && c.throwables.frag > 0 && this.losOk &&
+      (gunId === 'rifle' || gunId === 'smg') && dist >= 8 && dist <= 30) {
+      if (t.speed2d < 0.6) this.stillT += dt; else this.stillT = 0;
+      if (this.stillT > 2.5) {
+        this.throwFrag(t, dist, game);
+        return;
+      }
+    } else {
+      this.stillT = 0;
     }
 
     // 移动: 近战全速贴近; 有枪则侧向走位 + 距离控制; 圈外优先进圈
@@ -252,6 +285,28 @@ export class BotController {
         this.burstLeft = gun.def.auto ? randInt(3, 6) : 1;
       }
     }
+  }
+
+  // 扔手雷: 出手点略向前, 目标点 ±2.5m 随机偏移, 上抬量随距离
+  private throwFrag(t: Character, dist: number, game: Game): void {
+    const c = this.char;
+    c.chestPos(this.eye);
+    const nx = (t.pos.x - c.pos.x) / (dist || 1);
+    const nz = (t.pos.z - c.pos.z) / (dist || 1);
+    this.eye.x += nx * 0.4;
+    this.eye.z += nz * 0.4;
+    const tx = t.pos.x + (Math.random() - 0.5) * 5;
+    const tz = t.pos.z + (Math.random() - 0.5) * 5;
+    const dx = tx - this.eye.x;
+    const dz = tz - this.eye.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    const up = 0.35 + dist * 0.008;
+    this.dir.set(dx / dl, up, dz / dl).normalize();
+    const speed = clamp(dist * 0.85, 8, 13);
+    game.throwGrenade(c, 'frag', this.eye, this.dir, speed);
+    c.throwables.frag--;
+    this.fragUsed = true;
+    c.swingT = 1;
   }
 
   private fireAt(t: Character, dist: number, game: Game): void {
@@ -340,7 +395,7 @@ export class BotController {
       const item = game.loot.nearestWeapon(c.pos.x, c.pos.y, c.pos.z, tier === 0 ? 50 : 16);
       if (item) {
         const k = item.kind;
-        if (k !== 'ammo' && k !== 'medkit' && this.wantsWeapon(k)) {
+        if (isWeaponKind(k) && this.wantsWeapon(k)) {
           this.moveTarget.copy(item.group.position);
           this.hasMoveTarget = true;
         }

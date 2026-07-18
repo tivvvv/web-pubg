@@ -1,6 +1,6 @@
 // 低多边形人形角色(玩家与 bot 共用) + 背包物品 + 命中体
 import * as THREE from 'three';
-import type { AmmoType, GunState, MeleeState } from './types';
+import type { AmmoType, GunState, MeleeState, ThrowableId } from './types';
 import { MELEE } from './weapons';
 import { buildWeaponModel, type WeaponModel, type WeaponModelId } from './weaponmodels';
 import type { World } from './world';
@@ -136,7 +136,9 @@ export class Character {
   melee: MeleeState = { def: MELEE.fists };        // 近战(默认拳头)
   ammo: Record<AmmoType, number> = { pistol: 0, rifle: 0, smg: 0, sniper: 0 };
   medkits = 0;
-  curSlot = 3; // 0/1 主武器, 2 手枪, 3 近战
+  throwables: Record<ThrowableId, number> = { frag: 0, smoke: 0 };
+  throwKind: ThrowableId = 'frag'; // 当前选中的投掷物类型
+  curSlot = 3; // 0/1 主武器, 2 手枪, 3 近战, 4 投掷物
 
   swingT = 0;          // 挥击动画进度(1→0)
   lastMeleeT = -100;   // 上次挥击时间
@@ -238,7 +240,10 @@ export class Character {
     // 持械模型切换(仅在栏位/武器变化时克隆)
     const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
     const wantId: WeaponModelId | null =
-      gun ? gun.def.id : this.curSlot === 3 && this.melee.def.id === 'knife' ? 'knife' : null;
+      gun ? gun.def.id
+        : this.curSlot === 3 && this.melee.def.id === 'knife' ? 'knife'
+          : this.curSlot === 4 ? this.throwKind
+            : null;
     this.swapHeld(wantId);
     // 枪姿态: ADS 俯仰 + 换弹下压; 弹匣中段脱落/回装
     const reloadDip = this.reload01 > 0 ? Math.sin(Math.min(1, this.reload01) * Math.PI) * 0.55 : 0;

@@ -40,6 +40,8 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   knife: new THREE.MeshBasicMaterial({ color: 0xdfe6ee, transparent: true, opacity: 0.5 }),
   ammo: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
   medkit: new THREE.MeshBasicMaterial({ color: 0xf2f2f2, transparent: true, opacity: 0.5 }),
+  frag: new THREE.MeshBasicMaterial({ color: 0x86c03c, transparent: true, opacity: 0.5 }),
+  smoke: new THREE.MeshBasicMaterial({ color: 0xd7dde3, transparent: true, opacity: 0.5 }),
 };
 
 function buildLootMesh(kind: LootKind): THREE.Group {
@@ -51,6 +53,12 @@ function buildLootMesh(kind: LootKind): THREE.Group {
     const wm = buildWeaponModel(kind);
     wm.group.rotation.set(-0.32, 0, 0.55);
     wm.group.position.y = 0.05;
+    holder.add(wm.group);
+  } else if (kind === 'frag' || kind === 'smoke') {
+    // 投掷物模型
+    const wm = buildWeaponModel(kind);
+    wm.group.rotation.set(-0.3, 0, 0.5);
+    wm.group.position.y = 0.02;
     holder.add(wm.group);
   } else if (kind === 'ammo') {
     holder.add(new THREE.Mesh(GEO.ammo, MAT.ammo));
@@ -72,7 +80,7 @@ function buildLootMesh(kind: LootKind): THREE.Group {
 }
 
 export function isWeaponKind(kind: LootKind): kind is WeaponId | 'knife' {
-  return kind !== 'ammo' && kind !== 'medkit';
+  return kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol' || kind === 'knife';
 }
 
 export class LootManager {
@@ -112,24 +120,30 @@ export class LootManager {
       if (r < 0.3) return 'rifle';
       if (r < 0.55) return 'sniper';
       if (r < 0.7) return 'smg';
-      if (r < 0.85) return 'ammo';
+      if (r < 0.76) return 'frag';
+      if (r < 0.81) return 'smoke';
+      if (r < 0.92) return 'ammo';
       return 'medkit';
     }
     if (table === 'indoor') {
-      if (r < 0.17) return 'rifle';
-      if (r < 0.31) return 'smg';
-      if (r < 0.37) return 'sniper';
-      if (r < 0.45) return 'pistol';
-      if (r < 0.53) return 'knife';
-      if (r < 0.75) return 'ammo';
+      if (r < 0.16) return 'rifle';
+      if (r < 0.29) return 'smg';
+      if (r < 0.35) return 'sniper';
+      if (r < 0.43) return 'pistol';
+      if (r < 0.5) return 'knife';
+      if (r < 0.55) return 'frag';
+      if (r < 0.6) return 'smoke';
+      if (r < 0.78) return 'ammo';
       return 'medkit';
     }
-    if (r < 0.1) return 'rifle';
-    if (r < 0.2) return 'smg';
-    if (r < 0.25) return 'sniper';
-    if (r < 0.32) return 'pistol';
-    if (r < 0.38) return 'knife';
-    if (r < 0.66) return 'ammo';
+    if (r < 0.09) return 'rifle';
+    if (r < 0.18) return 'smg';
+    if (r < 0.23) return 'sniper';
+    if (r < 0.3) return 'pistol';
+    if (r < 0.36) return 'knife';
+    if (r < 0.42) return 'frag';
+    if (r < 0.47) return 'smoke';
+    if (r < 0.68) return 'ammo';
     return 'medkit';
   }
 
@@ -154,7 +168,8 @@ export class LootManager {
       item.ammo = ammo > 0 ? ammo : Math.max(1, Math.floor(AMMO_PACK[def.ammo] * 0.6));
     } else {
       item.mag = -1;
-      item.ammo = 0;
+      // 投掷物掉落用 ammo 字段携带堆叠数(死亡掉落时为 >1 的 stack)
+      item.ammo = (kind === 'frag' || kind === 'smoke') ? Math.max(1, ammo) : 0;
     }
     item.active = true;
     item.baseY = groundY + 1.0;

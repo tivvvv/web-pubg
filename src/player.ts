@@ -1,13 +1,15 @@
-// 玩家: 第三人称越肩视角 + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力
+// 玩家: 第三人称越肩视角 + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力 + 投掷
 import * as THREE from 'three';
 import { Character } from './character';
 import type { Input } from './input';
+import { isWeaponKind } from './loot';
 import { MELEE, WEAPONS } from './weapons';
 import { WATER_Y } from './world';
 import { clamp, lerp } from './utils';
 import type { Game } from './game';
 
 const BASE_FOV = 75;
+const THROW_SPEED = 15; // 满蓄力投掷速度
 
 export class PlayerController {
   readonly char: Character;
@@ -23,6 +25,8 @@ export class PlayerController {
   private camDist = 3.4;
   private fov = BASE_FOV;
   private stepAcc = 0;
+  private throwHold = false; // 正在按住左键蓄力瞄准
+  private holdT = 0;         // 蓄力时长
   spreadRad = 0.004;
 
   private viewDir = new THREE.Vector3();
@@ -30,6 +34,8 @@ export class PlayerController {
   private camTarget = new THREE.Vector3();
   private camDir = new THREE.Vector3();
   private lookAt = new THREE.Vector3();
+  private throwDir = new THREE.Vector3();
+  private throwOrigin = new THREE.Vector3();
 
   constructor(shirtColor: number) {
     this.char = new Character('你', true, shirtColor);
@@ -120,9 +126,17 @@ export class PlayerController {
     }
     c.reload01 = this.reloading && gun ? clamp(1 - this.reloadT / gun.def.reloadTime, 0.01, 1) : 0;
     const pressedEdge = input.consumeFirePressed();
+    // 切离投掷栏时收起轨迹预览
+    if (c.curSlot !== 4 && this.throwHold) {
+      this.throwHold = false;
+      game.grenades.hidePreview();
+    }
     if (c.curSlot === 3) {
       // 近战: 按住连挥, 冷却在 meleeAttack 内判定
       if (input.lmb && game.meleeAttack(c)) acted = true;
+      this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
+    } else if (c.curSlot === 4) {
+      if (this.updateThrow(dt, input, game)) acted = true;
       this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
     } else if (gun) {
       const wantFire = gun.def.auto ? input.lmb : pressedEdge;
@@ -151,9 +165,9 @@ export class PlayerController {
 
     // ---- 拾取提示(武器需按 F) ----
     this.updatePickupPrompt(game);
-    // 弹药/医疗包走近自动拾取
+    // 弹药/医疗包/投掷物走近自动拾取
     const auto = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
-    if (auto && (auto.kind === 'ammo' || auto.kind === 'medkit')) {
+    if (auto && !isWeaponKind(auto.kind)) {
       game.applyAutoPickup(c, auto);
     }
 
@@ -182,10 +196,47 @@ export class PlayerController {
     const k = item.kind;
     if (k === 'knife') {
       game.hud.setPickupPrompt(`按 F 拾取 ${MELEE.knife.name}`);
-    } else if (k !== 'ammo' && k !== 'medkit') {
+    } else if (isWeaponKind(k)) {
       const def = WEAPONS[k];
       game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${item.mag}+${item.ammo}）`);
     }
+  }
+
+  // 投掷物: 按住左键蓄力瞄准(轨迹预览), 松开投出; 蓄力 0.8s 达满速
+  private updateThrow(dt: number, input: Input, game: Game): boolean {
+    const c = this.char;
+    const count = c.throwables[c.throwKind];
+    if (input.lmb && count > 0) {
+      if (!this.throwHold) {
+        this.throwHold = true;
+        this.holdT = 0;
+      }
+      this.holdT += dt;
+      const speed = THROW_SPEED * (0.6 + 0.4 * Math.min(1, this.holdT / 0.8));
+      this.getViewDir(this.throwDir);
+      c.chestPos(this.throwOrigin);
+      this.throwOrigin.addScaledVector(this.throwDir, 0.4);
+      game.grenades.showPreview(game.world, this.throwOrigin, this.throwDir, speed);
+      return false;
+    }
+    if (this.throwHold) {
+      // 松开: 投出
+      this.throwHold = false;
+      game.grenades.hidePreview();
+      const speed = THROW_SPEED * (0.6 + 0.4 * Math.min(1, this.holdT / 0.8));
+      this.getViewDir(this.throwDir);
+      c.chestPos(this.throwOrigin);
+      this.throwOrigin.addScaledVector(this.throwDir, 0.4);
+      game.throwGrenade(c, c.throwKind, this.throwOrigin, this.throwDir, speed);
+      c.throwables[c.throwKind]--;
+      c.swingT = 1; // 挥臂动作
+      // 用尽后自动切到另一种
+      const other = c.throwKind === 'frag' ? 'smoke' : 'frag';
+      if (c.throwables[c.throwKind] === 0 && c.throwables[other] > 0) c.throwKind = other;
+      return true;
+    }
+    game.grenades.hidePreview();
+    return false;
   }
 
   startReload(game: Game): void {
@@ -255,6 +306,12 @@ export class PlayerController {
     // 不钻地
     const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.28;
     if (this.camera.position.y < minY) this.camera.position.y = minY;
+    // 爆炸震动
+    if (game.shakeAmp > 0.002) {
+      this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+      this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+      this.camera.position.z += (Math.random() - 0.5) * game.shakeAmp * 0.22;
+    }
     this.lookAt.copy(this.pivot).addScaledVector(dir, 14);
     this.camera.lookAt(this.lookAt);
 

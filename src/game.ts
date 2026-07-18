@@ -6,12 +6,13 @@ import { Character, BOT_SHIRTS } from './character';
 import { Effects } from './effects';
 import { Hud, type BackpackData } from './hud';
 import { Input, type Action } from './input';
-import { LootManager, type LootItem } from './loot';
+import { LootManager, isWeaponKind, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
-import type { DestructibleLike, GameStats, LootKind } from './types';
+import { GrenadeManager } from './throwables';
+import type { DestructibleLike, GameStats, LootKind, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
-import { AMMO_NAME, AMMO_PACK, MELEE, WEAPONS, applySpread, hitscan, makeShotResult } from './weapons';
+import { AMMO_NAME, AMMO_PACK, MELEE, THROWABLES, WEAPONS, applySpread, hitscan, makeShotResult } from './weapons';
 import { MUZZLE_SCALE } from './weaponmodels';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
@@ -26,6 +27,7 @@ export class Game {
   readonly effects: Effects;
   readonly zone: Zone;
   readonly loot: LootManager;
+  readonly grenades: GrenadeManager;
   readonly hud: Hud;
   readonly audio: AudioSys;
   readonly input: Input;
@@ -36,6 +38,7 @@ export class Game {
   promptItem: LootItem | null = null;   // 当前可拾取武器提示
   backpackOpen = false;
   healT = -1;                            // >0 = 包扎进行中(剩余秒)
+  shakeAmp = 0;                          // 相机震动幅度(爆炸)
 
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -81,6 +84,7 @@ export class Game {
     this.effects = new Effects(this.scene);
     this.zone = new Zone(this.scene);
     this.loot = new LootManager(this.scene);
+    this.grenades = new GrenadeManager(this.scene);
     this.audio = new AudioSys();
     this.hud = new Hud();
     this.minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, this.world);
@@ -152,6 +156,7 @@ export class Game {
       case 'slot3': this.player.switchSlot(2, this); break;
       case 'slot4': this.player.switchSlot(3, this); break;
       case 'pickup': this.playerPick(); break;
+      case 'slot5': this.selectThrowable(); break;
       case 'heal': this.useMedkit(this.player.char); break;
       case 'wheelUp': this.cycleSlot(-1); break;
       case 'wheelDown': this.cycleSlot(1); break;
@@ -222,6 +227,10 @@ export class Game {
       ammo: (['rifle', 'smg', 'sniper', 'pistol'] as const).map((t) => ({
         name: AMMO_NAME[t],
         count: c.ammo[t],
+      })),
+      throwables: (['frag', 'smoke'] as const).map((t) => ({
+        name: THROWABLES[t].name,
+        count: c.throwables[t],
       })),
       medkits: c.medkits,
     };
@@ -328,6 +337,7 @@ export class Game {
       const p = pts[i] as { x: number; z: number };
       bot.char.pos.set(p.x, this.world.getHeight(p.x, p.z), p.z);
       bot.char.yaw = rand(0, Math.PI * 2);
+      if (Math.random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
       this.bots.push(bot);
       this.chars.push(bot.char);
       this.charsGroup.add(bot.char.group);
@@ -335,6 +345,8 @@ export class Game {
 
     this.shotDots = this.bots.map(() => ({ x: 0, z: 0 }));
     this.world.buildings.reset(); // 门窗恢复: 窗全修好, 门 30% 预破坏
+    this.grenades.reset();
+    this.shakeAmp = 0;
     this.loot.populate(this.world);
     this.zone.reset();
     this.effects.reset();
@@ -382,6 +394,7 @@ export class Game {
     } else if (this.state === 'over' && this.player) {
       this.player.update(dt, this.input, this); // 仅相机
       this.effects.update(dt);
+      this.grenades.update(dt, this);
       for (const c of this.chars) c.syncModel(dt, false);
     }
     this.hud.update(dt);
@@ -408,6 +421,8 @@ export class Game {
     for (const c of this.chars) c.syncModel(dt, c.speed2d > 0.3);
     this.loot.update(dt);
     this.effects.update(dt);
+    this.grenades.update(dt, this);
+    this.shakeAmp *= Math.exp(-6 * dt);
     this.updateHeal(dt);
     this.world.updateShadow(player.char.pos.x, player.char.pos.z);
     // 6 死亡结算计时
@@ -602,6 +617,52 @@ export class Game {
     return best;
   }
 
+  // ---- 投掷物 ----
+
+  // 按 5: 未选中则切到投掷栏; 已选中则在手雷/烟雾弹间循环
+  private selectThrowable(): void {
+    const player = this.player;
+    if (!player) return;
+    const c = player.char;
+    if (c.curSlot === 4) {
+      const other: ThrowableId = c.throwKind === 'frag' ? 'smoke' : 'frag';
+      if (c.throwables[other] > 0) c.throwKind = other;
+      return;
+    }
+    if (c.throwables.frag + c.throwables.smoke === 0) {
+      this.hud.toast('没有投掷物');
+      return;
+    }
+    if (c.throwables[c.throwKind] === 0) {
+      c.throwKind = c.throwKind === 'frag' ? 'smoke' : 'frag';
+    }
+    player.switchSlot(4, this);
+  }
+
+  // 投出一颗投掷物(玩家与 bot 共用)
+  throwGrenade(thrower: Character, kind: ThrowableId, origin: THREE.Vector3, dir: THREE.Vector3, speed: number): void {
+    this.grenades.spawn(thrower, kind, origin, dir, speed);
+    if (thrower.isPlayer) {
+      this.audio.melee(0, 0);
+    } else {
+      this.soundAt(thrower.pos, (d, p) => this.audio.melee(d, p));
+    }
+  }
+
+  // 爆炸引起的相机震动(按玩家距离衰减)
+  addShakeFrom(pos: THREE.Vector3): void {
+    if (!this.player) return;
+    const d = Math.hypot(pos.x - this.player.char.pos.x, pos.y - this.player.char.pos.y, pos.z - this.player.char.pos.z);
+    const amp = clamp(3.5 / (1 + d * 0.09), 0, 1.5);
+    this.shakeAmp = Math.max(this.shakeAmp, amp);
+  }
+
+  // 视线遮挡: 地形/建筑 + 烟幕球(bot 索敌共用)
+  isLOSBlocked(a: THREE.Vector3, b: THREE.Vector3, tmpDir: THREE.Vector3): boolean {
+    if (this.grenades.blocksLOS(a, b)) return true;
+    return this.world.isLOSBlocked(a, b, tmpDir);
+  }
+
   // ---- 近战结算 ----
 
   meleeAttack(attacker: Character): boolean {
@@ -680,7 +741,7 @@ export class Game {
 
   // ---- 伤害/击杀 ----
 
-  damageChar(victim: Character, dmg: number, head: boolean, attacker: Character | null): void {
+  damageChar(victim: Character, dmg: number, head: boolean, attacker: Character | null, via?: string): void {
     if (!victim.alive) return;
     victim.hp -= dmg;
     victim.lastAttackerId = attacker?.id ?? 0;
@@ -690,10 +751,10 @@ export class Game {
       this.hud.damageFrom(-rel);
       this.audio.hit(false);
     }
-    if (victim.hp <= 0) this.kill(victim, attacker, head);
+    if (victim.hp <= 0) this.kill(victim, attacker, head, via);
   }
 
-  private kill(victim: Character, attacker: Character | null, head: boolean): void {
+  private kill(victim: Character, attacker: Character | null, head: boolean, via?: string): void {
     victim.hp = 0;
     victim.alive = false;
     victim.dieT = 0;
@@ -712,11 +773,20 @@ export class Game {
       const kind: LootKind = Math.random() < 0.4 ? 'medkit' : 'ammo';
       this.loot.spawn(kind, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
     }
+    // 投掷物掉落(成小叠)
+    for (const t of ['frag', 'smoke'] as const) {
+      const n = victim.throwables[t];
+      if (n > 0) {
+        this.loot.spawn(t, gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7), -1, n);
+      }
+    }
 
     // 击杀信息
     if (attacker) {
       attacker.kills++;
-      this.hud.killFeed(`${attacker.name} 淘汰了 ${victim.name}${head ? '（爆头）' : ''}`);
+      this.hud.killFeed(via
+        ? `${attacker.name} 用${via}淘汰了 ${victim.name}`
+        : `${attacker.name} 淘汰了 ${victim.name}${head ? '（爆头）' : ''}`);
     } else {
       this.hud.killFeed(`${victim.name} 被安全区吞噬`);
     }
@@ -792,6 +862,19 @@ export class Game {
 
   // 弹药/医疗包: 走近自动拾取
   applyAutoPickup(c: Character, item: LootItem): boolean {
+    if (item.kind === 'frag' || item.kind === 'smoke') {
+      const kind: ThrowableId = item.kind;
+      const def = THROWABLES[kind];
+      if (c.throwables[kind] >= def.max) return false;
+      const stack = item.ammo > 0 ? item.ammo : 1; // ammo 字段复用为叠放数量
+      c.throwables[kind] = Math.min(def.max, c.throwables[kind] + stack);
+      this.loot.consume(item);
+      if (c.isPlayer) {
+        this.hud.toast(`拾取${def.name}${stack > 1 ? `×${stack}` : ''}（按 5 使用）`);
+        this.audio.pickup();
+      }
+      return true;
+    }
     if (item.kind === 'ammo') {
       for (const t of ['pistol', 'rifle', 'smg', 'sniper'] as const) {
         c.ammo[t] += AMMO_PACK[t];
@@ -831,7 +914,7 @@ export class Game {
       }
       return true;
     }
-    if (kind === 'ammo' || kind === 'medkit') return false;
+    if (!isWeaponKind(kind)) return false;
 
     const def = WEAPONS[kind];
     // 目标栏位
@@ -875,6 +958,9 @@ export class Game {
     const gun = c.heldGun();
     if (c.curSlot === 3) {
       this.hud.setWeapon(c.melee.def.name, '—', '', '近战');
+    } else if (c.curSlot === 4) {
+      const td = THROWABLES[c.throwKind];
+      this.hud.setWeapon(td.name, `×${c.throwables[c.throwKind]}`, '', '按住左键蓄力');
     } else if (gun) {
       this.hud.setWeapon(
         gun.def.name,
@@ -891,6 +977,7 @@ export class Game {
       c.guns[1]?.def.name.split(' ')[0] ?? null,
       c.guns[2]?.def.name.split(' ')[0] ?? null,
       c.melee.def.name,
+      `${THROWABLES[c.throwKind].name}×${c.throwables[c.throwKind]}`,
     ];
     const key = `${names.join(',')}|${c.curSlot}`;
     if (key !== this.hudSlotsKey) {

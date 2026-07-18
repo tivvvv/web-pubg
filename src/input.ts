@@ -1,6 +1,6 @@
 // 键鼠输入 + 指针锁定管理
 export type Action =
-  | 'slot1' | 'slot2' | 'slot3' | 'slot4'
+  | 'slot1' | 'slot2' | 'slot3' | 'slot4' | 'slot5'
   | 'reload' | 'mute' | 'pickup' | 'heal' | 'backpack'
   | 'wheelUp' | 'wheelDown';
 
@@ -47,6 +47,7 @@ export class Input {
         case 'Digit2': this.onAction('slot2'); break;
         case 'Digit3': this.onAction('slot3'); break;
         case 'Digit4': this.onAction('slot4'); break;
+        case 'Digit5': this.onAction('slot5'); break;
         case 'KeyR': this.onAction('reload'); break;
         case 'KeyM': this.onAction('mute'); break;
         case 'KeyF': this.onAction('pickup'); break;

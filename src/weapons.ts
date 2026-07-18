@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import type { Character, HitTestResult } from './character';
 import type {
-  AmmoType, GunState, MeleeDef, MeleeId, SurfaceKind, WeaponDef, WeaponId,
+  AmmoType, GunState, MeleeDef, MeleeId, SurfaceKind, ThrowableId, WeaponDef, WeaponId,
 } from './types';
 import type { World, StaticHit } from './world';
 
@@ -32,6 +32,12 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
 export const MELEE: Record<MeleeId, MeleeDef> = {
   fists: { id: 'fists', name: '拳头', damage: 15, range: 2.2, cooldown: 0.45 },
   knife: { id: 'knife', name: '砍刀', damage: 40, range: 2.4, cooldown: 0.6 },
+};
+
+// 投掷物定义(手雷伤害逻辑在 throwables.ts)
+export const THROWABLES: Record<ThrowableId, { id: ThrowableId; name: string; max: number }> = {
+  frag: { id: 'frag', name: '手雷', max: 5 },
+  smoke: { id: 'smoke', name: '烟雾弹', max: 5 },
 };
 
 // 弹药箱补给量(每种类型)

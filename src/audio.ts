@@ -181,6 +181,19 @@ export class AudioSys {
     this.noiseBurst(0.3 * att, pan, 4300, 2.5, 0.3);
   }
 
+  // 手雷爆炸: 低频轰 + 噪声
+  explosion(dist: number, pan: number): void {
+    const att = clamp(2.4 / (1 + dist * 0.018), 0.02, 1);
+    this.noiseBurst(1.0 * att, pan, 160, 0.35, 0.55);
+    this.thump(0.9 * att, pan, 85, 24, 0.5);
+  }
+
+  // 烟雾弹起烟嘶嘶声
+  hiss(dist: number, pan: number): void {
+    const att = clamp(1.2 / (1 + dist * 0.03), 0.02, 1);
+    this.noiseBurst(0.3 * att, pan, 5200, 0.6, 1.4);
+  }
+
   // 医疗包扎完成
   heal(): void {
     this.blip(360, 540, 0.16, 0.18, 'sine');

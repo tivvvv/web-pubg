@@ -2,7 +2,8 @@
 export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'sniper';
 export type MeleeId = 'fists' | 'knife';
 export type AmmoType = 'pistol' | 'rifle' | 'smg' | 'sniper';
-export type LootKind = WeaponId | 'knife' | 'ammo' | 'medkit';
+export type ThrowableId = 'frag' | 'smoke';
+export type LootKind = WeaponId | 'knife' | 'ammo' | 'medkit' | ThrowableId;
 
 export interface WeaponDef {
   id: WeaponId;
