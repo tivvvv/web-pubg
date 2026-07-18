@@ -421,6 +421,7 @@ export class Game {
 
   private startHeal(c: Character, id: HealId): void {
     if (!c.alive || this.healT > 0) return;
+    if (c.isPlayer && this.player?.descent) return; // 跳伞中禁用恢复品
     const def = HEALS[id];
     if (c.heals[id] <= 0 || c.hp >= def.cap - 0.5) return;
     this.healT = def.cast;
@@ -507,6 +508,7 @@ export class Game {
 
   startMatch(): void {
     this.audio.unlock();
+    this.audio.windStop(); // 上一局可能死在自由落体(风声未停)
     // 清理旧角色
     this.charsGroup.clear();
     this.chars.length = 0;
@@ -514,6 +516,11 @@ export class Game {
     this.mates = [];
     for (const t of this.squadTags) this.scene.remove(t);
     this.squadTags = [];
+    // 上一局可能死在舱内(旧运输机未清)
+    if (this.planeMesh) {
+      this.scene.remove(this.planeMesh);
+      this.planeMesh = null;
+    }
     this.player = new PlayerController(0x3a6ea5);
 
     // 出生点: 拒绝采样, 最小间距
