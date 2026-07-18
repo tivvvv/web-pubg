@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%23c8a23c'/><circle cx='8' cy='8' r='3' fill='%2314170f'/></svg>" />
+    <title>绝地突围 - 网页大逃杀</title>
+  </head>
+  <body>
+    <div id="game-container"></div>
+
+    <!-- 游戏内 HUD -->
+    <div id="hud" class="hidden">
+      <!-- 顶部中央: 存活/击杀/毒圈 -->
+      <div id="topbar">
+        <span id="alive-count">剩余 24</span>
+        <span id="kill-count">击杀 0</span>
+        <span id="zone-status"></span>
+      </div>
+
+      <!-- 击杀信息流 -->
+      <div id="killfeed"></div>
+
+      <!-- 小地图 -->
+      <canvas id="minimap" width="180" height="180"></canvas>
+
+      <!-- 底部左: 血量 -->
+      <div id="bottom-left">
+        <div id="hp-row">
+          <span id="hp-text">100</span>
+          <div id="hp-bar"><div id="hp-fill"></div></div>
+        </div>
+      </div>
+
+      <!-- 底部右: 武器 -->
+      <div id="bottom-right">
+        <div id="slots">
+          <span class="slot" id="slot-0">1 空</span>
+          <span class="slot" id="slot-1">2 空</span>
+          <span class="slot" id="slot-2">3 空</span>
+          <span class="slot" id="slot-3">4 拳头</span>
+        </div>
+        <div id="weapon-row">
+          <span id="weapon-name">拳头</span>
+          <span id="fire-mode">近战</span>
+        </div>
+        <div id="ammo-row">
+          <span id="ammo-mag">—</span><span id="ammo-reserve"></span>
+        </div>
+      </div>
+
+      <!-- 拾取提示 -->
+      <div id="pickup-prompt"></div>
+
+      <!-- 包扎进度 -->
+      <div id="heal-cast">
+        <span>包扎中…</span>
+        <div class="heal-bar"><div id="heal-fill"></div></div>
+      </div>
+
+      <!-- 准星 -->
+      <div id="crosshair">
+        <span class="ch-line ch-t"></span>
+        <span class="ch-line ch-b"></span>
+        <span class="ch-line ch-l"></span>
+        <span class="ch-line ch-r"></span>
+        <span class="ch-dot"></span>
+      </div>
+      <div id="hitmarker">✕</div>
+      <div id="dmg-arc"></div>
+      <div id="toast"></div>
+      <div id="zone-tint"></div>
+    </div>
+
+    <!-- 背包面板 -->
+    <div id="backpack" class="hidden">
+      <div class="bp-panel">
+        <h3>背包</h3>
+        <div id="bp-content"></div>
+        <button id="bp-close" class="bp-btn bp-close">关闭 (Tab)</button>
+      </div>
+    </div>
+
+    <!-- 开始界面 -->
+    <div id="screen-start" class="screen">
+      <div class="panel start-panel">
+        <h1>绝地突围</h1>
+        <p class="subtitle">24 人孤岛大逃杀 · 单人对战 AI · 活到最后</p>
+        <table class="controls">
+          <tr><td>W A S D</td><td>移动</td><td>鼠标</td><td>视角</td></tr>
+          <tr><td>Shift</td><td>疾跑</td><td>左键</td><td>射击 / 拳击</td></tr>
+          <tr><td>Space</td><td>跳跃</td><td>右键(按住)</td><td>瞄准</td></tr>
+          <tr><td>R</td><td>换弹</td><td>1/2/3/4</td><td>武器栏(4=近战)</td></tr>
+          <tr><td>F</td><td>拾取武器</td><td>滚轮</td><td>切换武器</td></tr>
+          <tr><td>Tab / B</td><td>背包</td><td>X</td><td>使用医疗包</td></tr>
+          <tr><td>M</td><td>静音</td><td>ESC</td><td>暂停</td></tr>
+        </table>
+        <button id="btn-start" class="btn">开始游戏</button>
+        <p class="hint">赤手空拳开局 · 走近武器按 F 拾取 · 搜集弹药药品，躲避毒圈，淘汰所有对手</p>
+      </div>
+    </div>
+
+    <!-- 阵亡界面 -->
+    <div id="screen-death" class="screen hidden">
+      <div class="panel">
+        <h2>你已被淘汰</h2>
+        <div id="death-placement" class="placement">#24 / 24</div>
+        <div class="stats">
+          <div><span class="stat-label">击杀</span><span id="death-kills">0</span></div>
+          <div><span class="stat-label">伤害</span><span id="death-damage">0</span></div>
+          <div><span class="stat-label">存活</span><span id="death-time">0:00</span></div>
+        </div>
+        <button id="btn-again" class="btn">再来一局</button>
+      </div>
+    </div>
+
+    <!-- 吃鸡界面 -->
+    <div id="screen-win" class="screen hidden">
+      <div class="panel">
+        <h2 class="win-title">大吉大利，今晚吃鸡！</h2>
+        <div class="placement win">#1 / 24</div>
+        <div class="stats">
+          <div><span class="stat-label">击杀</span><span id="win-kills">0</span></div>
+          <div><span class="stat-label">伤害</span><span id="win-damage">0</span></div>
+          <div><span class="stat-label">存活</span><span id="win-time">0:00</span></div>
+        </div>
+        <button id="btn-again-win" class="btn">再来一局</button>
+      </div>
+    </div>
+
+    <!-- 暂停界面 -->
+    <div id="screen-pause" class="screen hidden">
+      <div class="panel">
+        <h2>已暂停</h2>
+        <button id="btn-resume" class="btn">继续</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
