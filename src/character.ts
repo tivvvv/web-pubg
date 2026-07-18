@@ -1,7 +1,8 @@
 // 低多边形人形角色(玩家与 bot 共用) + 背包物品 + 命中体
 import * as THREE from 'three';
-import type { AmmoType, GunState, MeleeState, ThrowableId } from './types';
+import type { AmmoType, ArmorState, GunState, MeleeState, ThrowableId } from './types';
 import { MELEE } from './weapons';
+import { buildHelmetModel, buildVestModel } from './armor';
 import { buildWeaponModel, type WeaponModel, type WeaponModelId } from './weaponmodels';
 import type { World } from './world';
 
@@ -21,7 +22,6 @@ export interface HumanParts {
 // 共享几何体(跨对局复用, 重开不泄漏)
 const GEO = {
   head: new THREE.BoxGeometry(0.3, 0.32, 0.3),
-  helmet: new THREE.BoxGeometry(0.34, 0.14, 0.34),
   torso: new THREE.BoxGeometry(0.52, 0.62, 0.3),
   arm: new THREE.BoxGeometry(0.14, 0.56, 0.14),
   leg: new THREE.BoxGeometry(0.17, 0.74, 0.17),
@@ -30,7 +30,6 @@ const GEO = {
 const MAT = {
   skin: new THREE.MeshLambertMaterial({ color: 0xd9a066 }),
   pants: new THREE.MeshLambertMaterial({ color: 0x3d4436 }),
-  helmet: new THREE.MeshLambertMaterial({ color: 0x4a5240 }),
 };
 
 const shirtCache = new Map<number, THREE.MeshLambertMaterial>();
@@ -58,9 +57,6 @@ export function buildHumanoid(shirtColor: number): { group: THREE.Group; parts: 
   head.position.set(0, 1.53, 0);
   head.castShadow = true;
   inner.add(head);
-  const helmet = new THREE.Mesh(GEO.helmet, MAT.helmet);
-  helmet.position.set(0, 1.72, 0);
-  inner.add(helmet);
 
   // 手臂: 肩部枢轴, 前平举持械
   const armL = new THREE.Group();
@@ -139,6 +135,8 @@ export class Character {
   throwables: Record<ThrowableId, number> = { frag: 0, smoke: 0 };
   throwKind: ThrowableId = 'frag'; // 当前选中的投掷物类型
   curSlot = 3; // 0/1 主武器, 2 手枪, 3 近战, 4 投掷物
+  helmet: ArmorState | null = null;  // 已装备头盔(减头部伤害)
+  vest: ArmorState | null = null;    // 已装备防弹衣(减身体伤害)
 
   swingT = 0;          // 挥击动画进度(1→0)
   lastMeleeT = -100;   // 上次挥击时间
@@ -150,6 +148,9 @@ export class Character {
   aimPitch = 0;        // ADS 时枪械俯仰(玩家控制器写入), bot 恒 0
 
   private heldId: WeaponModelId | null = null;
+  private armorKey = 0;              // 已同步的护具外观(helmetLvl*10+vestLvl)
+  private helmetMesh: THREE.Group | null = null;
+  private vestMesh: THREE.Group | null = null;
 
   readonly group: THREE.Group;
   readonly parts: HumanParts;
@@ -199,6 +200,29 @@ export class Character {
     return m.getWorldPosition(out);
   }
 
+  // 护具外观同步(装备变化时重建挂载, 平时零分配)
+  private swapArmor(): void {
+    const p = this.parts;
+    if (this.helmetMesh) {
+      p.inner.remove(this.helmetMesh);
+      this.helmetMesh = null;
+    }
+    if (this.vestMesh) {
+      p.inner.remove(this.vestMesh);
+      this.vestMesh = null;
+    }
+    if (this.helmet) {
+      this.helmetMesh = buildHelmetModel(this.helmet.level);
+      this.helmetMesh.position.set(0, 1.63, 0);
+      p.inner.add(this.helmetMesh);
+    }
+    if (this.vest) {
+      this.vestMesh = buildVestModel(this.vest.level);
+      this.vestMesh.position.set(0, 1.1, 0);
+      p.inner.add(this.vestMesh);
+    }
+  }
+
   // 切换手持模型(栏位/武器变化时调用; 克隆原型, 零逐帧分配)
   private swapHeld(id: WeaponModelId | null): void {
     if (id === this.heldId) return;
@@ -245,6 +269,12 @@ export class Character {
           : this.curSlot === 4 ? this.throwKind
             : null;
     this.swapHeld(wantId);
+    // 护具外观(装备/等级变化时重建)
+    const aKey = (this.helmet?.level ?? 0) * 10 + (this.vest?.level ?? 0);
+    if (aKey !== this.armorKey) {
+      this.armorKey = aKey;
+      this.swapArmor();
+    }
     // 枪姿态: ADS 俯仰 + 换弹下压; 弹匣中段脱落/回装
     const reloadDip = this.reload01 > 0 ? Math.sin(Math.min(1, this.reload01) * Math.PI) * 0.55 : 0;
     p.gun.rotation.x = -this.aimPitch + reloadDip;

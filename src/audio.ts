@@ -181,6 +181,14 @@ export class AudioSys {
     this.noiseBurst(0.3 * att, pan, 4300, 2.5, 0.3);
   }
 
+  // 护甲碎裂: 金属崩裂声
+  armorBreak(dist: number, pan: number): void {
+    const att = clamp(1.4 / (1 + dist * 0.03), 0.02, 1);
+    this.noiseBurst(0.5 * att, pan, 2400, 1.4, 0.18);
+    this.noiseBurst(0.3 * att, pan, 3600, 2.2, 0.22);
+    this.thump(0.3 * att, pan, 200, 90, 0.12);
+  }
+
   // 手雷爆炸: 低频轰 + 噪声
   explosion(dist: number, pan: number): void {
     const att = clamp(2.4 / (1 + dist * 0.018), 0.02, 1);

@@ -24,11 +24,21 @@
       <!-- 小地图 -->
       <canvas id="minimap" width="180" height="180"></canvas>
 
-      <!-- 底部左: 血量 -->
+      <!-- 底部左: 血量 + 护具 -->
       <div id="bottom-left">
         <div id="hp-row">
           <span id="hp-text">100</span>
           <div id="hp-bar"><div id="hp-fill"></div></div>
+          <div id="armor-row">
+            <div class="armor-slot dim" id="armor-helmet">
+              <span class="armor-ico">盔</span>
+              <div class="armor-bar"><div class="armor-fill" id="armor-helmet-fill"></div></div>
+            </div>
+            <div class="armor-slot dim" id="armor-vest">
+              <span class="armor-ico">甲</span>
+              <div class="armor-bar"><div class="armor-fill" id="armor-vest-fill"></div></div>
+            </div>
+          </div>
         </div>
       </div>
 

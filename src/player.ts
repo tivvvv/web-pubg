@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { Character } from './character';
 import type { Input } from './input';
 import { isWeaponKind } from './loot';
+import { ARMORS, armorFromLoot } from './armor';
 import { MELEE, WEAPONS } from './weapons';
 import { WATER_Y } from './world';
 import { clamp, lerp } from './utils';
@@ -177,8 +178,8 @@ export class PlayerController {
   private updatePickupPrompt(game: Game): void {
     const c = this.char;
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
-    // 武器候选: 最近的地上武器且大致在前方
-    let item = game.loot.nearestWeapon(c.pos.x, c.pos.y, c.pos.z, 2.6);
+    // 物品候选: 最近的武器/护具且大致在前方
+    let item = game.loot.nearestFPickup(c.pos.x, c.pos.y, c.pos.z, 2.6);
     let itemDot = -1;
     if (item) {
       const dx = item.group.position.x - c.pos.x;
@@ -208,6 +209,9 @@ export class PlayerController {
     } else if (isWeaponKind(k)) {
       const def = WEAPONS[k];
       game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${item.mag}+${item.ammo}）`);
+    } else {
+      const info = armorFromLoot(k);
+      if (info) game.hud.setPickupPrompt(`按 F 拾取 ${ARMORS[info.kind][info.level].name}`);
     }
   }
 

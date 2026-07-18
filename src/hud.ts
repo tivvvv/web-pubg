@@ -1,6 +1,7 @@
-// HUD: DOM 覆盖层管理(血量/弹药/背包/击杀/毒圈/信息流/准星/受击方向/提示)
+// HUD: DOM 覆盖层管理(血量/护甲/弹药/背包/击杀/毒圈/信息流/准星/受击方向/提示)
 import { fmtTime } from './utils';
-import type { GameStats } from './types';
+import type { ArmorState, GameStats } from './types';
+import { ARMORS, type ArmorKind } from './armor';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -14,12 +15,17 @@ export interface BackpackData {
   slots: { key: string; label: string; name: string; mag: string }[];
   ammo: { name: string; count: number }[];
   throwables: { name: string; count: number }[];
+  armor: { name: string; value: string }[];
   medkits: number;
 }
 
 export class Hud {
   private hpFill = el('hp-fill');
   private hpText = el('hp-text');
+  private armorHelmet = el('armor-helmet');
+  private armorHelmetFill = el('armor-helmet-fill');
+  private armorVest = el('armor-vest');
+  private armorVestFill = el('armor-vest-fill');
   private weaponName = el('weapon-name');
   private ammoMag = el('ammo-mag');
   private ammoReserve = el('ammo-reserve');
@@ -98,6 +104,25 @@ export class Hud {
     this.hpFill.style.backgroundColor = `hsl(${hue}, 75%, 45%)`;
   }
 
+  // 护具栏: 等级配色耐久条, 空槽置灰
+  setArmor(helmet: ArmorState | null, vest: ArmorState | null): void {
+    this.setArmorSlot(this.armorHelmet, this.armorHelmetFill, helmet, 'helmet');
+    this.setArmorSlot(this.armorVest, this.armorVestFill, vest, 'vest');
+  }
+
+  private setArmorSlot(box: HTMLElement, fill: HTMLElement, a: ArmorState | null, kind: ArmorKind): void {
+    if (!a) {
+      box.classList.add('dim');
+      fill.style.width = '0%';
+      return;
+    }
+    box.classList.remove('dim');
+    const def = ARMORS[kind][a.level];
+    const pct = Math.max(0, Math.min(100, (a.durability / def.maxDurability) * 100));
+    fill.style.width = `${pct}%`;
+    fill.style.backgroundColor = `#${def.color.toString(16).padStart(6, '0')}`;
+  }
+
   // 武器面板(字符串化, 枪械/近战通用)
   setWeapon(name: string, mag: string, reserve: string, mode: string): void {
     this.weaponName.textContent = name;
@@ -161,8 +186,12 @@ export class Hud {
     const throwRows = data.throwables
       .map((t) => `<div class="bp-row"><span class="bp-name">${t.name}</span><span class="bp-mag">× ${t.count}</span></div>`)
       .join('');
+    const armorRows = data.armor
+      .map((a) => `<div class="bp-row"><span class="bp-name">${a.name}</span><span class="bp-mag">${a.value}</span></div>`)
+      .join('');
     this.bpContent.innerHTML =
       `<div class="bp-section">武器</div>${slotRows}` +
+      `<div class="bp-section">护具</div>${armorRows}` +
       `<div class="bp-section">弹药</div>${ammoRows}` +
       `<div class="bp-section">投掷物</div>${throwRows}` +
       `<div class="bp-section">物资</div>` +

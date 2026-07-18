@@ -1,5 +1,6 @@
 // 总控: 主循环/对局状态/伤害结算/近战/拾取/背包/缩圈伤害/胜负判定
 import * as THREE from 'three';
+import { ARMORS, armorFromLoot, armorLootKind, isArmorKind, type ArmorKind, type ArmorLevel } from './armor';
 import { AudioSys } from './audio';
 import { BotController, BOT_NAMES } from './bot';
 import type { Destructible } from './buildings';
@@ -61,6 +62,7 @@ export class Game {
   private minimapT = 0;
   private bpT = 0;
   private hudSlotsKey = '';
+  private hudArmorKey = '';
   private shotDots: { x: number; z: number }[] = [];
 
   private shotRes = makeShotResult();
@@ -234,6 +236,13 @@ export class Game {
         name: THROWABLES[t].name,
         count: c.throwables[t],
       })),
+      armor: (['helmet', 'vest'] as const).map((k) => {
+        const a = c[k];
+        return {
+          name: k === 'helmet' ? '头盔' : '防弹衣',
+          value: a ? `${ARMORS[k][a.level].name} · 耐久 ${Math.ceil(a.durability)}/${ARMORS[k][a.level].maxDurability}` : '无',
+        };
+      }),
       medkits: c.medkits,
     };
     this.hud.backpackUpdate(data);
@@ -340,6 +349,15 @@ export class Game {
       bot.char.pos.set(p.x, this.world.getHeight(p.x, p.z), p.z);
       bot.char.yaw = rand(0, Math.PI * 2);
       if (Math.random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
+      // 40% bot 开局自带 L1~L2 头盔/防弹衣
+      if (Math.random() < 0.4) {
+        const lv: ArmorLevel = Math.random() < 0.65 ? 1 : 2;
+        bot.char.helmet = { level: lv, durability: ARMORS.helmet[lv].maxDurability };
+      }
+      if (Math.random() < 0.4) {
+        const lv: ArmorLevel = Math.random() < 0.65 ? 1 : 2;
+        bot.char.vest = { level: lv, durability: ARMORS.vest[lv].maxDurability };
+      }
       this.bots.push(bot);
       this.chars.push(bot.char);
       this.charsGroup.add(bot.char.group);
@@ -481,7 +499,7 @@ export class Game {
       const dmg = this.zone.dps * 0.5;
       for (const c of this.chars) {
         if (c.alive && this.zone.isOutside(c.pos.x, c.pos.z)) {
-          this.damageChar(c, dmg, false, null);
+          this.damageChar(c, dmg, false, null, undefined, true); // 毒圈无视护甲
         }
       }
     }
@@ -788,8 +806,18 @@ export class Game {
 
   // ---- 伤害/击杀 ----
 
-  damageChar(victim: Character, dmg: number, head: boolean, attacker: Character | null, via?: string): void {
+  damageChar(victim: Character, dmg: number, head: boolean, attacker: Character | null, via?: string, ignoreArmor = false): void {
     if (!victim.alive) return;
+    // 护具减伤: 子弹/近战有效; 爆炸与毒圈无视护甲
+    if (!ignoreArmor) {
+      const armor = head ? victim.helmet : victim.vest;
+      if (armor) {
+        const def = ARMORS[head ? 'helmet' : 'vest'][armor.level];
+        dmg *= 1 - def.reduce;            // 减免后的实际伤害
+        armor.durability -= dmg;          // 耐久吸收实际造成的伤害
+        if (armor.durability <= 0) this.breakArmor(victim, head ? 'helmet' : 'vest');
+      }
+    }
     victim.hp -= dmg;
     victim.lastAttackerId = attacker?.id ?? 0;
     if (victim.isPlayer && attacker) {
@@ -799,6 +827,15 @@ export class Game {
       this.audio.hit(false);
     }
     if (victim.hp <= 0) this.kill(victim, attacker, head, via);
+  }
+
+  // 护甲耐久归零: 碎裂音效(附近可闻) + 玩家提示, 槽位清空
+  private breakArmor(victim: Character, kind: ArmorKind): void {
+    if (kind === 'helmet') victim.helmet = null;
+    else victim.vest = null;
+    this.tmpEnd.set(victim.pos.x, victim.pos.y + 1.2, victim.pos.z);
+    this.soundAt(this.tmpEnd, (d, p) => this.audio.armorBreak(d, p));
+    if (victim.isPlayer) this.hud.toast(kind === 'helmet' ? '头盔已损坏' : '防弹衣已损坏');
   }
 
   private kill(victim: Character, attacker: Character | null, head: boolean, via?: string): void {
@@ -825,6 +862,17 @@ export class Game {
       const n = victim.throwables[t];
       if (n > 0) {
         this.loot.spawn(t, gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7), -1, n);
+      }
+    }
+    // 护具掉落(保留剩余耐久)
+    for (const kind of ['helmet', 'vest'] as const) {
+      const a = victim[kind];
+      if (a) {
+        this.loot.spawn(
+          armorLootKind(kind, a.level),
+          gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7),
+          -1, Math.max(1, Math.round(a.durability)),
+        );
       }
     }
 
@@ -911,9 +959,37 @@ export class Game {
     }
     const item = this.promptItem;
     if (!item || !item.active) return;
-    this.tryPickupWeapon(player.char, item);
+    if (isArmorKind(item.kind)) this.tryPickupArmor(player.char, item);
+    else this.tryPickupWeapon(player.char, item);
     this.promptItem = null;
     this.hud.setPickupPrompt(null);
+  }
+
+  // F 拾取护具: 空槽直接装备; 已有则换下的旧甲带剩余耐久落地
+  tryPickupArmor(c: Character, item: LootItem): boolean {
+    const info = armorFromLoot(item.kind);
+    if (!info) return false;
+    const def = ARMORS[info.kind][info.level];
+    const cur = info.kind === 'helmet' ? c.helmet : c.vest;
+    const durability = item.ammo > 0 ? item.ammo : def.maxDurability; // ammo 字段复用为耐久
+    if (cur) {
+      const curDef = ARMORS[info.kind][cur.level];
+      this.loot.spawn(
+        armorLootKind(info.kind, cur.level),
+        c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6),
+        -1, Math.max(1, Math.round(cur.durability)),
+      );
+      if (c.isPlayer) this.hud.toast(`换下 ${curDef.name}`);
+    }
+    const state = { level: info.level, durability };
+    if (info.kind === 'helmet') c.helmet = state;
+    else c.vest = state;
+    this.loot.consume(item);
+    if (c.isPlayer) {
+      this.hud.toast(`拾取 ${def.name}`);
+      this.audio.pickup();
+    }
+    return true;
   }
 
   // 弹药/医疗包: 走近自动拾取
@@ -1039,6 +1115,13 @@ export class Game {
     if (key !== this.hudSlotsKey) {
       this.hudSlotsKey = key;
       this.hud.setSlots(names, c.curSlot);
+    }
+
+    // 护具栏(耐久变化才刷新 DOM)
+    const aKey = `${c.helmet?.level ?? 0}:${Math.ceil(c.helmet?.durability ?? 0)}|${c.vest?.level ?? 0}:${Math.ceil(c.vest?.durability ?? 0)}`;
+    if (aKey !== this.hudArmorKey) {
+      this.hudArmorKey = aKey;
+      this.hud.setArmor(c.helmet, c.vest);
     }
 
     // 毒圈状态

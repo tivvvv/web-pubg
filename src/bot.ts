@@ -5,6 +5,7 @@ import type { WeaponId } from './types';
 import { WEAPONS } from './weapons';
 import { WATER_Y } from './world';
 import { isWeaponKind } from './loot';
+import { armorFromLoot, isArmorKind } from './armor';
 import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import type { Game } from './game';
 
@@ -91,16 +92,26 @@ export class BotController {
     // 被门/窗挡路 >1s: 开枪或挥刀破门
     this.updateDoorBreak(dt, game);
 
-    // 拾取: 弹药/医疗包/投掷物直接拿; 武器按需求拿(bot 自动)
+    // 拾取: 弹药/医疗包/投掷物直接拿; 武器/护具按需按 F 逻辑拿(bot 自动)
     const item = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
     if (item) {
       const k = item.kind;
-      if (!isWeaponKind(k)) {
+      if (!isWeaponKind(k) && !isArmorKind(k)) {
         game.applyAutoPickup(c, item);
+      } else if (isArmorKind(k)) {
+        if (this.wantsArmor(k)) game.tryPickupArmor(c, item);
       } else if (this.wantsWeapon(k)) {
         game.tryPickupWeapon(c, item);
       }
     }
+  }
+
+  // 是否想要这件护具: 空槽或更高等级
+  private wantsArmor(kind: import('./types').LootKind): boolean {
+    const info = armorFromLoot(kind);
+    if (!info) return false;
+    const cur = info.kind === 'helmet' ? this.char.helmet : this.char.vest;
+    return !cur || cur.level < info.level;
   }
 
   // 附近有活手雷: 反向全速逃离
@@ -397,9 +408,10 @@ export class BotController {
       this.pickWanderPoint(game);
     }
 
-    // 没枪时强烈优先找武器; 枪差时也会捡顺路的
+    // 没枪时强烈优先找武器; 枪差时也会捡顺路的; 缺甲时顺路找更好的甲
     const bestSlot = c.bestGunSlot();
     const tier = bestSlot >= 0 ? (c.guns[bestSlot]?.def.tier ?? 0) : 0;
+    let gearFound = false;
     if (!outside && tier < 3) {
       const item = game.loot.nearestWeapon(c.pos.x, c.pos.y, c.pos.z, tier === 0 ? 50 : 16);
       if (item) {
@@ -407,7 +419,15 @@ export class BotController {
         if (isWeaponKind(k) && this.wantsWeapon(k)) {
           this.moveTarget.copy(item.group.position);
           this.hasMoveTarget = true;
+          gearFound = true;
         }
+      }
+    }
+    if (!outside && !gearFound && (!c.helmet || !c.vest || c.helmet.level < 3 || c.vest.level < 3)) {
+      const ai = game.loot.nearestArmor(c.pos.x, c.pos.y, c.pos.z, 26);
+      if (ai && this.wantsArmor(ai.kind)) {
+        this.moveTarget.copy(ai.group.position);
+        this.hasMoveTarget = true;
       }
     }
 

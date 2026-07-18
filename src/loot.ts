@@ -1,8 +1,9 @@
-// 战利品: 漂浮旋转发光物; 枪械需按 F 拾取, 弹药/医疗包走近自动拾取
+// 战利品: 漂浮旋转发光物; 枪械/护具需按 F 拾取, 弹药/医疗包走近自动拾取
 import * as THREE from 'three';
 import type { LootKind, WeaponId } from './types';
 import { rand } from './utils';
 import { AMMO_PACK, WEAPONS } from './weapons';
+import { armorFromLoot, buildHelmetModel, buildVestModel, isArmorKind } from './armor';
 import { buildWeaponModel } from './weaponmodels';
 import { WATER_Y, type World } from './world';
 
@@ -42,6 +43,13 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   medkit: new THREE.MeshBasicMaterial({ color: 0xf2f2f2, transparent: true, opacity: 0.5 }),
   frag: new THREE.MeshBasicMaterial({ color: 0x86c03c, transparent: true, opacity: 0.5 }),
   smoke: new THREE.MeshBasicMaterial({ color: 0xd7dde3, transparent: true, opacity: 0.5 }),
+  // 护具: 蓝白色系光环
+  helmet1: new THREE.MeshBasicMaterial({ color: 0x8fc8ff, transparent: true, opacity: 0.5 }),
+  helmet2: new THREE.MeshBasicMaterial({ color: 0x8fc8ff, transparent: true, opacity: 0.5 }),
+  helmet3: new THREE.MeshBasicMaterial({ color: 0x8fc8ff, transparent: true, opacity: 0.5 }),
+  vest1: new THREE.MeshBasicMaterial({ color: 0x5aa8f0, transparent: true, opacity: 0.5 }),
+  vest2: new THREE.MeshBasicMaterial({ color: 0x5aa8f0, transparent: true, opacity: 0.5 }),
+  vest3: new THREE.MeshBasicMaterial({ color: 0x5aa8f0, transparent: true, opacity: 0.5 }),
 };
 
 function buildLootMesh(kind: LootKind): THREE.Group {
@@ -60,6 +68,15 @@ function buildLootMesh(kind: LootKind): THREE.Group {
     wm.group.rotation.set(-0.3, 0, 0.5);
     wm.group.position.y = 0.02;
     holder.add(wm.group);
+  } else if (isArmorKind(kind)) {
+    // 护具模型: 头盔/防弹衣, 按等级配色
+    const info = armorFromLoot(kind);
+    if (info) {
+      const am = info.kind === 'helmet' ? buildHelmetModel(info.level) : buildVestModel(info.level);
+      am.rotation.set(-0.25, 0, 0.35);
+      am.position.y = info.kind === 'helmet' ? -0.05 : 0.1;
+      holder.add(am);
+    }
   } else if (kind === 'ammo') {
     holder.add(new THREE.Mesh(GEO.ammo, MAT.ammo));
   } else {
@@ -116,34 +133,46 @@ export class LootManager {
   private rollKind(table: 'wild' | 'indoor' | 'premium'): LootKind {
     const r = Math.random();
     if (table === 'premium') {
-      // 二楼: 偏高级枪
-      if (r < 0.3) return 'rifle';
-      if (r < 0.55) return 'sniper';
-      if (r < 0.7) return 'smg';
-      if (r < 0.76) return 'frag';
-      if (r < 0.81) return 'smoke';
-      if (r < 0.92) return 'ammo';
+      // 二楼: 偏高级枪, 三级甲只在这里像样地刷
+      if (r < 0.28) return 'rifle';
+      if (r < 0.51) return 'sniper';
+      if (r < 0.64) return 'smg';
+      if (r < 0.69) return 'frag';
+      if (r < 0.74) return 'smoke';
+      if (r < 0.77) return 'helmet3';
+      if (r < 0.8) return 'vest3';
+      if (r < 0.83) return 'helmet2';
+      if (r < 0.86) return 'vest2';
+      if (r < 0.94) return 'ammo';
       return 'medkit';
     }
     if (table === 'indoor') {
-      if (r < 0.16) return 'rifle';
-      if (r < 0.29) return 'smg';
-      if (r < 0.35) return 'sniper';
-      if (r < 0.43) return 'pistol';
-      if (r < 0.5) return 'knife';
-      if (r < 0.55) return 'frag';
-      if (r < 0.6) return 'smoke';
-      if (r < 0.78) return 'ammo';
+      if (r < 0.15) return 'rifle';
+      if (r < 0.27) return 'smg';
+      if (r < 0.33) return 'sniper';
+      if (r < 0.41) return 'pistol';
+      if (r < 0.47) return 'knife';
+      if (r < 0.52) return 'frag';
+      if (r < 0.57) return 'smoke';
+      if (r < 0.62) return 'helmet1';
+      if (r < 0.67) return 'vest1';
+      if (r < 0.69) return 'helmet2';
+      if (r < 0.71) return 'vest2';
+      if (r < 0.86) return 'ammo';
       return 'medkit';
     }
-    if (r < 0.09) return 'rifle';
-    if (r < 0.18) return 'smg';
-    if (r < 0.23) return 'sniper';
-    if (r < 0.3) return 'pistol';
-    if (r < 0.36) return 'knife';
-    if (r < 0.42) return 'frag';
-    if (r < 0.47) return 'smoke';
-    if (r < 0.68) return 'ammo';
+    if (r < 0.08) return 'rifle';
+    if (r < 0.16) return 'smg';
+    if (r < 0.21) return 'sniper';
+    if (r < 0.28) return 'pistol';
+    if (r < 0.34) return 'knife';
+    if (r < 0.39) return 'frag';
+    if (r < 0.44) return 'smoke';
+    if (r < 0.5) return 'helmet1';
+    if (r < 0.56) return 'vest1';
+    if (r < 0.58) return 'helmet2';
+    if (r < 0.6) return 'vest2';
+    if (r < 0.82) return 'ammo';
     return 'medkit';
   }
 
@@ -166,10 +195,14 @@ export class LootManager {
       const def = WEAPONS[kind];
       item.mag = mag >= 0 ? mag : def.magSize;
       item.ammo = ammo > 0 ? ammo : Math.max(1, Math.floor(AMMO_PACK[def.ammo] * 0.6));
-    } else {
+    } else if (kind === 'frag' || kind === 'smoke') {
       item.mag = -1;
       // 投掷物掉落用 ammo 字段携带堆叠数(死亡掉落时为 >1 的 stack)
-      item.ammo = (kind === 'frag' || kind === 'smoke') ? Math.max(1, ammo) : 0;
+      item.ammo = Math.max(1, ammo);
+    } else {
+      item.mag = -1;
+      // 护具用 ammo 字段携带剩余耐久(0 = 满耐久新刷)
+      item.ammo = Math.max(0, ammo);
     }
     item.active = true;
     item.baseY = groundY + 1.0;
@@ -213,6 +246,42 @@ export class LootManager {
     let bestD = maxDist * maxDist;
     for (const it of this.items) {
       if (!it.active || !isWeaponKind(it.kind)) continue;
+      const dx = it.group.position.x - x;
+      const dy = it.group.position.y - y - 1;
+      const dz = it.group.position.z - z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = it;
+      }
+    }
+    return best;
+  }
+
+  // 最近的 F 拾取物(武器 + 护具), 玩家提示用
+  nearestFPickup(x: number, y: number, z: number, maxDist: number): LootItem | null {
+    let best: LootItem | null = null;
+    let bestD = maxDist * maxDist;
+    for (const it of this.items) {
+      if (!it.active || (!isWeaponKind(it.kind) && !isArmorKind(it.kind))) continue;
+      const dx = it.group.position.x - x;
+      const dy = it.group.position.y - y - 1;
+      const dz = it.group.position.z - z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = it;
+      }
+    }
+    return best;
+  }
+
+  // 最近的护具(bot 寻宝用)
+  nearestArmor(x: number, y: number, z: number, maxDist: number): LootItem | null {
+    let best: LootItem | null = null;
+    let bestD = maxDist * maxDist;
+    for (const it of this.items) {
+      if (!it.active || !isArmorKind(it.kind)) continue;
       const dx = it.group.position.x - x;
       const dy = it.group.position.y - y - 1;
       const dz = it.group.position.z - z;

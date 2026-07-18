@@ -427,7 +427,7 @@ export class GrenadeManager {
       const d = Math.hypot(dx, dy, dz);
       if (d > 9) continue;
       const dmg = 110 - 95 * (d / 9);
-      game.damageChar(c, dmg, false, s.thrower, '手雷');
+      game.damageChar(c, dmg, false, s.thrower, '手雷', true); // 爆炸无视护甲
     }
     // 5m 内门窗全部摧毁
     for (const dst of game.world.buildings.destructibles) {
