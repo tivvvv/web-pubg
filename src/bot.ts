@@ -6,6 +6,7 @@ import { WEAPONS } from './weapons';
 import { WATER_Y } from './world';
 import { isWeaponKind } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
+import { isPackKind, packLevelFromLoot } from './backpack';
 import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import type { Game } from './game';
 
@@ -108,14 +109,17 @@ export class BotController {
     // 被门/窗挡路 >1s: 开枪或挥刀破门
     this.updateDoorBreak(dt, game);
 
-    // 拾取: 弹药/医疗包/投掷物直接拿; 武器/护具按需按 F 逻辑拿(bot 自动)
+    // 拾取: 弹药/恢复品/投掷物直接拿; 武器/护具/背包按需按 F 逻辑拿(bot 自动)
     const item = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
     if (item) {
       const k = item.kind;
-      if (!isWeaponKind(k) && !isArmorKind(k)) {
+      if (!isWeaponKind(k) && !isArmorKind(k) && !isPackKind(k)) {
         game.applyAutoPickup(c, item);
       } else if (isArmorKind(k)) {
         if (this.wantsArmor(k)) game.tryPickupArmor(c, item);
+      } else if (isPackKind(k)) {
+        const lv = packLevelFromLoot(k);
+        if (lv && (!c.pack || c.pack.level < lv)) game.tryPickupPack(c, item);
       } else if (this.wantsWeapon(k)) {
         game.tryPickupWeapon(c, item);
       }

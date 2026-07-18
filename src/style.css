@@ -682,6 +682,32 @@ body {
   font-size: 14px;
 }
 
+/* 负重容量条 */
+.bp-cap {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.bp-cap-bar {
+  flex: 1;
+  height: 8px;
+  background: rgba(8, 10, 8, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bp-cap-fill {
+  height: 100%;
+  background: #d8b878;
+}
+
+.bp-cap-fill.full {
+  background: #e05545;
+}
+
 .bp-key {
   width: 20px;
   height: 20px;

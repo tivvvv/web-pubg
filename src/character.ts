@@ -4,6 +4,7 @@ import type { AmmoType, ArmorState, GunState, MeleeState, ThrowableId } from './
 import type { HealId } from './heals';
 import { MELEE } from './weapons';
 import { buildHelmetModel, buildVestModel } from './armor';
+import { buildPackModel, type PackLevel } from './backpack';
 import { buildWeaponModel, type WeaponModel, type WeaponModelId } from './weaponmodels';
 import type { World } from './world';
 
@@ -138,6 +139,7 @@ export class Character {
   curSlot = 3; // 0/1 主武器, 2 手枪, 3 近战, 4 投掷物
   helmet: ArmorState | null = null;  // 已装备头盔(减头部伤害)
   vest: ArmorState | null = null;    // 已装备防弹衣(减身体伤害)
+  pack: { level: PackLevel } | null = null; // 已装备背包(加负重)
 
   swingT = 0;          // 挥击动画进度(1→0)
   lastMeleeT = -100;   // 上次挥击时间
@@ -149,9 +151,10 @@ export class Character {
   aimPitch = 0;        // ADS 时枪械俯仰(玩家控制器写入), bot 恒 0
 
   private heldId: WeaponModelId | null = null;
-  private armorKey = 0;              // 已同步的护具外观(helmetLvl*10+vestLvl)
+  private armorKey = 0;              // 已同步的护具外观(helmetLvl*100+vestLvl*10+packLvl)
   private helmetMesh: THREE.Group | null = null;
   private vestMesh: THREE.Group | null = null;
+  private packMesh: THREE.Group | null = null;
 
   readonly group: THREE.Group;
   readonly parts: HumanParts;
@@ -212,6 +215,10 @@ export class Character {
       p.inner.remove(this.vestMesh);
       this.vestMesh = null;
     }
+    if (this.packMesh) {
+      p.inner.remove(this.packMesh);
+      this.packMesh = null;
+    }
     if (this.helmet) {
       this.helmetMesh = buildHelmetModel(this.helmet.level);
       this.helmetMesh.position.set(0, 1.63, 0);
@@ -221,6 +228,11 @@ export class Character {
       this.vestMesh = buildVestModel(this.vest.level);
       this.vestMesh.position.set(0, 1.1, 0);
       p.inner.add(this.vestMesh);
+    }
+    if (this.pack) {
+      this.packMesh = buildPackModel(this.pack.level);
+      this.packMesh.position.set(0, 1.12, -0.31); // 背部(模型正面朝 +z)
+      p.inner.add(this.packMesh);
     }
   }
 
@@ -271,7 +283,7 @@ export class Character {
             : null;
     this.swapHeld(wantId);
     // 护具外观(装备/等级变化时重建)
-    const aKey = (this.helmet?.level ?? 0) * 10 + (this.vest?.level ?? 0);
+    const aKey = (this.helmet?.level ?? 0) * 100 + (this.vest?.level ?? 0) * 10 + (this.pack?.level ?? 0);
     if (aKey !== this.armorKey) {
       this.armorKey = aKey;
       this.swapArmor();

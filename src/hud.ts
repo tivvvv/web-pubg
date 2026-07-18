@@ -17,6 +17,8 @@ export interface BackpackData {
   ammo: { name: string; count: number }[];
   throwables: { name: string; count: number }[];
   armor: { name: string; value: string }[];
+  weight: { cur: number; cap: number };
+  packName: string;
   heals: { id: HealId; name: string; count: number }[];
 }
 
@@ -218,9 +220,15 @@ export class Hud {
           `<button id="bp-use-${h.id}" class="bp-btn" ${h.count > 0 ? '' : 'disabled'}>使用</button></div>`,
       )
       .join('');
+    const capPct = Math.min(100, (data.weight.cur / Math.max(1, data.weight.cap)) * 100);
+    const capRow =
+      `<div class="bp-row bp-cap"><span class="bp-name">负重 ${data.weight.cur}/${data.weight.cap}</span>` +
+      `<div class="bp-cap-bar"><div class="bp-cap-fill${capPct >= 100 ? ' full' : ''}" style="width:${capPct.toFixed(0)}%"></div></div></div>`;
     this.bpContent.innerHTML =
+      capRow +
       `<div class="bp-section">武器</div>${slotRows}` +
       `<div class="bp-section">护具</div>${armorRows}` +
+      `<div class="bp-row"><span class="bp-name">背包</span><span class="bp-mag">${data.packName}</span></div>` +
       `<div class="bp-section">弹药</div>${ammoRows}` +
       `<div class="bp-section">投掷物</div>${throwRows}` +
       `<div class="bp-section">恢复品 (X 智能使用)</div>${healRows}`;

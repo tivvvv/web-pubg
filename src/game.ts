@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { ARMORS, armorFromLoot, armorLootKind, isArmorKind, type ArmorKind, type ArmorLevel } from './armor';
 import { AudioSys } from './audio';
+import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
 import { BotController, BOT_NAMES } from './bot';
 import type { Destructible } from './buildings';
 import { Character, BOT_SHIRTS } from './character';
@@ -13,7 +14,7 @@ import { LootManager, isWeaponKind, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
 import { GrenadeManager } from './throwables';
-import type { DestructibleLike, GameStats, LootKind, ThrowableId } from './types';
+import type { AmmoType, DestructibleLike, GameStats, LootKind, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
 import { AMMO_NAME, AMMO_PACK, MELEE, THROWABLES, WEAPONS, applySpread, hitscan, makeShotResult } from './weapons';
 import { MUZZLE_SCALE } from './weaponmodels';
@@ -245,6 +246,8 @@ export class Game {
           value: a ? `${ARMORS[k][a.level].name} · 耐久 ${Math.ceil(a.durability)}/${ARMORS[k][a.level].maxDurability}` : '无',
         };
       }),
+      weight: { cur: Math.round(carryWeight(c)), cap: carryCapacity(c.pack) },
+      packName: c.pack ? `${PACKS[c.pack.level].name} · +${PACKS[c.pack.level].bonus} 负重` : '无',
       heals: HEAL_ORDER.map((id) => ({ id, name: HEALS[id].name, count: c.heals[id] })),
     };
     this.hud.backpackUpdate(data);
@@ -395,6 +398,7 @@ export class Game {
       bot.char.yaw = rand(0, Math.PI * 2);
       if (Math.random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
       if (Math.random() < 0.5) bot.char.heals.bandage = 1 + Math.floor(Math.random() * 2); // 50% 带 1~2 绷带
+      if (Math.random() < 0.35) bot.char.pack = { level: Math.random() < 0.7 ? 1 : 2 }; // 35% 带 L1~L2 背包
       // 40% bot 开局自带 L1~L2 头盔/防弹衣
       if (Math.random() < 0.4) {
         const lv: ArmorLevel = Math.random() < 0.65 ? 1 : 2;
@@ -931,6 +935,10 @@ export class Game {
         );
       }
     }
+    // 背包掉落
+    if (victim.pack) {
+      this.loot.spawn(packLootKind(victim.pack.level), gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7));
+    }
 
     // 击杀信息
     if (attacker) {
@@ -1016,9 +1024,32 @@ export class Game {
     const item = this.promptItem;
     if (!item || !item.active) return;
     if (isArmorKind(item.kind)) this.tryPickupArmor(player.char, item);
+    else if (isPackKind(item.kind)) this.tryPickupPack(player.char, item);
     else this.tryPickupWeapon(player.char, item);
     this.promptItem = null;
     this.hud.setPickupPrompt(null);
+  }
+
+  // F 拾取背包: 空槽直接装备; 已有则换下的旧包落地
+  // 换更小背包时若当前负重超新容量 → 拒绝(超重换包不允许)
+  tryPickupPack(c: Character, item: LootItem): boolean {
+    const level = packLevelFromLoot(item.kind);
+    if (!level) return false;
+    if (c.isPlayer && carryWeight(c) > carryCapacity({ level })) {
+      this.hud.toast('负重超出, 无法更换更小的背包');
+      return false;
+    }
+    if (c.pack) {
+      this.loot.spawn(packLootKind(c.pack.level), c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6));
+      if (c.isPlayer) this.hud.toast(`换下 ${PACKS[c.pack.level].name}`);
+    }
+    c.pack = { level };
+    this.loot.consume(item);
+    if (c.isPlayer) {
+      this.hud.toast(`拾取 ${PACKS[level].name}`);
+      this.audio.pickup();
+    }
+    return true;
   }
 
   // F 拾取护具: 空槽直接装备; 已有则换下的旧甲带剩余耐久落地
@@ -1048,28 +1079,75 @@ export class Game {
     return true;
   }
 
-  // 弹药/医疗包: 走近自动拾取
+  // 负重满提示(走近拾取每帧触发, 节流 2s)
+  private capToastT = -10;
+  private toastCapacityFull(): void {
+    if (this.now - this.capToastT > 2) {
+      this.capToastT = this.now;
+      this.hud.toast('背包已满');
+    }
+  }
+
+  // 弹药/恢复品/投掷物: 走近自动拾取(玩家受负重限制, bot 不受限)
   applyAutoPickup(c: Character, item: LootItem): boolean {
     if (item.kind === 'frag' || item.kind === 'smoke') {
       const kind: ThrowableId = item.kind;
       const def = THROWABLES[kind];
-      if (c.throwables[kind] >= def.max) return false;
       const stack = item.ammo > 0 ? item.ammo : 1; // ammo 字段复用为叠放数量
-      c.throwables[kind] = Math.min(def.max, c.throwables[kind] + stack);
-      this.loot.consume(item);
+      const space = def.max - c.throwables[kind];
+      if (space <= 0) return false;
+      const unitW = THROW_WEIGHT[kind];
+      const afford = c.isPlayer ? Math.floor((carryCapacity(c.pack) - carryWeight(c) + 1e-6) / unitW) : stack;
+      const take = Math.min(space, stack, afford);
+      if (take <= 0) {
+        if (c.isPlayer) this.toastCapacityFull();
+        return false;
+      }
+      c.throwables[kind] += take;
+      if (take < stack) {
+        item.ammo = stack - take; // 剩余留在地上
+      } else {
+        this.loot.consume(item);
+      }
       if (c.isPlayer) {
-        this.hud.toast(`拾取${def.name}${stack > 1 ? `×${stack}` : ''}（按 5 使用）`);
+        this.hud.toast(`拾取${def.name}${take > 1 ? `×${take}` : ''}（按 5 使用）`);
         this.audio.pickup();
       }
       return true;
     }
     if (item.kind === 'ammo') {
-      for (const t of ['pistol', 'rifle', 'smg', 'sniper'] as const) {
-        c.ammo[t] += AMMO_PACK[t];
+      // 按负重逐种拾取(步枪弹优先), 拿不下的留在地上
+      const content = item.pack ?? AMMO_PACK;
+      let weightLeft = c.isPlayer ? carryCapacity(c.pack) - carryWeight(c) : Infinity;
+      let took = 0;
+      let anyLeft = false;
+      const remain: Partial<Record<AmmoType, number>> = {};
+      for (const t of ['rifle', 'smg', 'pistol', 'sniper'] as const) {
+        const n = content[t] ?? 0;
+        if (n <= 0) continue;
+        const afford = Math.floor((weightLeft + 1e-6) / ROUND_WEIGHT);
+        const take = Math.min(n, afford);
+        if (take > 0) {
+          c.ammo[t] += take;
+          weightLeft -= take * ROUND_WEIGHT;
+          took += take;
+        }
+        if (take < n) {
+          remain[t] = n - take;
+          anyLeft = true;
+        }
       }
-      this.loot.consume(item);
+      if (took <= 0) {
+        if (c.isPlayer) this.toastCapacityFull();
+        return false;
+      }
+      if (anyLeft) {
+        item.pack = remain;
+      } else {
+        this.loot.consume(item);
+      }
       if (c.isPlayer) {
-        this.hud.toast('拾取弹药包');
+        this.hud.toast(anyLeft ? `拾取部分弹药 (${took} 发)` : '拾取弹药包');
         this.audio.pickup();
       }
       return true;
@@ -1079,7 +1157,14 @@ export class Game {
       const stack = item.ammo > 0 ? item.ammo : 1; // ammo 字段复用为叠放数量
       const space = def.max - c.heals[item.kind];
       if (space <= 0) return false; // 满了, 留在地上
-      const take = Math.min(space, stack);
+      const afford = c.isPlayer
+        ? Math.floor((carryCapacity(c.pack) - carryWeight(c) + 1e-6) / HEAL_WEIGHT[item.kind])
+        : stack;
+      const take = Math.min(space, stack, afford);
+      if (take <= 0) {
+        if (c.isPlayer) this.toastCapacityFull();
+        return false;
+      }
       c.heals[item.kind] += take;
       if (take < stack) {
         item.ammo = stack - take; // 剩余留在地上

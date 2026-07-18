@@ -1,9 +1,10 @@
 // 战利品: 漂浮旋转发光物; 枪械/护具需按 F 拾取, 弹药/医疗包走近自动拾取
 import * as THREE from 'three';
-import type { LootKind, WeaponId } from './types';
+import type { AmmoType, LootKind, WeaponId } from './types';
 import { rand } from './utils';
 import { AMMO_PACK, WEAPONS } from './weapons';
 import { armorFromLoot, buildHelmetModel, buildVestModel, isArmorKind } from './armor';
+import { buildPackModel, isPackKind, packLevelFromLoot } from './backpack';
 import { buildWeaponModel } from './weaponmodels';
 import { WATER_Y, type World } from './world';
 
@@ -15,6 +16,7 @@ export interface LootItem {
   phase: number;
   mag: number;   // 枪械: 已装弹数(-1 = 非武器)
   ammo: number;  // 枪械: 附带备弹
+  pack?: Partial<Record<AmmoType, number>>; // 弹药包: 部分拾取后剩余弹量(缺省 = 整包)
 }
 
 const LOOT_CAP = 150;
@@ -57,6 +59,10 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   vest1: new THREE.MeshBasicMaterial({ color: 0x5aa8f0, transparent: true, opacity: 0.5 }),
   vest2: new THREE.MeshBasicMaterial({ color: 0x5aa8f0, transparent: true, opacity: 0.5 }),
   vest3: new THREE.MeshBasicMaterial({ color: 0x5aa8f0, transparent: true, opacity: 0.5 }),
+  // 背包: 黄褐色系光环
+  pack1: new THREE.MeshBasicMaterial({ color: 0xd8b878, transparent: true, opacity: 0.5 }),
+  pack2: new THREE.MeshBasicMaterial({ color: 0xd8b878, transparent: true, opacity: 0.5 }),
+  pack3: new THREE.MeshBasicMaterial({ color: 0xd8b878, transparent: true, opacity: 0.5 }),
 };
 
 function buildLootMesh(kind: LootKind): THREE.Group {
@@ -83,6 +89,14 @@ function buildLootMesh(kind: LootKind): THREE.Group {
       am.rotation.set(-0.25, 0, 0.35);
       am.position.y = info.kind === 'helmet' ? -0.05 : 0.1;
       holder.add(am);
+    }
+  } else if (isPackKind(kind)) {
+    // 背包模型: 按等级配色, 直立微倾
+    const level = packLevelFromLoot(kind);
+    if (level) {
+      const pm = buildPackModel(level);
+      pm.rotation.set(-0.15, 0, 0.2);
+      holder.add(pm);
     }
   } else if (kind === 'bandage') {
     // 绷带卷(放倒的白色小卷)
@@ -158,9 +172,11 @@ export class LootManager {
       if (r < 0.8) return 'vest3';
       if (r < 0.83) return 'helmet2';
       if (r < 0.86) return 'vest2';
-      if (r < 0.92) return 'ammo';
-      if (r < 0.96) return 'bandage';
-      if (r < 0.98) return 'drink';
+      if (r < 0.88) return 'ammo';
+      if (r < 0.92) return 'pack2';
+      if (r < 0.95) return 'pack3'; // 三级背包主要在高级房
+      if (r < 0.97) return 'bandage';
+      if (r < 0.99) return 'drink';
       return 'medkit'; // 高级房才有像样概率
     }
     if (table === 'indoor') {
@@ -175,7 +191,9 @@ export class LootManager {
       if (r < 0.67) return 'vest1';
       if (r < 0.69) return 'helmet2';
       if (r < 0.71) return 'vest2';
-      if (r < 0.84) return 'ammo';
+      if (r < 0.79) return 'ammo';
+      if (r < 0.85) return 'pack1';
+      if (r < 0.87) return 'pack2';
       if (r < 0.94) return 'bandage';
       if (r < 0.98) return 'drink';
       return 'medkit';
@@ -191,7 +209,9 @@ export class LootManager {
     if (r < 0.56) return 'vest1';
     if (r < 0.58) return 'helmet2';
     if (r < 0.6) return 'vest2';
-    if (r < 0.8) return 'ammo';
+    if (r < 0.75) return 'ammo';
+    if (r < 0.8) return 'pack1';
+    if (r < 0.82) return 'pack2';
     if (r < 0.92) return 'bandage';
     if (r < 0.97) return 'drink';
     return 'medkit';
@@ -228,6 +248,7 @@ export class LootManager {
     item.active = true;
     item.baseY = groundY + 1.0;
     item.phase = Math.random() * Math.PI * 2;
+    item.pack = undefined; // 弹药包恢复整包(复用池项可能带部分余量)
     item.group.position.set(x, item.baseY, z);
     item.group.visible = true;
     return item;
@@ -279,12 +300,12 @@ export class LootManager {
     return best;
   }
 
-  // 最近的 F 拾取物(武器 + 护具), 玩家提示用
+  // 最近的 F 拾取物(武器 + 护具 + 背包), 玩家提示用
   nearestFPickup(x: number, y: number, z: number, maxDist: number): LootItem | null {
     let best: LootItem | null = null;
     let bestD = maxDist * maxDist;
     for (const it of this.items) {
-      if (!it.active || (!isWeaponKind(it.kind) && !isArmorKind(it.kind))) continue;
+      if (!it.active || (!isWeaponKind(it.kind) && !isArmorKind(it.kind) && !isPackKind(it.kind))) continue;
       const dx = it.group.position.x - x;
       const dy = it.group.position.y - y - 1;
       const dz = it.group.position.z - z;
