@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { AudioSys } from './audio';
 import { BotController, BOT_NAMES } from './bot';
+import type { Destructible } from './buildings';
 import { Character, BOT_SHIRTS } from './character';
 import { Effects } from './effects';
 import { Hud, type BackpackData } from './hud';
@@ -36,6 +37,7 @@ export class Game {
   readonly staticHit: StaticHit = { t: 0, kind: 'terrain' };
 
   promptItem: LootItem | null = null;   // 当前可拾取武器提示
+  promptDoor: Destructible | null = null; // 当前可开/关的门提示(优先于武器当看得更正)
   backpackOpen = false;
   healT = -1;                            // >0 = 包扎进行中(剩余秒)
   shakeAmp = 0;                          // 相机震动幅度(爆炸)
@@ -358,6 +360,7 @@ export class Game {
     this.minimapT = 0;
     this.healT = -1;
     this.promptItem = null;
+    this.promptDoor = null;
     this.backpackOpen = false;
     this.hudSlotsKey = '';
 
@@ -395,6 +398,7 @@ export class Game {
       this.player.update(dt, this.input, this); // 仅相机
       this.effects.update(dt);
       this.grenades.update(dt, this);
+      this.world.buildings.update(dt); // 门扇动画收尾
       for (const c of this.chars) c.syncModel(dt, false);
     }
     this.hud.update(dt);
@@ -422,6 +426,7 @@ export class Game {
     this.loot.update(dt);
     this.effects.update(dt);
     this.grenades.update(dt, this);
+    this.world.buildings.update(dt); // 门扇开关动画
     this.shakeAmp *= Math.exp(-6 * dt);
     this.updateHeal(dt);
     this.world.updateShadow(player.char.pos.x, player.char.pos.z);
@@ -604,7 +609,7 @@ export class Game {
     let best: DestructibleLike | null = null;
     let bestD = 2.2;
     for (const d of this.world.buildings.destructibles) {
-      if (!d.alive) continue;
+      if (!d.alive || d.collider.off) continue; // 开着的门不再挡路
       const dx = d.cx - c.pos.x;
       const dz = d.cz - c.pos.z;
       const dist = Math.hypot(dx, dz);
@@ -615,6 +620,48 @@ export class Game {
       bestD = dist;
     }
     return best;
+  }
+
+  // 玩家门交互候选: 2.2m 内看得最正的活门(返回门与朝向点积)
+  findDoorInteraction(x: number, y: number, z: number, fx: number, fz: number): { d: Destructible; dot: number } | null {
+    let best: Destructible | null = null;
+    let bestDot = 0.35;
+    for (const d of this.world.buildings.destructibles) {
+      if (d.kind !== 'door' || !d.alive) continue;
+      const dx = d.cx - x;
+      const dz = d.cz - z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 2.2) continue;
+      if (Math.abs(d.cy - (y + 1.2)) > 2.2) continue;
+      const dot = dist > 0.01 ? (dx * fx + dz * fz) / dist : 1;
+      if (dot < bestDot) continue;
+      best = d;
+      bestDot = dot;
+    }
+    return best ? { d: best, dot: bestDot } : null;
+  }
+
+  // 开/关门切换(玩家按 F); 带方位吱呀声
+  toggleDoor(d: DestructibleLike): void {
+    this.setDoor(d, !this.asDoor(d)?.open);
+  }
+
+  // bot 开门(幂等, 只开不关)
+  openDoor(d: DestructibleLike): void {
+    this.setDoor(d, true);
+  }
+
+  private asDoor(d: DestructibleLike): Destructible | null {
+    const dd = d as Destructible;
+    return dd.kind === 'door' && dd.alive ? dd : null;
+  }
+
+  private setDoor(d: DestructibleLike, open: boolean): void {
+    const dd = this.asDoor(d);
+    if (!dd) return;
+    if (!this.world.buildings.setDoorOpen(dd, open)) return;
+    this.tmpEnd.set(dd.cx, dd.cy, dd.cz);
+    this.soundAt(this.tmpEnd, (dist, pan) => this.audio.creak(dist, pan, open));
   }
 
   // ---- 投掷物 ----
@@ -844,17 +891,26 @@ export class Game {
     this.hud.setScope(false);
     this.hud.setZoneTint(false);
     this.hud.setPickupPrompt(null);
+    this.promptDoor = null;
     this.hud.setHealCast(-1);
     this.input.exitLock();
   }
 
   // ---- 拾取 ----
 
-  // 玩家按 F 拾取提示中的武器
+  // 玩家按 F: 优先开/关提示中的门, 否则拾取提示中的武器
   private playerPick(): void {
     const player = this.player;
+    if (!player) return;
+    const door = this.promptDoor;
+    if (door && door.alive) {
+      this.toggleDoor(door);
+      this.promptDoor = null;
+      this.hud.setPickupPrompt(null);
+      return;
+    }
     const item = this.promptItem;
-    if (!player || !item || !item.active) return;
+    if (!item || !item.active) return;
     this.tryPickupWeapon(player.char, item);
     this.promptItem = null;
     this.hud.setPickupPrompt(null);

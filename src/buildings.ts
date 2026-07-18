@@ -33,6 +33,8 @@ const DOOR_W = 1.2, DOOR_H = 2.1;
 const WIN_W = 1.05, WIN_SILL = 1.0, WIN_H = 1.0;
 const STAIR_STEPS = 9, STAIR_W = 1.35;
 const BOUND = 265;
+const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
+const DOOR_TWEEN = 0.3;                   // 开关门动画时长(秒)
 
 function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -54,6 +56,11 @@ export class Destructible implements DestructibleLike {
   readonly cx: number;
   readonly cy: number;
   readonly cz: number;
+  // 门: 铰链开合(窗无此结构)
+  group: THREE.Group | null = null;            // 含 pivot(门扇) + 铰链柱
+  pivot: THREE.Group | null = null;            // 开门绕其 Y 轴旋转
+  open = false;
+  openAngle = 0;                               // 全开时的 pivot 转角(带方向)
   constructor(
     kind: 'door' | 'window',
     maxHp: number,
@@ -75,6 +82,9 @@ export class Destructible implements DestructibleLike {
     this.hp = intact ? this.maxHp : 0;
     this.mesh.visible = intact;
     this.collider.off = !intact;
+    // 门复位为关闭
+    this.open = false;
+    if (this.pivot) this.pivot.rotation.y = 0;
   }
 }
 
@@ -84,11 +94,15 @@ export class Buildings {
   destructibles: Destructible[] = [];
   root: THREE.Group | null = null;
 
-  private doorGeoX = new THREE.BoxGeometry(0.1, DOOR_H, DOOR_W);
-  private doorGeoZ = new THREE.BoxGeometry(DOOR_W, DOOR_H, 0.1);
-  private paneGeoX = new THREE.BoxGeometry(0.06, WIN_H, WIN_W);
-  private paneGeoZ = new THREE.BoxGeometry(WIN_W, WIN_H, 0.06);
+  // 门/窗几何体按墙的走向区分: AlongX 用于沿 X 延伸的墙(南/北墙), AlongZ 用于沿 Z 延伸的墙(东/西墙)
+  private doorGeoAlongX = new THREE.BoxGeometry(DOOR_W, DOOR_H, 0.1);
+  private doorGeoAlongZ = new THREE.BoxGeometry(0.1, DOOR_H, DOOR_W);
+  private paneGeoAlongX = new THREE.BoxGeometry(WIN_W, WIN_H, 0.06);
+  private paneGeoAlongZ = new THREE.BoxGeometry(0.06, WIN_H, WIN_W);
+  private postGeoAlongX = new THREE.BoxGeometry(0.09, DOOR_H, WT + 0.06);
+  private postGeoAlongZ = new THREE.BoxGeometry(WT + 0.06, DOOR_H, 0.09);
   private doorMat = new THREE.MeshLambertMaterial({ color: DOOR_C });
+  private postMat = new THREE.MeshLambertMaterial({ color: 0x5e4629 });
   private paneMat = new THREE.MeshLambertMaterial({
     color: PANE_C, transparent: true, opacity: 0.55, depthWrite: false,
   });
@@ -205,7 +219,7 @@ export class Buildings {
     mesh.receiveShadow = true;
     this.root = new THREE.Group();
     this.root.add(mesh);
-    for (const d of this.destructibles) this.root.add(d.mesh);
+    for (const d of this.destructibles) this.root.add(d.group ?? d.mesh);
     scene.add(this.root);
   }
 
@@ -230,9 +244,10 @@ export class Buildings {
 
     type Op = { a0: number; a1: number; y0: number; y1: number; door?: boolean };
     // 沿轴放一面带洞口的墙：整高段 + 窗台段 + 过梁段，洞口挂门/窗可破坏物
+    // interior: 室内方向符号(+1/-1, 垂直于墙指向屋内), 决定门向内开的方向
     const wallSegs = (
       axis: 'x' | 'z', fixed: number, a0: number, a1: number,
-      y0: number, y1: number, ops: Op[], c: number, th: number,
+      y0: number, y1: number, ops: Op[], c: number, th: number, interior: 1 | -1,
     ) => {
       const addBoxAt = (s0: number, s1: number, t0: number, t1: number) => {
         if (s1 - s0 < 0.03 || t1 - t0 < 0.03) return;
@@ -250,7 +265,7 @@ export class Buildings {
       addBoxAt(cur, a1, y0, y1);
       for (const op of sorted) {
         const midA = (op.a0 + op.a1) / 2, midY = (op.y0 + op.y1) / 2;
-        if (op.door) this.addDoor(world, axis, fixed, op.a0, op.a1, op.y0, op.y1, midA, midY);
+        if (op.door) this.addDoor(world, axis, fixed, op.a0, op.a1, op.y0, op.y1, midY, interior);
         else this.addPane(world, axis, fixed, op.a0, op.a1, op.y0, op.y1, midA, midY);
       }
     };
@@ -269,10 +284,10 @@ export class Buildings {
     }
     const win = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f1 + WIN_SILL, y1: f1 + WIN_SILL + WIN_H });
     const buried = f1 - 0.9; // 墙基埋入地基, 防止地形插值凸起露出缝隙
-    wallSegs('x', iz0, ix0, ix1, buried, wt1, northOps, wallC, WT);
-    wallSegs('x', iz1, ix0, ix1, buried, wt1, southOps, wallC, WT);
-    wallSegs('z', ix0, iz0, iz1, buried, wt1, [win(iz0 + d * 0.3)], wallC, WT);
-    wallSegs('z', ix1, iz0, iz1, buried, wt1, [win(iz0 + d * 0.62)], wallC, WT);
+    wallSegs('x', iz0, ix0, ix1, buried, wt1, northOps, wallC, WT, 1);
+    wallSegs('x', iz1, ix0, ix1, buried, wt1, southOps, wallC, WT, -1);
+    wallSegs('z', ix0, iz0, iz1, buried, wt1, [win(iz0 + d * 0.3)], wallC, WT, 1);
+    wallSegs('z', ix1, iz0, iz1, buried, wt1, [win(iz0 + d * 0.62)], wallC, WT, -1);
     // 首层 loot 点（2 个，避开西墙楼梯区）
     this.lootSpots.push(
       { x: ix0 + w * 0.25, y: f1, z: iz0 + d * 0.35, premium: false },
@@ -309,26 +324,42 @@ export class Buildings {
     // 上层墙（薄）+ 窗
     const uwt = f2 + 2.5;
     const win2 = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f2 + 0.9, y1: f2 + 0.9 + WIN_H });
-    wallSegs('x', iz0, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.35)], wallC, WT2);
-    wallSegs('x', iz1, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.55)], wallC, WT2);
-    wallSegs('z', ix0, iz0, iz1, f2, uwt, [win2(iz0 + d * 0.4)], wallC, WT2);
-    wallSegs('z', ix1, iz0, iz1, f2, uwt, [win2(iz0 + d * 0.55)], wallC, WT2);
+    wallSegs('x', iz0, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.35)], wallC, WT2, 1);
+    wallSegs('x', iz1, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.55)], wallC, WT2, -1);
+    wallSegs('z', ix0, iz0, iz1, f2, uwt, [win2(iz0 + d * 0.4)], wallC, WT2, 1);
+    wallSegs('z', ix1, iz0, iz1, f2, uwt, [win2(iz0 + d * 0.55)], wallC, WT2, -1);
     box('roof', ix0 - 0.12, uwt, iz0 - 0.12, ix1 + 0.12, uwt + 0.22, iz1 + 0.12, roofC);
   }
 
   private addDoor(
     world: World, axis: 'x' | 'z', fixed: number,
-    a0: number, a1: number, y0: number, y1: number, midA: number, midY: number,
+    a0: number, a1: number, y0: number, y1: number, midY: number,
+    interior: 1 | -1,
   ): void {
     const t = 0.1;
     const c: AabbCollider = axis === 'x'
       ? { kind: 'aabb', minX: a0, minY: y0, minZ: fixed - t / 2, maxX: a1, maxY: y1, maxZ: fixed + t / 2, tag: 'door' }
       : { kind: 'aabb', minX: fixed - t / 2, minY: y0, minZ: a0, maxX: fixed + t / 2, maxY: y1, maxZ: a1, tag: 'door' };
     world.addCollider(c);
-    const mesh = new THREE.Mesh(axis === 'x' ? this.doorGeoX : this.doorGeoZ, this.doorMat);
-    mesh.position.set(axis === 'x' ? midA : fixed, midY, axis === 'x' ? fixed : midA);
+    // 铰链结构: group 定位在铰链边(a0 端), pivot 承载门扇, 开门 = pivot 绕 Y 旋转
+    const group = new THREE.Group();
+    group.position.set(axis === 'x' ? a0 : fixed, y0, axis === 'x' ? fixed : a0);
+    const pivot = new THREE.Group();
+    const mesh = new THREE.Mesh(axis === 'x' ? this.doorGeoAlongX : this.doorGeoAlongZ, this.doorMat);
+    mesh.position.set(axis === 'x' ? DOOR_W / 2 : 0, DOOR_H / 2, axis === 'x' ? 0 : DOOR_W / 2);
     mesh.castShadow = true;
+    pivot.add(mesh);
+    // 铰链柱: 门被炸毁后仍留在原地
+    const post = new THREE.Mesh(axis === 'x' ? this.postGeoAlongX : this.postGeoAlongZ, this.postMat);
+    post.position.y = DOOR_H / 2;
+    post.castShadow = true;
+    group.add(pivot);
+    group.add(post);
     const d = new Destructible('door', 80, mesh, c, (c.minX + c.maxX) / 2, midY, (c.minZ + c.maxZ) / 2);
+    d.group = group;
+    d.pivot = pivot;
+    // 开门朝屋内: 沿 X 走向的墙取 -interior, 沿 Z 走向取 +interior
+    d.openAngle = (axis === 'x' ? -interior : interior) * DOOR_SWING;
     c.destruct = d;
     this.destructibles.push(d);
   }
@@ -342,10 +373,32 @@ export class Buildings {
       ? { kind: 'aabb', minX: a0, minY: y0, minZ: fixed - t / 2, maxX: a1, maxY: y1, maxZ: fixed + t / 2, tag: 'window' }
       : { kind: 'aabb', minX: fixed - t / 2, minY: y0, minZ: a0, maxX: fixed + t / 2, maxY: y1, maxZ: a1, tag: 'window' };
     world.addCollider(c);
-    const mesh = new THREE.Mesh(axis === 'x' ? this.paneGeoX : this.paneGeoZ, this.paneMat);
+    const mesh = new THREE.Mesh(axis === 'x' ? this.paneGeoAlongX : this.paneGeoAlongZ, this.paneMat);
     mesh.position.set(axis === 'x' ? midA : fixed, midY, axis === 'x' ? fixed : midA);
     const d = new Destructible('window', 30, mesh, c, (c.minX + c.maxX) / 2, midY, (c.minZ + c.maxZ) / 2);
     c.destruct = d;
     this.destructibles.push(d);
+  }
+
+  // 开/关门(游戏层包装发声); 关门只在门完好时允许
+  setDoorOpen(d: Destructible, open: boolean): boolean {
+    if (d.kind !== 'door' || !d.alive || d.open === open) return false;
+    d.open = open;
+    d.collider.off = open; // 开门: 通行/子弹/视线全通过; 关门: 恢复阻挡
+    return true;
+  }
+
+  // 门扇开关动画: ~0.3s 内旋到目标角
+  update(dt: number): void {
+    const speed = DOOR_SWING / DOOR_TWEEN;
+    for (const d of this.destructibles) {
+      if (d.kind !== 'door' || !d.pivot) continue;
+      const target = d.open && d.alive ? d.openAngle : 0;
+      const cur = d.pivot.rotation.y;
+      if (cur === target) continue;
+      const delta = target - cur;
+      const step = Math.min(speed * dt, Math.abs(delta));
+      d.pivot.rotation.y = cur + Math.sign(delta) * step;
+    }
   }
 }

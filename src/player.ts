@@ -176,19 +176,28 @@ export class PlayerController {
 
   private updatePickupPrompt(game: Game): void {
     const c = this.char;
-    const item = game.loot.nearestWeapon(c.pos.x, c.pos.y, c.pos.z, 2.6);
-    if (!item) {
-      game.promptItem = null;
-      game.hud.setPickupPrompt(null);
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    // 武器候选: 最近的地上武器且大致在前方
+    let item = game.loot.nearestWeapon(c.pos.x, c.pos.y, c.pos.z, 2.6);
+    let itemDot = -1;
+    if (item) {
+      const dx = item.group.position.x - c.pos.x;
+      const dz = item.group.position.z - c.pos.z;
+      const d = Math.hypot(dx, dz);
+      itemDot = d > 0.01 ? (dx * fx + dz * fz) / d : 1;
+      if (itemDot < 0.35) item = null;
+    }
+    // 门候选: 2.2m 内看得最正的活门
+    const door = game.findDoorInteraction(c.pos.x, c.pos.y, c.pos.z, fx, fz);
+    game.promptItem = null;
+    game.promptDoor = null;
+    // 两者同时在场: 看得更正的优先
+    if (door && (!item || door.dot >= itemDot)) {
+      game.promptDoor = door.d;
+      game.hud.setPickupPrompt(door.d.open ? '按 F 关门' : '按 F 开门');
       return;
     }
-    // 需大致在视野前方
-    const dx = item.group.position.x - c.pos.x;
-    const dz = item.group.position.z - c.pos.z;
-    const d = Math.hypot(dx, dz);
-    const dot = d > 0.01 ? (dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw)) / d : 1;
-    if (dot < 0.35) {
-      game.promptItem = null;
+    if (!item) {
       game.hud.setPickupPrompt(null);
       return;
     }

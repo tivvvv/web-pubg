@@ -329,12 +329,12 @@ export class BotController {
     }
   }
 
-  // 被门/窗挡路: 游走赶路或近战贴身时, 面前 2.2m 内的活门窗累计 1s 即破坏
+  // 被门/窗挡路: 关着的门停顿 ~0.4s 后开门通过; 窗(或近战冲锋时)累计 1s 直接破坏
   private updateDoorBreak(dt: number, game: Game): void {
     const c = this.char;
+    const rage = this.state === 'engage' && !c.heldGun(); // 近战冲锋: 直接砸
     const wantsMove =
-      (this.state === 'wander' && this.hasMoveTarget) ||
-      (this.state === 'engage' && !c.heldGun());
+      (this.state === 'wander' && this.hasMoveTarget) || rage;
     this.blockCheckT -= dt;
     if (this.blockCheckT <= 0) {
       this.blockCheckT = 0.15;
@@ -344,11 +344,20 @@ export class BotController {
       if (!this.blockedDoor) this.blockT = 0;
     }
     const d = this.blockedDoor;
-    if (!d || !d.alive || !wantsMove) {
+    if (!d || !d.alive || !wantsMove || d.collider.off) {
       this.blockT = 0;
       return;
     }
     this.blockT += dt;
+    // 关着的门: 非狂暴状态下开门而不是砸门
+    if (d.kind === 'door' && !rage) {
+      if (this.blockT > 0.4) {
+        game.openDoor(d);
+        this.blockedDoor = null;
+        this.blockT = 0;
+      }
+      return;
+    }
     if (this.blockT <= 1.0) return;
     // 面向目标破坏物开火/挥刀
     c.yaw = Math.atan2(d.cx - c.pos.x, d.cz - c.pos.z);

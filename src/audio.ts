@@ -194,6 +194,40 @@ export class AudioSys {
     this.noiseBurst(0.3 * att, pan, 5200, 0.6, 1.4);
   }
 
+  // 门轴吱呀: 开门升调, 关门降调; 锯齿波 + 11Hz 颤音模拟干涩门轴
+  creak(dist: number, pan: number, open: boolean): void {
+    if (!this.ctx) return;
+    const dst = this.out(pan);
+    if (!dst) return;
+    const att = clamp(1.5 / (1 + dist * 0.035), 0.02, 1);
+    const t = this.ctx.currentTime;
+    const dur = 0.45;
+    const o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(open ? 150 : 230, t);
+    o.frequency.exponentialRampToValueAtTime(open ? 260 : 120, t + dur);
+    const lfo = this.ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 11;
+    const lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 22;
+    lfo.connect(lfoGain).connect(o.frequency);
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 900;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.2 * att, t + 0.07);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(lp).connect(g).connect(dst);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+    lfo.start(t);
+    lfo.stop(t + dur + 0.02);
+    // 关门末尾一声轻磕
+    if (!open) this.thump(0.25 * att, pan, 140, 70, 0.08);
+  }
+
   // 医疗包扎完成
   heal(): void {
     this.blip(360, 540, 0.16, 0.18, 'sine');
