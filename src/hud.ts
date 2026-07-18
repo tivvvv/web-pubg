@@ -166,11 +166,21 @@ export class Hud {
 
   setPickupPrompt(text: string | null): void {
     if (text) {
-      this.pickupPrompt.textContent = text;
+      // 键位名渲染为 kbd 芯片
+      this.pickupPrompt.innerHTML = text.replace(/ F /, ' <span class="kbd">F</span> ');
       this.pickupPrompt.classList.add('show');
     } else {
       this.pickupPrompt.classList.remove('show');
     }
+  }
+
+  // 治疗绿闪(绷带/医疗包/饮料生效时)
+  flashHeal(): void {
+    const el = document.getElementById('heal-flash');
+    if (!el) return;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
   }
 
   // frac in [0,1] 显示包扎进度, 其他值隐藏
@@ -240,10 +250,10 @@ export class Hud {
       `<div class="bp-section">恢复品 (X 智能使用)</div>${healRows}`;
   }
 
-  killFeed(text: string): void {
+  killFeed(html: string): void {
     const div = document.createElement('div');
     div.className = 'feed-entry';
-    div.textContent = text;
+    div.innerHTML = html;
     this.killfeed.prepend(div);
     while (this.killfeed.children.length > 6) {
       this.killfeed.lastElementChild?.remove();

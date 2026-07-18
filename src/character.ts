@@ -28,15 +28,24 @@ export interface HumanParts {
 // 共享几何体(跨对局复用, 重开不泄漏)
 const GEO = {
   head: new THREE.BoxGeometry(0.3, 0.32, 0.3),
-  torso: new THREE.BoxGeometry(0.52, 0.62, 0.3),
-  arm: new THREE.BoxGeometry(0.14, 0.56, 0.14),
-  leg: new THREE.BoxGeometry(0.17, 0.74, 0.17),
+  torso: new THREE.BoxGeometry(0.46, 0.58, 0.28),   // 收窄肩腰
+  waist: new THREE.BoxGeometry(0.4, 0.16, 0.26),
+  upperArm: new THREE.BoxGeometry(0.13, 0.3, 0.13),
+  forearm: new THREE.BoxGeometry(0.115, 0.3, 0.115),
+  hand: new THREE.BoxGeometry(0.1, 0.12, 0.1),
+  thigh: new THREE.BoxGeometry(0.16, 0.38, 0.16),
+  shin: new THREE.BoxGeometry(0.145, 0.38, 0.145),
+  boot: new THREE.BoxGeometry(0.16, 0.12, 0.26),
 };
 
 const MAT = {
   skin: new THREE.MeshLambertMaterial({ color: 0xd9a066 }),
   pants: new THREE.MeshLambertMaterial({ color: 0x3d4436 }),
+  boot: new THREE.MeshLambertMaterial({ color: 0x2c2620 }),
 };
+
+// 裤装配色(bot 按索引错开, 远距可读)
+const PANTS_COLORS = [0x3d4436, 0x37404a, 0x4a3f33, 0x2f3a2f, 0x46464e];
 
 const shirtCache = new Map<number, THREE.MeshLambertMaterial>();
 function shirtMat(color: number): THREE.MeshLambertMaterial {
@@ -48,58 +57,81 @@ function shirtMat(color: number): THREE.MeshLambertMaterial {
   return m;
 }
 
-export function buildHumanoid(shirtColor: number): { group: THREE.Group; parts: HumanParts } {
+export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.Group; parts: HumanParts } {
   const group = new THREE.Group();
   const inner = new THREE.Group();
   group.add(inner);
   const shirt = shirtMat(shirtColor);
+  const pants = shirtMat(PANTS_COLORS[variant % PANTS_COLORS.length] as number);
 
   const torso = new THREE.Mesh(GEO.torso, shirt);
   torso.position.set(0, 1.05, 0);
   torso.castShadow = true;
   inner.add(torso);
+  // 腰带/裤腰色块
+  const waist = new THREE.Mesh(GEO.waist, pants);
+  waist.position.set(0, 0.79, 0);
+  inner.add(waist);
 
   const head = new THREE.Mesh(GEO.head, MAT.skin);
   head.position.set(0, 1.53, 0);
   head.castShadow = true;
   inner.add(head);
 
-  // 手臂: 肩部枢轴, 前平举持械
-  const armL = new THREE.Group();
-  armL.position.set(-0.33, 1.32, 0);
-  const armLMesh = new THREE.Mesh(GEO.arm, shirt);
-  armLMesh.position.set(0, -0.26, 0);
-  armLMesh.castShadow = true;
-  armL.add(armLMesh);
-  armL.rotation.x = -1.15;
+  // 手臂: 肩部枢轴 → 上臂 → 肘部枢轴 → 前臂 + 手(肘/手暗示)
+  const mkArm = (side: 1 | -1): THREE.Group => {
+    const arm = new THREE.Group();
+    arm.position.set(0.31 * side, 1.32, 0);
+    const upper = new THREE.Mesh(GEO.upperArm, shirt);
+    upper.position.set(0, -0.14, 0);
+    upper.castShadow = true;
+    arm.add(upper);
+    const elbow = new THREE.Group();
+    elbow.position.set(0, -0.3, 0);
+    elbow.rotation.x = -0.35; // 肘部微屈
+    const fore = new THREE.Mesh(GEO.forearm, shirt);
+    fore.position.set(0, -0.14, 0);
+    fore.castShadow = true;
+    elbow.add(fore);
+    const hand = new THREE.Mesh(GEO.hand, MAT.skin);
+    hand.position.set(0, -0.32, 0);
+    elbow.add(hand);
+    arm.add(elbow);
+    arm.rotation.x = -1.15;
+    arm.rotation.z = 0.25 * side * -1;
+    return arm;
+  };
+  const armL = mkArm(-1);
   armL.rotation.z = 0.25;
   inner.add(armL);
-
-  const armR = new THREE.Group();
-  armR.position.set(0.33, 1.32, 0);
-  const armRMesh = new THREE.Mesh(GEO.arm, shirt);
-  armRMesh.position.set(0, -0.26, 0);
-  armRMesh.castShadow = true;
-  armR.add(armRMesh);
+  const armR = mkArm(1);
   armR.rotation.x = -1.3;
   armR.rotation.z = -0.1;
   inner.add(armR);
 
-  // 腿: 髋部枢轴
-  const legL = new THREE.Group();
-  legL.position.set(-0.13, 0.74, 0);
-  const legLMesh = new THREE.Mesh(GEO.leg, MAT.pants);
-  legLMesh.position.set(0, -0.37, 0);
-  legLMesh.castShadow = true;
-  legL.add(legLMesh);
+  // 腿: 髋部枢轴 → 大腿 → 膝部枢轴 → 小腿 + 靴(膝/靴暗示)
+  const mkLeg = (side: 1 | -1): THREE.Group => {
+    const leg = new THREE.Group();
+    leg.position.set(0.13 * side, 0.74, 0);
+    const thigh = new THREE.Mesh(GEO.thigh, pants);
+    thigh.position.set(0, -0.19, 0);
+    thigh.castShadow = true;
+    leg.add(thigh);
+    const knee = new THREE.Group();
+    knee.position.set(0, -0.38, 0);
+    const shin = new THREE.Mesh(GEO.shin, pants);
+    shin.position.set(0, -0.19, 0);
+    shin.castShadow = true;
+    knee.add(shin);
+    const boot = new THREE.Mesh(GEO.boot, MAT.boot);
+    boot.position.set(0, -0.42, 0.03);
+    knee.add(boot);
+    leg.add(knee);
+    return leg;
+  };
+  const legL = mkLeg(-1);
   inner.add(legL);
-
-  const legR = new THREE.Group();
-  legR.position.set(0.13, 0.74, 0);
-  const legRMesh = new THREE.Mesh(GEO.leg, MAT.pants);
-  legRMesh.position.set(0, -0.37, 0);
-  legRMesh.castShadow = true;
-  legR.add(legRMesh);
+  const legR = mkLeg(1);
   inner.add(legR);
 
   // 手部锚点(武器模型挂载点, 模型原点=握把, 指向 +Z 前方)
@@ -150,6 +182,8 @@ export class Character {
   dieT = -1;           // >=0 表示死亡动画进度
   stance: Stance = 'stand'; // 姿态: 站/蹲/趴
   stanceF = 0;         // 姿态插值 0站→1蹲→2趴(平滑过渡)
+  groundH = 0;         // 脚下地面高(供贴地阴影)
+  private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
   lastAttackerId = 0;
   lastShotT = -100;    // 最近一次开枪时间(小地图红点)
   kills = 0;
@@ -169,7 +203,7 @@ export class Character {
     this.id = Character.nextId++;
     this.name = name;
     this.isPlayer = isPlayer;
-    const { group, parts } = buildHumanoid(shirtColor);
+    const { group, parts } = buildHumanoid(shirtColor, this.id);
     this.group = group;
     this.parts = parts;
   }
@@ -289,6 +323,7 @@ export class Character {
     this.pos.y += this.vy * dt;
     world.resolveCollision(this.pos, this.radius);
     const ground = world.groundHeight(this.pos.x, this.pos.z, this.pos.y + 0.1);
+    this.groundH = ground;
     if (this.pos.y <= ground) {
       this.pos.y = ground;
       this.vy = 0;
@@ -354,12 +389,17 @@ export class Character {
     // 姿态混合: fC 蹲权重(0..1), fP 趴权重(0..1)
     const fC = Math.min(this.stanceF, 1);
     const fP = Math.max(0, this.stanceF - 1);
+    // 疾跑摆臂(不瞄准时, 与腿反相)
+    const sprintF = this.speed2d > 5 && this.aimPitch < 0.01 ? Math.min(1, (this.speed2d - 5) / 1.6) : 0;
     // 挥击动画(覆盖右臂姿态)
     if (this.swingT > 0) {
       this.swingT = Math.max(0, this.swingT - dt * 3.4);
       p.armR.rotation.x = -1.3 - Math.sin(this.swingT * Math.PI) * 1.15;
     } else {
-      p.armR.rotation.x = -1.3;
+      p.armR.rotation.x = -1.3 + this.lastLegSwing * sprintF;
+    }
+    if (sprintF > 0) {
+      p.armL.rotation.x = -1.5 - this.lastLegSwing * sprintF;
     }
     // 走路摆动(蹲/趴时幅度衰减)
     let legSwing = 0;
@@ -368,6 +408,9 @@ export class Character {
       this.walkPhase += dt * (2.0 + this.speed2d * 1.6);
       legSwing = Math.sin(this.walkPhase) * 0.72 * (1 - 0.6 * fC - 0.4 * fP);
       bob = Math.abs(Math.cos(this.walkPhase)) * 0.055 * (1 - 0.8 * fC);
+      this.lastLegSwing = legSwing;
+    } else {
+      this.lastLegSwing *= 1 - Math.min(1, dt * 8);
     }
     // 蹲: 腿前弯; 趴: 腿顺直
     const legBend = -1.05 * fC * (1 - fP);
@@ -375,7 +418,9 @@ export class Character {
     p.legR.rotation.x = -legSwing + legBend;
     // 身体下沉(蹲 -0.53 / 趴 +0.30 由旋转完成趴倒)与旋转(趴 = 面朝下平躺, 部分随瞄准俯仰)
     p.inner.position.y = bob - 0.53 * fC + 0.83 * fP;
-    p.inner.rotation.x = 0.2 * fC + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);
+    // 移动前倾(速度越大越前倾, 趴下不再加)
+    const lean = Math.min(1, this.speed2d / 6.6) * 0.18 * (1 - fP);
+    p.inner.rotation.x = 0.2 * fC + lean + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);
   }
 
   // 解析命中: 头部球体 + 身体有向盒(随 yaw 旋转), 命中填充 res 并返回 true

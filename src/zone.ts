@@ -34,6 +34,7 @@ export class Zone {
   private startCenter = new THREE.Vector2();
   private startRadius = 310;
   private mesh: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
+  private timeU = { value: 0 };
 
   constructor(scene: THREE.Scene) {
     const geo = new THREE.CylinderGeometry(1, 1, 1, 96, 1, true);
@@ -57,6 +58,22 @@ export class Zone {
       side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
       depthWrite: false, fog: false, alphaMap: fadeTex,
     });
+    // 扫描线微光(time uniform; alphaMap 顶部渐隐保持生效)
+    const timeU = this.timeU;
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = timeU;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying float vWy;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWy = (modelMatrix * vec4(transformed, 1.0)).y;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying float vWy;')
+        .replace(
+          '#include <alphamap_fragment>',
+          `#include <alphamap_fragment>
+  diffuseColor.a *= 0.78 + 0.22 * sin(vWy * 4.5 - uTime * 2.4);`,
+        );
+    };
+    mat.customProgramCacheKey = () => 'zone-wall-shimmer';
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 5;
@@ -110,6 +127,7 @@ export class Zone {
 
   update(dt: number): void {
     this.justBeganShrink = false;
+    this.timeU.value += dt;
     if (this.state === 'done') return;
     this.timer -= dt;
     const p = PHASES[this.phase] as Phase | undefined;

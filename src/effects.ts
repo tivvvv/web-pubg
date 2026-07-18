@@ -5,19 +5,66 @@ const TRACER_CAP = 48;
 const FLASH_CAP = 8;
 const PARTICLE_CAP = 768;
 
+// 枪口火光: 四角星形(十字+斜芒)
 function makeFlashTexture(): THREE.Texture {
   const c = document.createElement('canvas');
   c.width = 64;
   c.height = 64;
   const g = c.getContext('2d') as CanvasRenderingContext2D;
-  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 30);
-  grad.addColorStop(0, 'rgba(255,255,230,1)');
-  grad.addColorStop(0.35, 'rgba(255,200,90,0.9)');
-  grad.addColorStop(1, 'rgba(255,140,30,0)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 64, 64);
+  g.translate(32, 32);
+  const spike = (rot: number, len: number, wid: number, alpha: number) => {
+    g.rotate(rot);
+    const grad = g.createLinearGradient(0, -wid, 0, wid);
+    grad.addColorStop(0, 'rgba(255,240,200,0)');
+    grad.addColorStop(0.5, `rgba(255,225,150,${alpha})`);
+    grad.addColorStop(1, 'rgba(255,240,200,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, -wid, len, wid * 2);
+    g.rotate(-rot);
+  };
+  for (let i = 0; i < 4; i++) spike((Math.PI / 2) * i, 30, 3.2, 1);
+  for (let i = 0; i < 4; i++) spike((Math.PI / 2) * i + Math.PI / 4, 18, 2.0, 0.75);
+  const core = g.createRadialGradient(0, 0, 0, 0, 0, 9);
+  core.addColorStop(0, 'rgba(255,255,235,1)');
+  core.addColorStop(1, 'rgba(255,180,80,0)');
+  g.fillStyle = core;
+  g.fillRect(-9, -9, 18, 18);
   const tex = new THREE.CanvasTexture(c);
   return tex;
+}
+
+// 烟雾纹理(灰白蓬松)
+function makePuffTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+  grad.addColorStop(0, 'rgba(215,215,210,0.85)');
+  grad.addColorStop(0.6, 'rgba(190,190,185,0.4)');
+  grad.addColorStop(1, 'rgba(180,180,175,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+// 渐变曳光几何体: 头亮尾暗(顶点色沿 z 衰减)
+function makeTracerGeo(): THREE.BoxGeometry {
+  const geo = new THREE.BoxGeometry(0.03, 0.03, 1);
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const colors = new Float32Array(pos.count * 3);
+  const headC = new THREE.Color(1.0, 0.95, 0.75);
+  const tailC = new THREE.Color(1.0, 0.55, 0.15);
+  const tmp = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getZ(i) + 0.5; // 头(z+0.5)→尾(z-0.5)
+    tmp.copy(tailC).lerp(headC, t);
+    colors[i * 3] = tmp.r;
+    colors[i * 3 + 1] = tmp.g;
+    colors[i * 3 + 2] = tmp.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return geo;
 }
 
 interface Tracer {
@@ -30,12 +77,28 @@ interface Flash {
   life: number;
 }
 
+interface ShockRing {
+  mesh: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+  life: number;
+}
+
+interface SmokeCol {
+  sprites: THREE.Sprite[];
+  life: number;
+  vy: number[];
+}
+
 export class Effects {
   private tracers: Tracer[] = [];
   private tracerIdx = 0;
   private flashes: Flash[] = [];
   private flashIdx = 0;
   private light: THREE.PointLight;
+  private rings: ShockRing[] = [];
+  private ringIdx = 0;
+  private smokeCols: SmokeCol[] = [];
+  private colIdx = 0;
+  private puffTex: THREE.Texture;
   private points: THREE.Points;
   private pPos: Float32Array;
   private pCol: Float32Array;
@@ -48,11 +111,11 @@ export class Effects {
   private geoCol: THREE.BufferAttribute;
 
   constructor(scene: THREE.Scene) {
-    // 曳光弹池
-    const tGeo = new THREE.BoxGeometry(0.035, 0.035, 1);
+    // 曳光弹池(渐变几何体: 头亮尾暗)
+    const tGeo = makeTracerGeo();
     for (let i = 0; i < TRACER_CAP; i++) {
       const mat = new THREE.MeshBasicMaterial({
-        color: 0xffd27a, transparent: true, opacity: 0,
+        vertexColors: true, transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false,
       });
       const mesh = new THREE.Mesh(tGeo, mat);
@@ -77,6 +140,38 @@ export class Effects {
     }
     this.light = new THREE.PointLight(0xffc873, 0, 14, 2);
     scene.add(this.light);
+
+    // 冲击波环池(爆炸)
+    for (let i = 0; i < 4; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffcf90, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.58, 32), mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      this.rings.push({ mesh, life: 0 });
+    }
+
+    // 烟柱池(每柱 3 层 sprite, ~3s 上升)
+    this.puffTex = makePuffTexture();
+    for (let i = 0; i < 4; i++) {
+      const sprites: THREE.Sprite[] = [];
+      const vy: number[] = [];
+      for (let k = 0; k < 3; k++) {
+        const mat = new THREE.SpriteMaterial({
+          map: this.puffTex, color: 0x8f8f8c, transparent: true, opacity: 0, depthWrite: false,
+        });
+        const sp = new THREE.Sprite(mat);
+        sp.visible = false;
+        scene.add(sp);
+        sprites.push(sp);
+        vy.push(1.2 + k * 0.5);
+      }
+      this.smokeCols.push({ sprites, life: 0, vy });
+    }
 
     // 粒子池(单个 Points)
     this.pPos = new Float32Array(PARTICLE_CAP * 3);
@@ -162,19 +257,50 @@ export class Effects {
   debrisWood(p: THREE.Vector3): void { this.burst(p, 22, 0.5, 0.36, 0.2, 4.5); }
   debrisGlass(p: THREE.Vector3): void { this.burst(p, 22, 0.8, 0.92, 0.98, 4.5); }
 
-  /** 手雷爆炸: 闪光 + 泥土碎石 + 浓烟 + 火星 */
+  /** 手雷爆炸: 闪光 + 冲击波环 + 泥土碎石 + 浓烟 + 火星 + 3s 烟柱 */
   explosion(p: THREE.Vector3): void {
     this.muzzleFlash(p, 5);
+    // 冲击波环
+    const ring = this.rings[this.ringIdx] as ShockRing;
+    this.ringIdx = (this.ringIdx + 1) % this.rings.length;
+    ring.mesh.position.copy(p);
+    ring.mesh.position.y = Math.max(p.y + 0.15, 0.2);
+    ring.mesh.scale.setScalar(1);
+    ring.mesh.material.opacity = 0.85;
+    ring.mesh.visible = true;
+    ring.life = 0.45;
+    // 烟柱(3 层, 3s)
+    const col = this.smokeCols[this.colIdx] as SmokeCol;
+    this.colIdx = (this.colIdx + 1) % this.smokeCols.length;
+    col.life = 3;
+    col.sprites.forEach((sp, k) => {
+      sp.position.set(p.x + (Math.random() - 0.5) * 0.6, p.y + 0.6 + k * 0.9, p.z + (Math.random() - 0.5) * 0.6);
+      sp.scale.setScalar(1.2 + k * 0.5);
+      sp.material.opacity = 0.55;
+      sp.material.rotation = Math.random() * Math.PI * 2;
+      sp.visible = true;
+    });
     this.burst(p, 26, 0.5, 0.38, 0.2, 7);      // 泥土碎块
     this.burst(p, 16, 0.35, 0.35, 0.38, 3.2);   // 浓烟
     this.burst(p, 10, 1.0, 0.75, 0.3, 9);       // 火星
+  }
+
+  // 水面溅射(白色喷沫)
+  splash(p: THREE.Vector3): void {
+    this.burst(p, 14, 0.85, 0.93, 1.0, 3.6);
+  }
+
+  // 岩石命中: 灰白碎屑 + 火星
+  impactRock(p: THREE.Vector3): void {
+    this.burst(p, 6, 0.72, 0.72, 0.7, 3.2);
+    this.burst(p, 3, 1.0, 0.85, 0.45, 4.0);
   }
 
   update(dt: number): void {
     for (const t of this.tracers) {
       if (t.life > 0) {
         t.life -= dt;
-        t.mesh.material.opacity = Math.max(0, t.life / 0.07) * 0.9;
+        t.mesh.material.opacity = Math.max(0, t.life / 0.07) * 0.95;
         if (t.life <= 0) t.mesh.visible = false;
       }
     }
@@ -187,6 +313,29 @@ export class Effects {
     }
     if (this.light.intensity > 0) {
       this.light.intensity = Math.max(0, this.light.intensity - dt * 380);
+    }
+    // 冲击波环: 扩张 + 淡出
+    for (const r of this.rings) {
+      if (r.life > 0) {
+        r.life -= dt;
+        const t = 1 - Math.max(0, r.life) / 0.45;
+        r.mesh.scale.setScalar(1 + t * 14);
+        r.mesh.material.opacity = 0.85 * (1 - t);
+        if (r.life <= 0) r.mesh.visible = false;
+      }
+    }
+    // 烟柱: 上升 + 膨化 + 淡出
+    for (const col of this.smokeCols) {
+      if (col.life > 0) {
+        col.life -= dt;
+        const fade = Math.min(1, col.life / 1.2);
+        col.sprites.forEach((sp, k) => {
+          sp.position.y += (col.vy[k] as number) * dt * 0.55;
+          sp.scale.addScalar(dt * 0.9);
+          sp.material.opacity = 0.55 * fade;
+          if (col.life <= 0) sp.visible = false;
+        });
+      }
     }
     // 粒子
     let any = false;
@@ -224,6 +373,14 @@ export class Effects {
     for (const f of this.flashes) {
       f.life = 0;
       f.sprite.visible = false;
+    }
+    for (const r of this.rings) {
+      r.life = 0;
+      r.mesh.visible = false;
+    }
+    for (const col of this.smokeCols) {
+      col.life = 0;
+      for (const sp of col.sprites) sp.visible = false;
     }
     this.light.intensity = 0;
     for (let i = 0; i < PARTICLE_CAP; i++) {

@@ -20,9 +20,9 @@ void main() {
   float t = pow(clamp(d.y, 0.0, 1.0), 0.55);
   vec3 col = mix(uHorizon, uZenith, t);
   float s = max(dot(d, uSunDir), 0.0);
-  col += vec3(1.0, 0.72, 0.42) * pow(s, 6.0) * 0.25;   // 大范围暖晕
-  col += vec3(1.0, 0.88, 0.66) * pow(s, 90.0) * 0.9;   // 近太阳亮晕
-  col += vec3(1.0, 0.97, 0.90) * smoothstep(0.9993, 0.9997, s); // 日盘
+  col += vec3(1.0, 0.68, 0.38) * pow(s, 6.0) * 0.28;   // 大范围暖晕(金色时刻)
+  col += vec3(1.0, 0.82, 0.58) * pow(s, 90.0) * 0.9;   // 近太阳亮晕
+  col += vec3(1.0, 0.95, 0.85) * smoothstep(0.9993, 0.9997, s); // 日盘
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -59,8 +59,8 @@ export class Sky {
   private dome: THREE.Mesh;
 
   constructor(scene: THREE.Scene) {
-    // 穹顶(与 updateShadow 的太阳偏移方向一致)
-    const sunDir = new THREE.Vector3(70, 100, 40).normalize();
+    // 穹顶(与 updateShadow 的太阳偏移方向一致: +85,+72,+42)
+    const sunDir = new THREE.Vector3(85, 72, 42).normalize();
     const dome = new THREE.Mesh(
       new THREE.SphereGeometry(820, 24, 12),
       new THREE.ShaderMaterial({
@@ -68,8 +68,8 @@ export class Sky {
         depthWrite: false,
         fog: false,
         uniforms: {
-          uZenith: { value: new THREE.Color(0x5f97d4) },
-          uHorizon: { value: new THREE.Color(0xcfe0ee) },
+          uZenith: { value: new THREE.Color(0x5a92cf) },
+          uHorizon: { value: new THREE.Color(0xead9c4) },
           uSunDir: { value: sunDir },
         },
         vertexShader: SKY_VERT,

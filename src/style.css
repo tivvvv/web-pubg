@@ -808,3 +808,61 @@ body {
   border: 2px solid rgba(8, 10, 8, 0.9);
   border-radius: 50%;
 }
+
+/* 交互提示 kbd 芯片 */
+.kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: rgba(20, 24, 18, 0.75);
+  color: #ffe14d;
+  font-weight: 700;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* 击杀信息配色: 玩家金 / bot 白 */
+.feed-entry .kf-player {
+  color: #ffd24d;
+  font-weight: 700;
+}
+
+.feed-entry .kf-bot {
+  color: #f2f2f2;
+}
+
+/* 治疗绿闪 */
+#heal-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: inset 0 0 120px 40px rgba(90, 220, 130, 0.35);
+}
+
+#heal-flash.show {
+  animation: heal-flash 0.8s ease-out forwards;
+}
+
+@keyframes heal-flash {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 读条/进度条圆角微光 */
+.heal-bar,
+.buff-bar {
+  border-radius: 6px;
+  box-shadow: 0 0 10px rgba(140, 255, 170, 0.28);
+}

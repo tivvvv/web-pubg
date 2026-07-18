@@ -1,5 +1,42 @@
 // 总控: 主循环/对局状态/伤害结算/近战/拾取/背包/缩圈伤害/胜负判定
 import * as THREE from 'three';
+
+const UP_Y = new THREE.Vector3(0, 1, 0);
+
+// 径向渐变纹理(贴地阴影: 黑芯透明边)
+function makeRadialTexture(alpha: number, softness: number): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+  grad.addColorStop(0, `rgba(0,0,0,${alpha + softness})`);
+  grad.addColorStop(0.55, `rgba(0,0,0,${alpha})`);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+// 菱形拾取标记
+function makeMarkerTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  g.fillStyle = 'rgba(255,225,90,0.95)';
+  g.beginPath();
+  g.moveTo(32, 6);
+  g.lineTo(54, 30);
+  g.lineTo(32, 58);
+  g.lineTo(10, 30);
+  g.closePath();
+  g.fill();
+  g.fillStyle = 'rgba(60,45,10,0.9)';
+  g.fillRect(29, 20, 6, 16);
+  g.fillRect(29, 40, 6, 6);
+  return new THREE.CanvasTexture(c);
+}
 import { ARMORS, armorFromLoot, armorLootKind, isArmorKind, type ArmorKind, type ArmorLevel } from './armor';
 import { AudioSys } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
@@ -76,6 +113,13 @@ export class Game {
   private tmpEnd = new THREE.Vector3();
   private tmpOrigin = new THREE.Vector3();
   private tmpRight = new THREE.Vector3();
+  private blobs: THREE.InstancedMesh;
+  private lootMarker: THREE.Sprite;
+  private doorFrame: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>;
+  private tmpM4 = new THREE.Matrix4();
+  private tmpQ = new THREE.Quaternion();
+  private tmpP = new THREE.Vector3();
+  private tmpS = new THREE.Vector3();
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -89,6 +133,32 @@ export class Game {
 
     this.world = new World(this.scene);
     this.scene.add(this.charsGroup);
+    // 贴地阴影(单 InstancedMesh, 每帧跟随角色)
+    const blobGeo = new THREE.CircleGeometry(1, 20);
+    blobGeo.rotateX(-Math.PI / 2);
+    this.blobs = new THREE.InstancedMesh(
+      blobGeo,
+      new THREE.MeshBasicMaterial({ map: makeRadialTexture(0, 0.42), transparent: true, depthWrite: false }),
+      24,
+    );
+    this.blobs.frustumCulled = false;
+    this.blobs.renderOrder = 2;
+    this.scene.add(this.blobs);
+    // 交互高亮: F 拾取菱形标记 + 门框描边
+    this.lootMarker = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: makeMarkerTexture(), color: 0xffe14d, transparent: true, depthWrite: false }),
+    );
+    this.lootMarker.scale.set(0.42, 0.42, 1);
+    this.lootMarker.visible = false;
+    this.scene.add(this.lootMarker);
+    this.doorFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial({
+        color: 0x6fc7ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, wireframe: true,
+      }),
+    );
+    this.doorFrame.visible = false;
+    this.scene.add(this.doorFrame);
     this.effects = new Effects(this.scene);
     this.zone = new Zone(this.scene);
     this.loot = new LootManager(this.scene);
@@ -331,14 +401,17 @@ export class Game {
             if (id === 'drink') {
               this.drinkT = DRINK_DURATION; // 刷新 20s/40HP 预算(不叠加)
               this.audio.drink();
+              this.hud.flashHeal();
               this.hud.toast('饮料生效: 生命持续恢复中…');
             } else if (id === 'medkit') {
               c.hp = 100;
               this.audio.medkitDone();
+              this.hud.flashHeal();
               this.hud.toast('生命已完全恢复');
             } else {
               c.hp = Math.min(75, c.hp + 15);
               this.audio.heal();
+              this.hud.flashHeal();
               this.hud.toast('恢复 15 点生命');
             }
           }
@@ -495,6 +568,45 @@ export class Game {
     this.renderer.render(this.scene, cam);
   }
 
+  // 贴地阴影跟随(单个 InstancedMesh 每帧重排, 零分配)
+  private updateBlobShadows(): void {
+    let i = 0;
+    for (const c of this.chars) {
+      if (!c.alive) continue;
+      const prone = c.stanceF > 1.2;
+      this.tmpP.set(c.pos.x, c.groundH + 0.035, c.pos.z);
+      this.tmpQ.setFromAxisAngle(UP_Y, c.yaw);
+      this.tmpS.set(prone ? 1.35 : 0.62, 1, prone ? 0.8 : 0.62);
+      this.tmpM4.compose(this.tmpP, this.tmpQ, this.tmpS);
+      this.blobs.setMatrixAt(i, this.tmpM4);
+      i++;
+    }
+    this.blobs.count = i;
+    this.blobs.instanceMatrix.needsUpdate = true;
+  }
+
+  // 交互高亮: F 拾取菱形浮动标记 / 目标门脉冲描边
+  private updateMarkers(): void {
+    if (this.promptItem) {
+      const gp = this.promptItem.group.position;
+      this.lootMarker.visible = true;
+      this.lootMarker.position.set(gp.x, gp.y + 1.1 + Math.sin(this.now * 5) * 0.07, gp.z);
+      this.lootMarker.material.opacity = 0.75 + Math.sin(this.now * 6) * 0.25;
+    } else {
+      this.lootMarker.visible = false;
+    }
+    const d = this.promptDoor;
+    if (d && d.alive) {
+      const col = d.collider;
+      this.doorFrame.visible = true;
+      this.doorFrame.position.set((col.minX + col.maxX) / 2, (col.minY + col.maxY) / 2, (col.minZ + col.maxZ) / 2);
+      this.doorFrame.scale.set(col.maxX - col.minX + 0.14, col.maxY - col.minY + 0.14, col.maxZ - col.minZ + 0.14);
+      this.doorFrame.material.opacity = 0.3 + Math.sin(this.now * 6) * 0.18;
+    } else {
+      this.doorFrame.visible = false;
+    }
+  }
+
   private update(dt: number): void {
     const player = this.player as PlayerController;
     // 1 输入→玩家
@@ -512,6 +624,8 @@ export class Game {
     this.separateChars();
     // 5 模型/特效/拾取物/包扎
     for (const c of this.chars) c.syncModel(dt, c.speed2d > 0.3);
+    this.updateBlobShadows();
+    this.updateMarkers();
     this.loot.update(dt);
     this.effects.update(dt);
     this.grenades.update(dt, this);
@@ -628,9 +742,13 @@ export class Game {
         }
       } else if (res.surface === 'terrain' || res.surface === 'floor') {
         this.effects.impactDust(res.point);
+      } else if (res.surface === 'rock') {
+        this.effects.impactRock(res.point);
       } else {
         this.effects.impactSpark(res.point);
       }
+      // 弹着点入水: 白色溅沫
+      if (res.point.y < WATER_Y) this.effects.splash(res.point);
     } else {
       this.tmpEnd.copy(origin).addScaledVector(this.tmpA, 260);
       this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
@@ -965,14 +1083,15 @@ export class Game {
       this.loot.spawn(packLootKind(victim.pack.level), gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7));
     }
 
-    // 击杀信息
+    // 击杀信息(玩家名金色, bot 名白色)
+    const ns = (c: Character): string => `<span class="${c.isPlayer ? 'kf-player' : 'kf-bot'}">${c.name}</span>`;
     if (attacker) {
       attacker.kills++;
       this.hud.killFeed(via
-        ? `${attacker.name} 用${via}淘汰了 ${victim.name}`
-        : `${attacker.name} 淘汰了 ${victim.name}${head ? '（爆头）' : ''}`);
+        ? `${ns(attacker)} 用${via}淘汰了 ${ns(victim)}`
+        : `${ns(attacker)} 淘汰了 ${ns(victim)}${head ? '（爆头）' : ''}`);
     } else {
-      this.hud.killFeed(`${victim.name} 被安全区吞噬`);
+      this.hud.killFeed(`${ns(victim)} 被安全区吞噬`);
     }
     if (attacker?.isPlayer) {
       this.audio.kill();

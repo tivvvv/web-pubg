@@ -170,11 +170,11 @@ export class World {
     water.position.y = WATER_Y;
     scene.add(water);
 
-    // 天空 / 雾 / 光照(雾色与天穹地平线一致)
-    scene.fog = new THREE.Fog(0xcfe0ee, 150, 640);
-    const hemi = new THREE.HemisphereLight(0xcfe4f7, 0x6d7a50, 0.85);
+    // 天空 / 雾 / 光照(雾色与天穹地平线一致; 金色暖阳)
+    scene.fog = new THREE.Fog(0xead9c4, 150, 640);
+    const hemi = new THREE.HemisphereLight(0xd8e6f5, 0x767a55, 0.82);
     scene.add(hemi);
-    this.sun = new THREE.DirectionalLight(0xffe9c4, 2.3);
+    this.sun = new THREE.DirectionalLight(0xffdfb0, 2.35);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.camera.left = -60;
@@ -184,7 +184,7 @@ export class World {
     this.sun.shadow.camera.near = 10;
     this.sun.shadow.camera.far = 280;
     this.sun.shadow.bias = -0.0004;
-    this.sun.shadow.normalBias = 0.03;
+    this.sun.shadow.normalBias = 0.05;
     scene.add(this.sun);
     scene.add(this.sun.target);
     this.sky = new Sky(scene);
@@ -726,7 +726,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
 
   // 阴影相机跟随玩家
   updateShadow(px: number, pz: number): void {
-    this.sun.position.set(px + 70, 100, pz + 40);
+    this.sun.position.set(px + 85, 72, pz + 42); // 低角度金色阳光(与天穹日盘同向)
     this.sun.target.position.set(px, 0, pz);
     this.sun.target.updateMatrixWorld();
   }
