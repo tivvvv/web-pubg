@@ -12,6 +12,7 @@ import { PlayerController } from './player';
 import type { DestructibleLike, GameStats, LootKind } from './types';
 import { clamp, dist2D, rand } from './utils';
 import { AMMO_NAME, AMMO_PACK, MELEE, WEAPONS, applySpread, hitscan, makeShotResult } from './weapons';
+import { MUZZLE_SCALE } from './weaponmodels';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
 
@@ -492,7 +493,7 @@ export class Game {
     applySpread(this.tmpA, spread, this.tmpEnd);
     hitscan(this.world, this.chars, shooter, origin, this.tmpA, 260, this.staticHit, this.shotRes);
     shooter.muzzleWorld(this.tmpMuzzle);
-    this.effects.muzzleFlash(this.tmpMuzzle);
+    this.effects.muzzleFlash(this.tmpMuzzle, MUZZLE_SCALE[gun.def.id]);
     const res = this.shotRes;
     if (res.hit) {
       this.effects.tracer(this.tmpMuzzle, res.point, 0xffd27a);
@@ -749,6 +750,7 @@ export class Game {
     this.hud.setWin(stats);
     this.hud.showScreen('win');
     this.hud.setCrosshair(0, false);
+    this.hud.setScope(false);
     this.hud.setZoneTint(false);
     this.hud.setPickupPrompt(null);
     this.audio.kill();
@@ -769,6 +771,7 @@ export class Game {
     this.hud.setDeath(stats);
     this.hud.showScreen('death');
     this.hud.setCrosshair(0, false);
+    this.hud.setScope(false);
     this.hud.setZoneTint(false);
     this.hud.setPickupPrompt(null);
     this.hud.setHealCast(-1);
@@ -904,11 +907,13 @@ export class Game {
     }
     this.hud.setZoneTint(outside && c.alive);
 
-    // 准星: 弧度→像素
+    // 准星: 弧度→像素; AWM 开镜时换全屏瞄准镜
     const sizeH = this.renderer.domElement.height / this.renderer.getPixelRatio();
     const focal = sizeH / 2 / Math.tan((player.camera.fov * Math.PI) / 360);
     const px = Math.tan(player.spreadRad) * focal;
-    this.hud.setCrosshair(this.state === 'playing' && c.alive ? px + 6 : 0, this.state === 'playing' && c.alive);
+    const scoped = this.state === 'playing' && c.alive && player.aiming && gun?.def.id === 'sniper';
+    this.hud.setScope(scoped);
+    this.hud.setCrosshair(this.state === 'playing' && c.alive ? px + 6 : 0, this.state === 'playing' && c.alive && !scoped);
   }
 
   private refreshMinimap(): void {

@@ -102,6 +102,8 @@ export class PlayerController {
     c.applyMove(vx, vz, dt, game.world);
     if (wasAir && c.grounded) game.audio.jumpLand();
     c.yaw = this.yaw;
+    // ADS: 枪械随视线俯仰(平滑); 换弹进度供模型下沉/弹匣脱落动画
+    c.aimPitch = lerp(c.aimPitch, this.aiming ? this.pitch : 0, Math.min(1, dt * 12));
 
     // ---- 攻击(枪械 / 近战) ----
     this.fireTimer -= dt;
@@ -116,6 +118,7 @@ export class PlayerController {
         this.reloading = false;
       }
     }
+    c.reload01 = this.reloading && gun ? clamp(1 - this.reloadT / gun.def.reloadTime, 0.01, 1) : 0;
     const pressedEdge = input.consumeFirePressed();
     if (c.curSlot === 3) {
       // 近战: 按住连挥, 冷却在 meleeAttack 内判定

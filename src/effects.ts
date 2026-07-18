@@ -114,17 +114,17 @@ export class Effects {
     t.life = 0.07;
   }
 
-  muzzleFlash(pos: THREE.Vector3): void {
+  muzzleFlash(pos: THREE.Vector3, scale = 1): void {
     const f = this.flashes[this.flashIdx] as Flash;
     this.flashIdx = (this.flashIdx + 1) % FLASH_CAP;
     f.sprite.position.copy(pos);
-    f.sprite.scale.setScalar(0.45 + Math.random() * 0.3);
+    f.sprite.scale.setScalar((0.45 + Math.random() * 0.3) * scale);
     f.sprite.material.rotation = Math.random() * Math.PI * 2;
     f.sprite.material.opacity = 1;
     f.sprite.visible = true;
     f.life = 0.05;
     this.light.position.copy(pos);
-    this.light.intensity = 30;
+    this.light.intensity = 30 * scale;
   }
 
   burst(point: THREE.Vector3, n: number, r: number, g: number, b: number, speed: number): void {

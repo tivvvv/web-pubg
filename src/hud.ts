@@ -212,6 +212,11 @@ export class Hud {
     this.crosshair.classList.toggle('hidden', !visible);
   }
 
+  // AWM ADS 全屏瞄准镜
+  setScope(on: boolean): void {
+    el('scope').classList.toggle('hidden', !on);
+  }
+
   setZoneTint(on: boolean): void {
     this.zoneTint.classList.toggle('on', on);
   }

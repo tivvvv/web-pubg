@@ -644,3 +644,46 @@ body {
   padding: 8px 28px;
   letter-spacing: 4px;
 }
+
+/* AWM 瞄准镜 overlay: 圆形视野 + 黑色遮罩 + 十字线 */
+#scope {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 50%, transparent 24%, rgba(2, 3, 2, 0.985) 26%);
+  z-index: 12;
+}
+
+#scope.hidden {
+  display: none;
+}
+
+.sc-line {
+  position: absolute;
+  background: rgba(8, 10, 8, 0.9);
+}
+
+.sc-h {
+  left: 26%;
+  right: 26%;
+  top: 50%;
+  height: 1.5px;
+}
+
+.sc-v {
+  top: 13%;
+  bottom: 13%;
+  left: 50%;
+  width: 1.5px;
+}
+
+.sc-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48vmin;
+  height: 48vmin;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(8, 10, 8, 0.9);
+  border-radius: 50%;
+}

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import type { AmmoType, GunState, MeleeState } from './types';
 import { MELEE } from './weapons';
+import { buildWeaponModel, type WeaponModel, type WeaponModelId } from './weaponmodels';
 import type { World } from './world';
 
 export interface HumanParts {
@@ -12,11 +13,9 @@ export interface HumanParts {
   armR: THREE.Group;
   legL: THREE.Group;
   legR: THREE.Group;
-  gun: THREE.Group;      // 枪械锚点
-  gunBody: THREE.Mesh;
-  gunMag: THREE.Mesh;
-  knife: THREE.Group;    // 砍刀(挂在手部锚点)
-  muzzle: THREE.Object3D;
+  gun: THREE.Group;      // 手部锚点(当前持械模型挂在这里)
+  held: WeaponModel | null; // 当前持械模型(含 muzzle/mag)
+  muzzleFallback: THREE.Object3D; // 徒手时的枪口兜底点
 }
 
 // 共享几何体(跨对局复用, 重开不泄漏)
@@ -26,20 +25,12 @@ const GEO = {
   torso: new THREE.BoxGeometry(0.52, 0.62, 0.3),
   arm: new THREE.BoxGeometry(0.14, 0.56, 0.14),
   leg: new THREE.BoxGeometry(0.17, 0.74, 0.17),
-  gunBody: new THREE.BoxGeometry(0.07, 0.15, 0.64),
-  gunMag: new THREE.BoxGeometry(0.05, 0.16, 0.09),
-  blade: new THREE.BoxGeometry(0.035, 0.02, 0.48),
-  knifeGuard: new THREE.BoxGeometry(0.09, 0.03, 0.04),
-  knifeHandle: new THREE.BoxGeometry(0.045, 0.045, 0.14),
 };
 
 const MAT = {
   skin: new THREE.MeshLambertMaterial({ color: 0xd9a066 }),
   pants: new THREE.MeshLambertMaterial({ color: 0x3d4436 }),
   helmet: new THREE.MeshLambertMaterial({ color: 0x4a5240 }),
-  gun: new THREE.MeshLambertMaterial({ color: 0x22231f }),
-  blade: new THREE.MeshLambertMaterial({ color: 0xc8ccd4 }),
-  knifeHandle: new THREE.MeshLambertMaterial({ color: 0x5a3a22 }),
 };
 
 const shirtCache = new Map<number, THREE.MeshLambertMaterial>();
@@ -109,35 +100,15 @@ export function buildHumanoid(shirtColor: number): { group: THREE.Group; parts: 
   legR.add(legRMesh);
   inner.add(legR);
 
-  // 手部锚点(枪械/砍刀挂载, 指向 +Z 前方)
+  // 手部锚点(武器模型挂载点, 模型原点=握把, 指向 +Z 前方)
   const gun = new THREE.Group();
   gun.position.set(0.19, 1.26, 0.34);
-  const gunBody = new THREE.Mesh(GEO.gunBody, MAT.gun);
-  gunBody.castShadow = true;
-  gun.add(gunBody);
-  const gunMag = new THREE.Mesh(GEO.gunMag, MAT.gun);
-  gunMag.position.set(0, -0.12, 0.05);
-  gun.add(gunMag);
-  const muzzle = new THREE.Object3D();
-  muzzle.position.set(0, 0.02, 0.38);
-  gun.add(muzzle);
-  // 砍刀
-  const knife = new THREE.Group();
-  const blade = new THREE.Mesh(GEO.blade, MAT.blade);
-  blade.position.set(0, 0.02, 0.3);
-  blade.castShadow = true;
-  knife.add(blade);
-  const guard = new THREE.Mesh(GEO.knifeGuard, MAT.gun);
-  guard.position.set(0, 0.02, 0.06);
-  knife.add(guard);
-  const handle = new THREE.Mesh(GEO.knifeHandle, MAT.knifeHandle);
-  handle.position.set(0, 0.02, -0.04);
-  knife.add(handle);
-  knife.visible = false;
-  gun.add(knife);
+  const muzzleFallback = new THREE.Object3D();
+  muzzleFallback.position.set(0, 0.02, 0.4);
+  gun.add(muzzleFallback);
   inner.add(gun);
 
-  return { group, parts: { inner, torso, head, armL, armR, legL, legR, gun, gunBody, gunMag, knife, muzzle } };
+  return { group, parts: { inner, torso, head, armL, armR, legL, legR, gun, held: null, muzzleFallback } };
 }
 
 export interface HitTestResult {
@@ -173,6 +144,10 @@ export class Character {
   lastAttackerId = 0;
   lastShotT = -100;    // 最近一次开枪时间(小地图红点)
   kills = 0;
+  reload01 = 0;        // 换弹进度 0..1(0=未换弹), 玩家控制器每帧写入
+  aimPitch = 0;        // ADS 时枪械俯仰(玩家控制器写入), bot 恒 0
+
+  private heldId: WeaponModelId | null = null;
 
   readonly group: THREE.Group;
   readonly parts: HumanParts;
@@ -217,7 +192,24 @@ export class Character {
   }
 
   muzzleWorld(out: THREE.Vector3): THREE.Vector3 {
-    return this.parts.muzzle.getWorldPosition(out);
+    const held = this.parts.held;
+    const m = held ? held.muzzle : this.parts.muzzleFallback;
+    return m.getWorldPosition(out);
+  }
+
+  // 切换手持模型(栏位/武器变化时调用; 克隆原型, 零逐帧分配)
+  private swapHeld(id: WeaponModelId | null): void {
+    if (id === this.heldId) return;
+    const p = this.parts;
+    if (p.held) {
+      p.gun.remove(p.held.group);
+      p.held = null;
+    }
+    this.heldId = id;
+    if (id) {
+      p.held = buildWeaponModel(id);
+      p.gun.add(p.held.group);
+    }
   }
 
   // 通用位移: 水平速度 + 重力 + 地面/碰撞
@@ -238,16 +230,33 @@ export class Character {
     this.speed2d = Math.sqrt(vx * vx + vz * vz);
   }
 
-  // 模型同步: 位置/朝向/持械可见性/挥击/走路摆动/倒地
+  // 模型同步: 位置/朝向/持械模型/挥击/走路摆动/倒地
   syncModel(dt: number, moving: boolean): void {
     this.group.position.copy(this.pos);
     this.group.rotation.y = this.yaw;
     const p = this.parts;
-    // 持械可见性
-    const gunVisible = this.curSlot < 3 && this.guns[this.curSlot] !== null;
-    p.gunBody.visible = gunVisible;
-    p.gunMag.visible = gunVisible;
-    p.knife.visible = this.curSlot === 3 && this.melee.def.id === 'knife';
+    // 持械模型切换(仅在栏位/武器变化时克隆)
+    const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
+    const wantId: WeaponModelId | null =
+      gun ? gun.def.id : this.curSlot === 3 && this.melee.def.id === 'knife' ? 'knife' : null;
+    this.swapHeld(wantId);
+    // 枪姿态: ADS 俯仰 + 换弹下压; 弹匣中段脱落/回装
+    const reloadDip = this.reload01 > 0 ? Math.sin(Math.min(1, this.reload01) * Math.PI) * 0.55 : 0;
+    p.gun.rotation.x = -this.aimPitch + reloadDip;
+    if (p.held?.mag) {
+      p.held.mag.visible = this.reload01 < 0.4 || this.reload01 > 0.68;
+    }
+    // 左臂大致迎向护木(长枪更前伸), 持刀/徒手放松
+    if (wantId === 'rifle' || wantId === 'sniper') {
+      p.armL.rotation.x = -1.5;
+      p.armL.rotation.z = 0.5;
+    } else if (wantId === 'smg' || wantId === 'pistol') {
+      p.armL.rotation.x = -1.28;
+      p.armL.rotation.z = 0.38;
+    } else {
+      p.armL.rotation.x = -1.15;
+      p.armL.rotation.z = 0.25;
+    }
     if (!this.alive) {
       if (this.dieT >= 0 && this.dieT < 1) {
         this.dieT = Math.min(1, this.dieT + dt * 2.4);

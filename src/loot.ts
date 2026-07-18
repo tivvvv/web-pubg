@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { LootKind, WeaponId } from './types';
 import { rand } from './utils';
 import { AMMO_PACK, WEAPONS } from './weapons';
+import { buildWeaponModel } from './weaponmodels';
 import { WATER_Y, type World } from './world';
 
 export interface LootItem {
@@ -19,12 +20,6 @@ const LOOT_CAP = 150;
 
 // 共享几何/材质
 const GEO = {
-  rifle: new THREE.BoxGeometry(0.62, 0.12, 0.12),
-  smg: new THREE.BoxGeometry(0.46, 0.14, 0.14),
-  sniper: new THREE.BoxGeometry(0.8, 0.09, 0.09),
-  pistol: new THREE.BoxGeometry(0.3, 0.12, 0.14),
-  blade: new THREE.BoxGeometry(0.06, 0.02, 0.52),
-  knifeHandle: new THREE.BoxGeometry(0.05, 0.05, 0.16),
   ammo: new THREE.BoxGeometry(0.26, 0.18, 0.2),
   medBody: new THREE.BoxGeometry(0.34, 0.12, 0.26),
   crossV: new THREE.BoxGeometry(0.06, 0.03, 0.18),
@@ -32,31 +27,31 @@ const GEO = {
   ring: new THREE.TorusGeometry(0.42, 0.025, 6, 24),
 };
 const MAT = {
-  rifle: new THREE.MeshBasicMaterial({ color: 0xff7a29 }),
-  smg: new THREE.MeshBasicMaterial({ color: 0x37e0d8 }),
-  sniper: new THREE.MeshBasicMaterial({ color: 0xc05cff }),
-  pistol: new THREE.MeshBasicMaterial({ color: 0xffd24d }),
-  blade: new THREE.MeshBasicMaterial({ color: 0xdfe6ee }),
-  knifeHandle: new THREE.MeshBasicMaterial({ color: 0x7a4a2a }),
   ammo: new THREE.MeshBasicMaterial({ color: 0x7be06a }),
   medkit: new THREE.MeshBasicMaterial({ color: 0xf2f2f2 }),
   cross: new THREE.MeshBasicMaterial({ color: 0xe33e3e }),
-  ring: new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.5 }),
+};
+// 每种类型的光环颜色(沿用旧配色编码)
+const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
+  rifle: new THREE.MeshBasicMaterial({ color: 0xff7a29, transparent: true, opacity: 0.5 }),
+  smg: new THREE.MeshBasicMaterial({ color: 0x37e0d8, transparent: true, opacity: 0.5 }),
+  sniper: new THREE.MeshBasicMaterial({ color: 0xc05cff, transparent: true, opacity: 0.5 }),
+  pistol: new THREE.MeshBasicMaterial({ color: 0xffd24d, transparent: true, opacity: 0.5 }),
+  knife: new THREE.MeshBasicMaterial({ color: 0xdfe6ee, transparent: true, opacity: 0.5 }),
+  ammo: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
+  medkit: new THREE.MeshBasicMaterial({ color: 0xf2f2f2, transparent: true, opacity: 0.5 }),
 };
 
 function buildLootMesh(kind: LootKind): THREE.Group {
   const g = new THREE.Group();
   const holder = new THREE.Group(); // 自旋部分
   g.add(holder);
-  if (kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol') {
-    holder.add(new THREE.Mesh(GEO[kind], MAT[kind]));
-  } else if (kind === 'knife') {
-    const blade = new THREE.Mesh(GEO.blade, MAT.blade);
-    blade.position.z = 0.1;
-    holder.add(blade);
-    const handle = new THREE.Mesh(GEO.knifeHandle, MAT.knifeHandle);
-    handle.position.z = -0.22;
-    holder.add(handle);
+  if (isWeaponKind(kind)) {
+    // 真枪模型: 斜躺姿态, 可直接辨认枪型
+    const wm = buildWeaponModel(kind);
+    wm.group.rotation.set(-0.32, 0, 0.55);
+    wm.group.position.y = 0.05;
+    holder.add(wm.group);
   } else if (kind === 'ammo') {
     holder.add(new THREE.Mesh(GEO.ammo, MAT.ammo));
   } else {
@@ -68,7 +63,7 @@ function buildLootMesh(kind: LootKind): THREE.Group {
     ch.position.y = 0.075;
     holder.add(ch);
   }
-  const ring = new THREE.Mesh(GEO.ring, MAT.ring);
+  const ring = new THREE.Mesh(GEO.ring, RING_MAT[kind]);
   ring.rotation.x = Math.PI / 2;
   ring.position.y = -0.55;
   g.add(ring);
