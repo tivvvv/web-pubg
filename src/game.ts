@@ -2,6 +2,27 @@
 import * as THREE from 'three';
 
 const UP_Y = new THREE.Vector3(0, 1, 0);
+const MATE_NAMES = ['阿伟', '老六', '小胖'];
+const MATE_SHIRTS = [0x3cb36a, 0x3f8a4e, 0x66a05a];
+
+// 队友头顶名牌(绿色小字, 远处隐藏)
+function makeNameTag(name: string): THREE.Sprite {
+  const cv = document.createElement('canvas');
+  cv.width = 128;
+  cv.height = 32;
+  const g = cv.getContext('2d') as CanvasRenderingContext2D;
+  g.font = 'bold 20px sans-serif';
+  g.textAlign = 'center';
+  g.strokeStyle = 'rgba(0,0,0,0.75)';
+  g.lineWidth = 3;
+  g.strokeText(name, 64, 22);
+  g.fillStyle = 'rgba(110,230,140,0.95)';
+  g.fillText(name, 64, 22);
+  const tex = new THREE.CanvasTexture(cv);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  spr.scale.set(1.5, 0.38, 1);
+  return spr;
+}
 
 // 径向渐变纹理(贴地阴影: 黑芯透明边)
 function makeRadialTexture(alpha: number, softness: number): THREE.Texture {
@@ -51,6 +72,7 @@ import { LootManager, isWeaponKind, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
 import { GrenadeManager } from './throwables';
+import { TeammateController } from './teammate';
 import { VEHICLE_SPEC, VehicleManager, type Vehicle } from './vehicles';
 import type { AmmoType, DestructibleLike, GameStats, LootKind, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
@@ -96,6 +118,8 @@ export class Game {
   private charsGroup = new THREE.Group();
   private player: PlayerController | null = null;
   private bots: BotController[] = [];
+  private mates: TeammateController[] = [];
+  private squadTags: THREE.Sprite[] = [];
   private state: 'menu' | 'playing' | 'paused' | 'over' = 'menu';
   private lastT = performance.now();
   private menuCam = new THREE.PerspectiveCamera(60, 1, 0.5, 1200);
@@ -112,6 +136,7 @@ export class Game {
   private hudArmorKey = '';
   private shotDots: { x: number; z: number }[] = [];
   private mapVehicles: { x: number; z: number; dead: boolean }[] = [];
+  private mapSquad: { x: number; z: number }[] = [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }];
 
   private shotRes = makeShotResult();
   private tmpDir = new THREE.Vector3();
@@ -210,6 +235,11 @@ export class Game {
     let n = 0;
     for (const c of this.chars) if (c.alive) n++;
     return n;
+  }
+
+  // 玩家控制器访问器(队友 AI 用)
+  get playerCtl(): PlayerController | null {
+    return this.player;
   }
 
   private onResize(): void {
@@ -481,6 +511,9 @@ export class Game {
     this.charsGroup.clear();
     this.chars.length = 0;
     this.bots = [];
+    this.mates = [];
+    for (const t of this.squadTags) this.scene.remove(t);
+    this.squadTags = [];
     this.player = new PlayerController(0x3a6ea5);
 
     // 出生点: 拒绝采样, 最小间距
@@ -510,6 +543,7 @@ export class Game {
     while (pts.length < TOTAL) pts.push({ x: rand(-60, 60), z: rand(-60, 60) });
 
     // 玩家: 进入舱内航线阶段(随机航线角)
+    this.player.char.team = 'squad';
     this.flightAngle = rand(0, Math.PI * 2);
     this.player.descent = 'plane';
     this.player.planeS = 0;
@@ -531,8 +565,28 @@ export class Game {
     this.scene.add(plane);
 
     for (let i = 1; i < TOTAL; i++) {
-      const bot = new BotController(BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`, BOT_SHIRTS[(i - 1) % BOT_SHIRTS.length] ?? 0x888888);
       const p = pts[i] as { x: number; z: number };
+      if (i <= 3) {
+        // 队友 ×3(跟随飞机, 玩家起跳后错峰跳伞)
+        const mate = new TeammateController(
+          (MATE_NAMES[i - 1] ?? `队友${i}`) as string,
+          (MATE_SHIRTS[i - 1] ?? 0x3cb36a) as number,
+        );
+        mate.char.pos.copy(this.player.char.pos);
+        mate.char.airPose = 'fall';
+        mate.descent = 'freefall';
+        mate.vy = -2;
+        this.mates.push(mate);
+        this.chars.push(mate.char);
+        this.charsGroup.add(mate.char.group);
+        // 头顶名牌
+        const tag = makeNameTag(mate.char.name);
+        this.squadTags.push(tag);
+        this.scene.add(tag);
+        continue;
+      }
+      // 敌方 bot ×20(高空投放)
+      const bot = new BotController(BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`, BOT_SHIRTS[(i - 1) % BOT_SHIRTS.length] ?? 0x888888);
       // bot: 投放点高空自由落体(高度错开, 落地时间自然分散)
       bot.char.pos.set(p.x + rand(-25, 25), 190 + Math.random() * 45, p.z + rand(-25, 25));
       bot.char.yaw = rand(0, Math.PI * 2);
@@ -671,8 +725,19 @@ export class Game {
     const player = this.player as PlayerController;
     // 1 输入→玩家
     player.update(dt, this.input, this);
-    // 2 bots
+    // 2 bots + 队友
     for (const b of this.bots) b.update(dt, this);
+    for (const m of this.mates) m.update(dt, this);
+    // 队友名牌跟随(60m 外隐藏)
+    for (let i = 0; i < this.mates.length; i++) {
+      const m = this.mates[i] as TeammateController;
+      const tag = this.squadTags[i];
+      if (!tag) continue;
+      const c = m.char;
+      const dp = Math.hypot(c.pos.x - player.char.pos.x, c.pos.z - player.char.pos.z);
+      tag.visible = c.alive && dp < 60;
+      tag.position.set(c.pos.x, c.pos.y + 2.05, c.pos.z);
+    }
     // 3 毒圈(跳伞后才计时) + 运输机模型跟随/离场
     if (this.zoneArmed) {
       this.zone.update(dt);
@@ -768,6 +833,21 @@ export class Game {
         this.audio.zoneTick();
       }
     }
+  }
+
+  // ---- 载具座位(队友乘客) ----
+
+  // 第一个空乘客位(返回索引, 无座返回 -1)
+  freeSeat(v: Vehicle): number {
+    return v.passengers.findIndex((p) => p === null);
+  }
+
+  boardSeat(v: Vehicle, idx: number, c: Character): void {
+    v.passengers[idx] = c;
+  }
+
+  leaveSeat(v: Vehicle, idx: number): void {
+    if (idx >= 0 && idx < v.passengers.length) v.passengers[idx] = null;
   }
 
   // 载具爆炸/熄火时强制司机下车(可带伤害; 目前仅玩家驾驶)
@@ -1053,6 +1133,7 @@ export class Game {
     let bestD = m.range + 0.45;
     for (const c of this.chars) {
       if (!c.alive || c === attacker) continue;
+      if (attacker.team === 'squad' && c.team === 'squad') continue; // 小队近战免伤
       const dx = c.pos.x - attacker.pos.x;
       const dz = c.pos.z - attacker.pos.z;
       const d = Math.hypot(dx, dz);
@@ -1191,8 +1272,9 @@ export class Game {
       this.loot.spawn(packLootKind(victim.pack.level), gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7));
     }
 
-    // 击杀信息(玩家名金色, bot 名白色)
-    const ns = (c: Character): string => `<span class="${c.isPlayer ? 'kf-player' : 'kf-bot'}">${c.name}</span>`;
+    // 击杀信息(玩家金 / 队友绿 / 敌人白)
+    const ns = (c: Character): string =>
+      `<span class="${c.isPlayer ? 'kf-player' : c.team === 'squad' ? 'kf-squad' : 'kf-bot'}">${c.name}</span>`;
     if (attacker) {
       attacker.kills++;
       this.hud.killFeed(via
@@ -1200,6 +1282,9 @@ export class Game {
         : `${ns(attacker)} 淘汰了 ${ns(victim)}${head ? '（爆头）' : ''}`);
     } else {
       this.hud.killFeed(`${ns(victim)} 被安全区吞噬`);
+    }
+    if (victim.team === 'squad' && !victim.isPlayer) {
+      this.hud.toast(`队友 ${victim.name} 被淘汰`);
     }
     if (attacker?.isPlayer) {
       this.audio.kill();
@@ -1218,7 +1303,10 @@ export class Game {
   private checkWin(): void {
     const player = this.player;
     if (!player || !player.char.alive || this.state !== 'playing') return;
-    if (this.aliveCount !== 1) return;
+    // 敌人全灭即胜(队友存活与否不限)
+    for (const c of this.chars) {
+      if (c.alive && c.team === 'enemy') return;
+    }
     this.state = 'over';
     this.backpackOpen = false;
     this.hud.showBackpack(false);
@@ -1500,6 +1588,11 @@ export class Game {
     } else {
       this.hud.setAltitude(-1, 0);
     }
+    // 小队面板(玩家高亮, 变化才刷新)
+    this.hud.setSquad([
+      { name: '你', hp: c.hp, alive: c.alive, isPlayer: true },
+      ...this.mates.map((m) => ({ name: m.char.name, hp: m.char.hp, alive: m.char.alive, isPlayer: false })),
+    ]);
     // 载具仪表(驾驶中显示)
     if (player.driving) {
       const v = player.driving;
@@ -1582,6 +1675,12 @@ export class Game {
       m.z = v.pos.z;
       m.dead = v.dead;
     }
-    this.minimap.draw(this.zone, player.char.pos.x, player.char.pos.z, player.yaw, this.shotDots, n, this.mapVehicles);
+    for (let i = 0; i < this.mates.length; i++) {
+      const c = (this.mates[i] as TeammateController).char;
+      const s = this.mapSquad[i] as { x: number; z: number };
+      s.x = c.pos.x;
+      s.z = c.pos.z;
+    }
+    this.minimap.draw(this.zone, player.char.pos.x, player.char.pos.z, player.yaw, this.shotDots, n, this.mapVehicles, this.mapSquad);
   }
 }

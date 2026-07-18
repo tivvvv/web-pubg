@@ -418,9 +418,10 @@ export class GrenadeManager {
     game.effects.explosion(s.pos);
     game.soundAt(s.pos, (d, p) => game.audio.explosion(d, p));
     game.addShakeFrom(s.pos);
-    // 伤害: 中心 110 → 9m 处 15, 不分敌我(含投掷者)
+    // 伤害: 中心 110 → 9m 处 15, 不分敌我(含投掷者); 小队爆炸免伤
     for (const c of game.chars) {
       if (!c.alive) continue;
+      if (s.thrower && s.thrower.team === 'squad' && c.team === 'squad') continue;
       const dx = c.pos.x - s.pos.x;
       const dy = c.pos.y + 0.9 - s.pos.y;
       const dz = c.pos.z - s.pos.z;

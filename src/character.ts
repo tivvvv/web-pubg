@@ -162,6 +162,7 @@ export class Character {
   grounded = true;
   hp = 100;
   alive = true;
+  team: 'squad' | 'enemy' = 'enemy'; // 队伍(玩家+3队友=squad)
   speed2d = 0;
   walkPhase = 0;
 

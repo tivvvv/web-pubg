@@ -928,3 +928,62 @@ body {
   font-size: 12px;
   color: #b9c0a4;
 }
+
+/* 小队面板 */
+#squad-panel {
+  position: absolute;
+  left: 18px;
+  top: 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sq-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: rgba(10, 12, 10, 0.5);
+}
+
+.sq-row.me .sq-name {
+  color: #ffd24d;
+}
+
+.sq-row.dead {
+  opacity: 0.45;
+}
+
+.sq-row.dead .sq-fill {
+  background: #666;
+}
+
+.sq-name {
+  width: 42px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8fe6a8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.sq-bar {
+  width: 64px;
+  height: 6px;
+  background: rgba(8, 10, 8, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.sq-fill {
+  height: 100%;
+  background: #6fd88a;
+}
+
+/* 击杀信息队友绿名 */
+.feed-entry .kf-squad {
+  color: #6fe38c;
+  font-weight: 700;
+}

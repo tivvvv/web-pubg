@@ -92,6 +92,7 @@ export class Minimap {
     recentShots: readonly { x: number; z: number }[],
     shotCount: number,
     vehicles: readonly { x: number; z: number; dead: boolean }[],
+    squad: readonly { x: number; z: number }[],
   ): void {
     const ctx = this.ctx;
     const s = this.size;
@@ -102,6 +103,13 @@ export class Minimap {
     for (const v of vehicles) {
       ctx.fillStyle = v.dead ? 'rgba(60,60,60,0.8)' : 'rgba(150,150,150,0.9)';
       ctx.fillRect(this.toMap(v.x) - 2, this.toMap(v.z) - 2, 4, 4);
+    }
+    // 队友绿点(常驻)
+    ctx.fillStyle = '#52e07a';
+    for (const q of squad) {
+      ctx.beginPath();
+      ctx.arc(this.toMap(q.x), this.toMap(q.z), 2.2, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     // 下一个圈(蓝)

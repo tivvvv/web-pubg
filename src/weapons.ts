@@ -106,6 +106,7 @@ export function hitscan(
   }
   for (const c of chars) {
     if (!c.alive || c === exclude) continue;
+    if (exclude && exclude.team === 'squad' && c.team === 'squad') continue; // 小队免伤
     if (c.hitTest(o.x, o.y, o.z, d.x, d.y, d.z, best, charHit)) {
       best = charHit.t;
       char = c;

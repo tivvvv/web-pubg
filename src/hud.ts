@@ -45,6 +45,7 @@ export class Hud {
   private zoneTint = el('zone-tint');
   private hud = el('hud');
   private pickupPrompt = el('pickup-prompt');
+  private squadPanel = el('squad-panel');
   private altMeter = el('alt-meter');
   private vehiclePanel = el('vehicle-panel');
   private vehicleSpeed = el('vehicle-speed');
@@ -195,6 +196,23 @@ export class Hud {
     }
     this.altMeter.classList.add('show');
     this.altMeter.textContent = `高度 ${Math.max(0, Math.round(alt))}m · 下降 ${Math.round(Math.abs(vy))} m/s`;
+  }
+
+  // 小队面板(玩家高亮, 变化才写 DOM)
+  private squadKey = '';
+  setSquad(rows: { name: string; hp: number; alive: boolean; isPlayer: boolean }[]): void {
+    const key = rows.map((r) => `${Math.ceil(r.hp)}${r.alive ? 1 : 0}`).join('|');
+    if (key === this.squadKey) return;
+    this.squadKey = key;
+    this.squadPanel.innerHTML = rows
+      .map(
+        (r) =>
+          `<div class="sq-row${r.isPlayer ? ' me' : ''}${r.alive ? '' : ' dead'}">` +
+          `<span class="sq-name">${r.name}</span>` +
+          `<div class="sq-bar"><div class="sq-fill" style="width:${Math.max(0, Math.min(100, r.hp))}%"></div></div>` +
+          `</div>`,
+      )
+      .join('');
   }
 
   // 载具仪表(速度 km/h + 车况条; kmh<0 隐藏)

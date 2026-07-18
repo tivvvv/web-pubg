@@ -41,9 +41,21 @@ const SPAWNS: SpawnDef[] = [
 const CAR_COLORS = [0x6a7a52, 0x8a4a3a, 0x8a8578, 0x4a5e6e];
 const MOTO_COLORS = [0xa03a30, 0x3a6ea5, 0x555555];
 
-// 驾驶座世界坐标
+// 座位表: 0=驾驶位, 1..N=乘客位
+const SEATS: Record<VehicleKind, [number, number, number][]> = {
+  car: [VEHICLE_SPEC.car.seat, [0.5, 0.95, 0.15], [-0.5, 0.95, -0.75], [0.5, 0.95, -0.75]],
+  moto: [VEHICLE_SPEC.moto.seat, [0, 0.72, 0.45]],
+};
+
+// 驾驶座世界坐标(= seatWorldAt idx 0)
 export function seatWorld(v: Vehicle, out: THREE.Vector3): THREE.Vector3 {
-  const s = VEHICLE_SPEC[v.kind].seat;
+  return seatWorldAt(v, 0, out);
+}
+
+// 任意座位世界坐标
+export function seatWorldAt(v: Vehicle, idx: number, out: THREE.Vector3): THREE.Vector3 {
+  const table = SEATS[v.kind];
+  const s = table[Math.min(idx, table.length - 1)];
   const sin = Math.sin(v.yaw);
   const cos = Math.cos(v.yaw);
   out.set(v.pos.x + s[0] * cos + s[2] * sin, v.pos.y + s[1], v.pos.z - s[0] * sin + s[2] * cos);
@@ -54,6 +66,7 @@ export class Vehicle {
   speed = 0;             // 有符号速度(倒挡为负)
   hp: number;
   driver: Character | null = null;
+  passengers: (Character | null)[] = []; // 乘客位(任务9 队友)
   dead = false;          // 熄火/残骸(不可再驾驶)
   exploded = false;
   burnT = -1;            // 燃烧计时(2s 后爆炸)
@@ -73,6 +86,7 @@ export class Vehicle {
     this.pos = pos;
     this.yaw = yaw0;
     this.hp = VEHICLE_SPEC[kind].hp;
+    this.passengers = new Array(VEHICLE_SPEC[kind].seats - 1).fill(null);
     this.buildModel();
     this.sync();
   }
