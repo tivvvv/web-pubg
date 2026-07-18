@@ -154,6 +154,33 @@ export class AudioSys {
     this.noiseBurst(0.28 * att, pan, 520, 0.6, 0.13);
   }
 
+  // 木质命中(门未被打破)
+  woodHit(dist: number, pan: number): void {
+    const att = clamp(1.25 / (1 + dist * 0.03), 0.02, 1);
+    this.noiseBurst(0.42 * att, pan, 320, 1.0, 0.08);
+    this.thump(0.3 * att, pan, 150, 70, 0.07);
+  }
+
+  // 门板破碎
+  woodBreak(dist: number, pan: number): void {
+    const att = clamp(1.3 / (1 + dist * 0.028), 0.02, 1);
+    this.noiseBurst(0.55 * att, pan, 520, 0.7, 0.22);
+    this.thump(0.4 * att, pan, 170, 55, 0.18);
+  }
+
+  // 玻璃命中(未碎)
+  glassHit(dist: number, pan: number): void {
+    const att = clamp(1.25 / (1 + dist * 0.03), 0.02, 1);
+    this.noiseBurst(0.34 * att, pan, 3200, 2.0, 0.06);
+  }
+
+  // 玻璃破碎
+  glassBreak(dist: number, pan: number): void {
+    const att = clamp(1.3 / (1 + dist * 0.028), 0.02, 1);
+    this.noiseBurst(0.5 * att, pan, 2600, 1.2, 0.24);
+    this.noiseBurst(0.3 * att, pan, 4300, 2.5, 0.3);
+  }
+
   // 医疗包扎完成
   heal(): void {
     this.blip(360, 540, 0.16, 0.18, 'sine');

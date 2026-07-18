@@ -38,12 +38,38 @@ export interface MeleeState {
   def: MeleeDef;
 }
 
-// 静态碰撞体: 圆柱(树/石头) 或 AABB(墙体)
+// 静态碰撞体: 圆柱(树/石头) 或 AABB(墙体/地板/屋顶/门窗)
+export type SurfaceKind = 'char' | 'terrain' | 'wall' | 'tree' | 'rock' | 'floor' | 'roof' | 'door' | 'window';
+
+// 可破坏物(门/窗)的最小接口, 避免循环依赖
+export interface DestructibleLike {
+  readonly kind: 'door' | 'window';
+  alive: boolean;
+  hp: number;
+  readonly maxHp: number;
+  readonly collider: AabbCollider;
+  readonly mesh: { visible: boolean };
+  readonly cx: number;
+  readonly cy: number;
+  readonly cz: number;
+}
+
+export interface AabbCollider {
+  kind: 'aabb';
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+  tag: 'wall' | 'floor' | 'roof' | 'door' | 'window';
+  off?: boolean; // 已破坏: 所有查询跳过
+  destruct?: DestructibleLike;
+}
+
 export type Collider =
   | { kind: 'cyl'; x: number; z: number; r: number; y0: number; y1: number; tag: 'tree' | 'rock' }
-  | { kind: 'aabb'; minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number; tag: 'wall' };
-
-export type SurfaceKind = 'char' | 'terrain' | 'wall' | 'tree' | 'rock';
+  | AabbCollider;
 
 export interface GameStats {
   kills: number;

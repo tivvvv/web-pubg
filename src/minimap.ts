@@ -40,15 +40,14 @@ export class Minimap {
       }
     }
     bctx.putImageData(img, 0, 0);
-    // 建筑群标记
-    bctx.fillStyle = 'rgba(120,116,108,0.9)';
-    for (const c of world.compounds) {
-      const s = (c.half * 2 / (WORLD_HALF * 2)) * BASE_RES;
-      bctx.fillRect(
-        ((c.x - c.half + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES,
-        ((c.z - c.half + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES,
-        s, s,
-      );
+    // 房屋地块标记(含 2m 安全边, 画内圈 footprint)
+    bctx.fillStyle = 'rgba(122,110,94,0.95)';
+    for (const p of world.buildings.plots) {
+      const x0 = ((p.minX + 2 + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      const z0 = ((p.minZ + 2 + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      const w = ((p.maxX - p.minX - 4) / (WORLD_HALF * 2)) * BASE_RES;
+      const d = ((p.maxZ - p.minZ - 4) / (WORLD_HALF * 2)) * BASE_RES;
+      bctx.fillRect(x0, z0, Math.max(1.5, w), Math.max(1.5, d));
     }
   }
 

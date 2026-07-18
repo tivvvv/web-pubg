@@ -9,8 +9,8 @@ import { Input, type Action } from './input';
 import { LootManager, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
-import type { GameStats, LootKind } from './types';
-import { dist2D, rand } from './utils';
+import type { DestructibleLike, GameStats, LootKind } from './types';
+import { clamp, dist2D, rand } from './utils';
 import { AMMO_NAME, AMMO_PACK, MELEE, WEAPONS, applySpread, hitscan, makeShotResult } from './weapons';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
@@ -333,6 +333,7 @@ export class Game {
     }
 
     this.shotDots = this.bots.map(() => ({ x: 0, z: 0 }));
+    this.world.buildings.reset(); // 门窗恢复: 窗全修好, 门 30% 预破坏
     this.loot.populate(this.world);
     this.zone.reset();
     this.effects.reset();
@@ -507,7 +508,15 @@ export class Game {
         }
         this.damageChar(victim, dmg, res.head, shooter);
         if (!victim.alive && shooter.isPlayer) this.hud.hitmarker('kill');
-      } else if (res.surface === 'terrain') {
+      } else if (res.surface === 'door' || res.surface === 'window') {
+        // 可破坏物: 扣血 + 木屑/玻璃粒子音效
+        const d = this.staticHit.destruct;
+        if (d && d.alive) {
+          this.hitDestructible(d, gun.def.damage, res.point);
+        } else {
+          this.effects.impactDust(res.point);
+        }
+      } else if (res.surface === 'terrain' || res.surface === 'floor') {
         this.effects.impactDust(res.point);
       } else {
         this.effects.impactSpark(res.point);
@@ -532,6 +541,64 @@ export class Game {
       }
     }
     return true;
+  }
+
+  // ---- 可破坏物(门/窗) ----
+
+  // 对可破坏物造成伤害: 木/玻璃粒子 + 方位音效, 破碎后洞口可通行可射击
+  hitDestructible(d: DestructibleLike, dmg: number, point: THREE.Vector3): void {
+    if (!d.alive) return;
+    d.hp -= dmg;
+    if (d.hp <= 0) {
+      d.alive = false;
+      d.mesh.visible = false;
+      d.collider.off = true;
+      this.tmpEnd.set(d.cx, d.cy, d.cz);
+      if (d.kind === 'door') {
+        this.effects.debrisWood(this.tmpEnd);
+        this.soundAt(this.tmpEnd, (dist, pan) => this.audio.woodBreak(dist, pan));
+      } else {
+        this.effects.debrisGlass(this.tmpEnd);
+        this.soundAt(this.tmpEnd, (dist, pan) => this.audio.glassBreak(dist, pan));
+      }
+    } else if (d.kind === 'door') {
+      this.effects.impactWood(point);
+      this.soundAt(point, (dist, pan) => this.audio.woodHit(dist, pan));
+    } else {
+      this.effects.impactGlass(point);
+      this.soundAt(point, (dist, pan) => this.audio.glassHit(dist, pan));
+    }
+  }
+
+  // 以玩家相机为听者的方位音效(复用枪声的 dist/pan 算法)
+  soundAt(pos: THREE.Vector3, fn: (dist: number, pan: number) => void): void {
+    if (!this.player) return;
+    const cam = this.player.camera;
+    this.tmpEnd.subVectors(pos, cam.position);
+    const dist = this.tmpEnd.length();
+    if (dist > 120) return;
+    this.tmpEnd.divideScalar(dist || 1);
+    const e = cam.matrixWorld.elements;
+    this.tmpRight.set(e[0] ?? 1, e[1] ?? 0, e[2] ?? 0);
+    fn(dist, this.tmpRight.dot(this.tmpEnd));
+  }
+
+  // 找挡在角色行进方向上的活门/窗(2.2m 内, 朝向 dot>0.5), bot 破门用
+  findBlockingDoor(c: Character, fx: number, fz: number): DestructibleLike | null {
+    let best: DestructibleLike | null = null;
+    let bestD = 2.2;
+    for (const d of this.world.buildings.destructibles) {
+      if (!d.alive) continue;
+      const dx = d.cx - c.pos.x;
+      const dz = d.cz - c.pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > bestD || dist < 0.01) continue;
+      if ((dx * fx + dz * fz) / dist < 0.5) continue;
+      if (Math.abs(d.cy - (c.pos.y + 1.2)) > 2.2) continue;
+      best = d;
+      bestD = dist;
+    }
+    return best;
   }
 
   // ---- 近战结算 ----
@@ -582,6 +649,30 @@ export class Game {
       }
       this.damageChar(best, dmg, false, attacker);
       if (!best.alive && attacker.isPlayer) this.hud.hitmarker('kill');
+    } else {
+      // 无角色命中: 尝试打破面前的门/窗
+      const range = m.range + 0.7;
+      let bd: DestructibleLike | null = null;
+      let bdDist = range;
+      for (const d of this.world.buildings.destructibles) {
+        if (!d.alive) continue;
+        const col = d.collider;
+        const nx = clamp(attacker.pos.x, col.minX, col.maxX);
+        const nz = clamp(attacker.pos.z, col.minZ, col.maxZ);
+        const dist = Math.hypot(nx - attacker.pos.x, nz - attacker.pos.z);
+        if (dist > bdDist) continue;
+        if (Math.abs(d.cy - (attacker.pos.y + 1.2)) > 2.0) continue;
+        const ddx = d.cx - attacker.pos.x;
+        const ddz = d.cz - attacker.pos.z;
+        const dl = Math.hypot(ddx, ddz) || 1;
+        if ((ddx * fx + ddz * fz) / dl < 0.6) continue;
+        bd = d;
+        bdDist = dist;
+      }
+      if (bd) {
+        this.tmpEnd.set(bd.cx, bd.cy, bd.cz);
+        this.hitDestructible(bd, m.damage, this.tmpEnd);
+      }
     }
     return true;
   }

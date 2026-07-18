@@ -154,6 +154,13 @@ export class Effects {
   impactDust(p: THREE.Vector3): void { this.burst(p, 9, 0.62, 0.55, 0.42, 2.4); }
   impactSpark(p: THREE.Vector3): void { this.burst(p, 7, 1.0, 0.8, 0.35, 4.2); }
   impactBlood(p: THREE.Vector3): void { this.burst(p, 10, 0.75, 0.08, 0.06, 2.6); }
+  // 木门窗: 子弹命中木屑
+  impactWood(p: THREE.Vector3): void { this.burst(p, 8, 0.55, 0.4, 0.22, 2.8); }
+  // 玻璃: 子弹命中碎屑
+  impactGlass(p: THREE.Vector3): void { this.burst(p, 8, 0.75, 0.9, 0.95, 3.2); }
+  // 门板/玻璃彻底破碎: 大量碎块
+  debrisWood(p: THREE.Vector3): void { this.burst(p, 22, 0.5, 0.36, 0.2, 4.5); }
+  debrisGlass(p: THREE.Vector3): void { this.burst(p, 22, 0.8, 0.92, 0.98, 4.5); }
 
   update(dt: number): void {
     for (const t of this.tracers) {

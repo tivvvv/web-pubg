@@ -29,6 +29,10 @@ export class BotController {
   private moveTarget = new THREE.Vector3();
   private hasMoveTarget = false;
   private lastKnown = new THREE.Vector3();
+  // 破门: 被门/窗挡路计时
+  private blockT = 0;
+  private blockCheckT = 0;
+  private blockedDoor: import('./types').DestructibleLike | null = null;
 
   private eye = new THREE.Vector3();
   private tgtPos = new THREE.Vector3();
@@ -75,6 +79,9 @@ export class BotController {
         game.useMedkit(c);
       }
     }
+
+    // 被门/窗挡路 >1s: 开枪或挥刀破门
+    this.updateDoorBreak(dt, game);
 
     // 拾取: 弹药/医疗包直接拿; 武器按需求拿(bot 自动)
     const item = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
@@ -264,6 +271,49 @@ export class BotController {
     if (game.fireWeapon(c, this.eye, this.dir, 0)) {
       this.fireTimer = gun.def.fireInterval;
       if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = gun.def.reloadTime;
+    }
+  }
+
+  // 被门/窗挡路: 游走赶路或近战贴身时, 面前 2.2m 内的活门窗累计 1s 即破坏
+  private updateDoorBreak(dt: number, game: Game): void {
+    const c = this.char;
+    const wantsMove =
+      (this.state === 'wander' && this.hasMoveTarget) ||
+      (this.state === 'engage' && !c.heldGun());
+    this.blockCheckT -= dt;
+    if (this.blockCheckT <= 0) {
+      this.blockCheckT = 0.15;
+      const fx = Math.sin(c.yaw);
+      const fz = Math.cos(c.yaw);
+      this.blockedDoor = wantsMove ? game.findBlockingDoor(c, fx, fz) : null;
+      if (!this.blockedDoor) this.blockT = 0;
+    }
+    const d = this.blockedDoor;
+    if (!d || !d.alive || !wantsMove) {
+      this.blockT = 0;
+      return;
+    }
+    this.blockT += dt;
+    if (this.blockT <= 1.0) return;
+    // 面向目标破坏物开火/挥刀
+    c.yaw = Math.atan2(d.cx - c.pos.x, d.cz - c.pos.z);
+    const gun = c.heldGun();
+    if (gun && gun.mag > 0) {
+      if (this.fireTimer <= 0) {
+        c.eyePos(this.eye);
+        this.aim.set(d.cx, d.cy, d.cz);
+        this.dir.subVectors(this.aim, this.eye).normalize();
+        if (game.fireWeapon(c, this.eye, this.dir, 0)) {
+          this.fireTimer = gun.def.fireInterval * 1.6;
+          if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = gun.def.reloadTime;
+        }
+      }
+    } else {
+      game.meleeAttack(c);
+    }
+    if (!d.alive) {
+      this.blockedDoor = null;
+      this.blockT = 0;
     }
   }
 

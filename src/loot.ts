@@ -89,34 +89,38 @@ export class LootManager {
     scene.add(this.root);
   }
 
-  // 初始散布 ~120 个, 建筑内更多
+  // 初始散布 ~122 个: 先摆室内点位(房屋生成时给出), 再野外补齐
   populate(world: World): void {
     this.clear();
     let count = 0;
-    // 建筑内 ~55%
-    for (const c of world.compounds) {
-      const n = 5 + ((Math.random() * 3) | 0);
-      for (let i = 0; i < n && count < LOOT_CAP; i++) {
-        const x = c.x + rand(-1, 1) * (c.half - 1.6);
-        const z = c.z + rand(-1, 1) * (c.half - 1.6);
-        if (!world.pointFree(x, z, 0.4, WATER_Y - 0.5, 20)) continue;
-        this.spawn(this.rollKind(true), x, world.getHeight(x, z), z);
-        count++;
-      }
+    // 室内点位(一层普通表, 二层 premium 高级枪表)
+    for (const s of world.buildings.lootSpots) {
+      if (count >= LOOT_CAP) break;
+      if (Math.random() < 0.12) continue; // 少量留空, 避免每栋必刷
+      this.spawn(this.rollKind(s.premium ? 'premium' : 'indoor'), s.x, s.y, s.z);
+      count++;
     }
-    // 野外散布
-    for (let t = 0; t < 900 && count < 122; t++) {
+    // 野外散布补齐
+    for (let t = 0; t < 1200 && count < 122; t++) {
       const x = rand(-320, 320);
       const z = rand(-320, 320);
       if (!world.pointFree(x, z, 0.4, WATER_Y + 0.5, 14)) continue;
-      this.spawn(this.rollKind(false), x, world.getHeight(x, z), z);
+      this.spawn(this.rollKind('wild'), x, world.getHeight(x, z), z);
       count++;
     }
   }
 
-  private rollKind(indoor: boolean): LootKind {
+  private rollKind(table: 'wild' | 'indoor' | 'premium'): LootKind {
     const r = Math.random();
-    if (indoor) {
+    if (table === 'premium') {
+      // 二楼: 偏高级枪
+      if (r < 0.3) return 'rifle';
+      if (r < 0.55) return 'sniper';
+      if (r < 0.7) return 'smg';
+      if (r < 0.85) return 'ammo';
+      return 'medkit';
+    }
+    if (table === 'indoor') {
       if (r < 0.17) return 'rifle';
       if (r < 0.31) return 'smg';
       if (r < 0.37) return 'sniper';

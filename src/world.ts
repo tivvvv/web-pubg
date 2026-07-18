@@ -1,7 +1,8 @@
-// 世界: 程序化高度场地形 + 植被/岩石实例化 + 建筑群 + 碰撞与解析射线
+// 世界: 程序化高度场地形 + 植被/岩石实例化 + 真房屋村庄 + 碰撞与解析射线
 import * as THREE from 'three';
 import { Noise2D, fbm } from './noise';
-import type { Collider, SurfaceKind } from './types';
+import { Buildings } from './buildings';
+import type { Collider, DestructibleLike, SurfaceKind } from './types';
 import { clamp, mulberry32, smoothstep } from './utils';
 
 export const WORLD_SIZE = 700;
@@ -11,22 +12,22 @@ export const WATER_Y = 0.9;
 const GRID = 150; // 地形网格分段
 const CELL = WORLD_SIZE / GRID;
 
-export interface Compound {
-  x: number;
-  z: number;
-  half: number;
-}
-
 export interface StaticHit {
   t: number;
   kind: SurfaceKind;
+  destruct?: DestructibleLike; // 命中可破坏物(门/窗)时带出
+}
+
+export interface Platform {
+  minX: number; minZ: number; maxX: number; maxZ: number; top: number;
 }
 
 export class World {
   readonly colliders: Collider[] = [];
   readonly cyls: Extract<Collider, { kind: 'cyl' }>[] = [];
   readonly aabbs: Extract<Collider, { kind: 'aabb' }>[] = [];
-  readonly compounds: Compound[] = [];
+  readonly platforms: Platform[] = []; // 楼梯踏步等"可站立但无碰撞体"平台
+  readonly buildings = new Buildings();
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -44,15 +45,21 @@ export class World {
     };
 
     // 填充高度栅格
-    let maxH = -100;
     for (let iz = 0; iz <= GRID; iz++) {
       for (let ix = 0; ix <= GRID; ix++) {
         const x = -WORLD_HALF + ix * CELL;
         const z = -WORLD_HALF + iz * CELL;
-        const h = rawH(x, z);
-        this.heights[iz * (GRID + 1) + ix] = h;
-        if (h > maxH) maxH = h;
+        this.heights[iz * (GRID + 1) + ix] = rawH(x, z);
       }
+    }
+
+    // 村庄规划 + 地基平整(必须在生成地形几何体之前)
+    this.buildings.plan(this);
+    this.buildings.flattenTerrain(this);
+    let maxH = -100;
+    for (let i = 0; i < this.heights.length; i++) {
+      const h = this.heights[i] as number;
+      if (h > maxH) maxH = h;
     }
     this.maxTerrainH = maxH + 1;
 
@@ -127,6 +134,28 @@ export class World {
     this.buildStatics(scene);
   }
 
+  // 把矩形内地形压平到 h, 边缘 margin 内平滑过渡(作用于高度栅格)
+  flattenRect(minX: number, minZ: number, maxX: number, maxZ: number, h: number, margin: number): void {
+    const W = GRID + 1;
+    for (let iz = 0; iz <= GRID; iz++) {
+      for (let ix = 0; ix <= GRID; ix++) {
+        const x = -WORLD_HALF + ix * CELL;
+        const z = -WORLD_HALF + iz * CELL;
+        if (x < minX - margin || x > maxX + margin || z < minZ - margin || z > maxZ + margin) continue;
+        const dx = Math.max(minX - x, 0, x - maxX);
+        const dz = Math.max(minZ - z, 0, z - maxZ);
+        const dist = Math.hypot(dx, dz);
+        const idx = iz * W + ix;
+        if (dist <= 0.001) {
+          this.heights[idx] = h;
+        } else {
+          const t = smoothstep(0, margin, dist);
+          this.heights[idx] = h + ((this.heights[idx] as number) - h) * t;
+        }
+      }
+    }
+  }
+
   // 双线性插值地形高度
   getHeight(x: number, z: number): number {
     const gx = clamp((x + WORLD_HALF) / CELL, 0, GRID - 0.0001);
@@ -149,120 +178,29 @@ export class World {
     return Math.sqrt(sx * sx + sz * sz);
   }
 
-  private addCollider(c: Collider): void {
+  addCollider(c: Collider): void {
     this.colliders.push(c);
     if (c.kind === 'cyl') this.cyls.push(c);
     else this.aabbs.push(c);
   }
 
+  // 点是否落在任一房屋地块内(含 margin)
+  inPlot(x: number, z: number, margin: number): boolean {
+    for (const p of this.buildings.plots) {
+      if (x > p.minX - margin && x < p.maxX + margin && z > p.minZ - margin && z < p.maxZ + margin) return true;
+    }
+    return false;
+  }
+
   private buildStatics(scene: THREE.Scene): void {
     const rng = mulberry32(424242);
-
-    // ---- 建筑群 ----
-    for (let n = 0; n < 12; n++) {
-      let placed = false;
-      for (let t = 0; t < 300 && !placed; t++) {
-        const x = (rng() * 2 - 1) * 275;
-        const z = (rng() * 2 - 1) * 275;
-        const h = this.getHeight(x, z);
-        if (h < 2.4 || h > 11 || this.slopeAt(x, z) > 0.42) continue;
-        const half = 5.5 + rng() * 2.5;
-        let ok = true;
-        for (const c of this.compounds) {
-          const dd = Math.hypot(c.x - x, c.z - z);
-          if (dd < c.half + half + 52) {
-            ok = false;
-            break;
-          }
-        }
-        if (!ok) continue;
-        this.compounds.push({ x, z, half });
-        placed = true;
-      }
-    }
-
-    // 墙体实例(单位盒缩放)
-    const wallCap = 220;
-    const wallMesh = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshLambertMaterial({ color: 0x9b948a }),
-      wallCap,
-    );
-    wallMesh.castShadow = true;
-    wallMesh.receiveShadow = true;
-    let wallCount = 0;
     const m4 = new THREE.Matrix4();
     const q0 = new THREE.Quaternion();
     const vPos = new THREE.Vector3();
     const vScale = new THREE.Vector3();
-    const wallColor = new THREE.Color();
 
-    const addWall = (minX: number, maxX: number, minZ: number, maxZ: number, yBot: number, yTop: number): void => {
-      if (wallCount >= wallCap) return;
-      vPos.set((minX + maxX) / 2, (yBot + yTop) / 2, (minZ + maxZ) / 2);
-      vScale.set(Math.max(maxX - minX, 0.05), yTop - yBot, Math.max(maxZ - minZ, 0.05));
-      m4.compose(vPos, q0, vScale);
-      wallMesh.setMatrixAt(wallCount, m4);
-      const shade = 0.9 + rng() * 0.18;
-      wallColor.setRGB(shade, shade * 0.99, shade * 0.96);
-      wallMesh.setColorAt(wallCount, wallColor);
-      wallCount++;
-      this.addCollider({ kind: 'aabb', minX, minY: yBot, minZ, maxX, maxY: yTop, maxZ, tag: 'wall' });
-    };
-
-    const TH = 0.44;
-    for (const c of this.compounds) {
-      const L = c.half * 2;
-      // 四面墙, 每面大概率留一个门洞
-      for (let side = 0; side < 4; side++) {
-        const hasDoor = rng() < 0.8;
-        const doorW = 1.8;
-        const doorAt = hasDoor ? L * (0.25 + rng() * 0.5) : -1;
-        // 沿墙采样地形, 保证墙体埋进坡里
-        let yTop = -100;
-        let yBot = 100;
-        for (let s = 0; s <= 4; s++) {
-          const u = s / 4;
-          let px = c.x - c.half + u * L;
-          let pz = c.z - c.half;
-          if (side === 1) pz = c.z + c.half;
-          else if (side === 2) {
-            px = c.x - c.half;
-            pz = c.z - c.half + u * L;
-          } else if (side === 3) {
-            px = c.x + c.half;
-            pz = c.z - c.half + u * L;
-          }
-          const h = this.getHeight(px, pz);
-          if (h + 2.6 > yTop) yTop = h + 2.6;
-          if (h - 1.0 < yBot) yBot = h - 1.0;
-        }
-        const segs: [number, number][] = hasDoor
-          ? [[0, doorAt], [doorAt + doorW, L]]
-          : [[0, L]];
-        for (const [s0, s1] of segs) {
-          if (s1 - s0 < 0.3) continue;
-          if (side === 0) addWall(c.x - c.half + s0, c.x - c.half + s1, c.z - c.half - TH / 2, c.z - c.half + TH / 2, yBot, yTop);
-          else if (side === 1) addWall(c.x - c.half + s0, c.x - c.half + s1, c.z + c.half - TH / 2, c.z + c.half + TH / 2, yBot, yTop);
-          else if (side === 2) addWall(c.x - c.half - TH / 2, c.x - c.half + TH / 2, c.z - c.half + s0, c.z - c.half + s1, yBot, yTop);
-          else addWall(c.x + c.half - TH / 2, c.x + c.half + TH / 2, c.z - c.half + s0, c.z - c.half + s1, yBot, yTop);
-        }
-      }
-      // 院内矮墙(掩体)
-      if (rng() < 0.65) {
-        const lw = 2.2 + rng() * 2.2;
-        const horiz = rng() < 0.5;
-        const ox = c.x + (rng() * 2 - 1) * (c.half - 2.5);
-        const oz = c.z + (rng() * 2 - 1) * (c.half - 2.5);
-        const h = this.getHeight(ox, oz);
-        if (horiz) addWall(ox - lw / 2, ox + lw / 2, oz - TH / 2, oz + TH / 2, h - 0.6, h + 1.15);
-        else addWall(ox - TH / 2, ox + TH / 2, oz - lw / 2, oz + lw / 2, h - 0.6, h + 1.15);
-      }
-    }
-    wallMesh.count = wallCount;
-    wallMesh.instanceMatrix.needsUpdate = true;
-    if (wallMesh.instanceColor) wallMesh.instanceColor.needsUpdate = true;
-    scene.add(wallMesh);
+    // ---- 房屋村庄(先生成, 树木岩石随后避开) ----
+    this.buildings.build(scene, this);
 
     // ---- 树木 ----
     const treeCap = 350;
@@ -286,21 +224,14 @@ export class World {
       const z = (rng() * 2 - 1) * 330;
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.8 || h > 13 || this.slopeAt(x, z) > 0.6) continue;
+      if (this.inPlot(x, z, 2.5)) continue;
       let ok = true;
-      for (const c of this.compounds) {
-        if (Math.abs(x - c.x) < c.half + 2.5 && Math.abs(z - c.z) < c.half + 2.5) {
+      for (let i = 0; i < placedPts.length; i += 2) {
+        const dx = x - (placedPts[i] as number);
+        const dz = z - (placedPts[i + 1] as number);
+        if (dx * dx + dz * dz < 8.4) {
           ok = false;
           break;
-        }
-      }
-      if (ok) {
-        for (let i = 0; i < placedPts.length; i += 2) {
-          const dx = x - (placedPts[i] as number);
-          const dz = z - (placedPts[i + 1] as number);
-          if (dx * dx + dz * dz < 8.4) {
-            ok = false;
-            break;
-          }
         }
       }
       if (!ok) continue;
@@ -343,14 +274,7 @@ export class World {
       const z = (rng() * 2 - 1) * 330;
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.3 || h > 15) continue;
-      let ok = true;
-      for (const c of this.compounds) {
-        if (Math.abs(x - c.x) < c.half + 2 && Math.abs(z - c.z) < c.half + 2) {
-          ok = false;
-          break;
-        }
-      }
-      if (!ok) continue;
+      if (this.inPlot(x, z, 2.5)) continue;
       const s = 0.7 + rng() * 1.7;
       const sy = s * (0.55 + rng() * 0.4);
       vPos.set(x, h + sy * 0.25, z);
@@ -379,17 +303,22 @@ export class World {
 
   // ---- 物理查询 ----
 
-  // 站立高度: 地形与可站立的 AABB 顶面
+  // 站立高度: 地形 + 可站立 AABB 顶面 + 平台(楼梯踏步), 仅取 ≤ feetY+0.45 的台阶容忍内
   groundHeight(x: number, z: number, feetY: number): number {
     let g = this.getHeight(x, z);
     for (const b of this.aabbs) {
+      if (b.off) continue;
       if (x < b.minX - 0.06 || x > b.maxX + 0.06 || z < b.minZ - 0.06 || z > b.maxZ + 0.06) continue;
       if (b.maxY <= feetY + 0.45 && b.maxY > g) g = b.maxY;
+    }
+    for (const p of this.platforms) {
+      if (x < p.minX - 0.06 || x > p.maxX + 0.06 || z < p.minZ - 0.06 || z > p.maxZ + 0.06) continue;
+      if (p.top <= feetY + 0.45 && p.top > g) g = p.top;
     }
     return g;
   }
 
-  // 2D 圆 vs 静态碰撞体推出
+  // 2D 圆 vs 静态碰撞体推出(仅竖直障碍: 墙/门/窗; 地板屋顶只作站立面不参与推挤)
   resolveCollision(p: THREE.Vector3, r: number): void {
     for (const c of this.cyls) {
       if (p.y > c.y1 - 0.05) continue;
@@ -407,6 +336,8 @@ export class World {
       }
     }
     for (const b of this.aabbs) {
+      if (b.off) continue;
+      if (b.tag === 'floor' || b.tag === 'roof') continue;
       if (p.y >= b.maxY - 0.02 || p.y + 1.7 <= b.minY) continue;
       const cx = clamp(p.x, b.minX, b.maxX);
       const cz = clamp(p.z, b.minZ, b.maxZ);
@@ -470,6 +401,7 @@ export class World {
   raycastStatics(o: THREE.Vector3, d: THREE.Vector3, maxT: number, out: StaticHit): boolean {
     let best = maxT;
     let kind: SurfaceKind | null = null;
+    let destruct: DestructibleLike | undefined;
     for (const c of this.cyls) {
       const ox = o.x - c.x;
       const oz = o.z - c.z;
@@ -487,21 +419,25 @@ export class World {
       if (y < c.y0 || y > c.y1) continue;
       best = t;
       kind = c.tag;
+      destruct = undefined;
     }
     for (const b of this.aabbs) {
+      if (b.off) continue;
       const t = rayAABB(o, d, b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ);
       if (t >= 0 && t < best) {
         best = t;
-        kind = 'wall';
+        kind = b.tag;
+        destruct = b.destruct;
       }
     }
     if (kind === null) return false;
     out.t = best;
     out.kind = kind;
+    out.destruct = destruct;
     return true;
   }
 
-  // 视线检测: 仅地形 + 建筑墙体阻挡(树木半透明遮挡忽略, 提升 AI 手感)
+  // 视线检测: 仅地形 + 建筑构件阻挡(树木半透明遮挡忽略, 提升 AI 手感)
   isLOSBlocked(a: THREE.Vector3, b: THREE.Vector3, tmpDir: THREE.Vector3): boolean {
     tmpDir.subVectors(b, a);
     const len = tmpDir.length();
@@ -509,6 +445,7 @@ export class World {
     tmpDir.divideScalar(len);
     if (this.raycastTerrain(a, tmpDir, len) < len) return true;
     for (const box of this.aabbs) {
+      if (box.off) continue;
       const t = rayAABB(a, tmpDir, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
       if (t >= 0 && t < len) return true;
     }
@@ -526,6 +463,7 @@ export class World {
       if (dx * dx + dz * dz < rr * rr) return false;
     }
     for (const b of this.aabbs) {
+      if (b.off) continue;
       const cx = clamp(x, b.minX, b.maxX);
       const cz = clamp(z, b.minZ, b.maxZ);
       const dx = x - cx;
