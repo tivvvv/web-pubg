@@ -41,6 +41,7 @@ export class BotController {
   private stillT = 0;
   private fragOut = { x: 0, z: 0 };
   private healCd = 0; // bot 恢复品使用冷却(即时结算, 冷却模拟读条间隔)
+  private engageCrouch = false; // 本次交战是否蹲下对枪(索敌成功时 15% 掷定)
 
   private eye = new THREE.Vector3();
   private tgtPos = new THREE.Vector3();
@@ -194,6 +195,7 @@ export class BotController {
         this.reactT = rand(0.3, 0.8);
         this.burstLeft = 0;
         this.burstCd = 0;
+        this.engageCrouch = Math.random() < 0.15; // 15% 概率本次交战蹲下对枪
       }
       this.state = 'engage';
       this.losOk = true;
@@ -211,6 +213,7 @@ export class BotController {
       this.target = null;
       this.state = 'wander';
       this.hasMoveTarget = false;
+      c.setStance('stand');
       return;
     }
     const dx = t.pos.x - c.pos.x;
@@ -218,6 +221,9 @@ export class BotController {
     const dist = Math.hypot(dx, dz);
     const desiredYaw = Math.atan2(dx, dz);
     const meleeOnly = !c.heldGun();
+    // 交战姿态: 蹲射(远程)或站立(近战/近距)
+    if (this.engageCrouch && !meleeOnly && dist > 20) c.setStance('crouch');
+    else c.setStance('stand');
     // 近战要更快转向贴身
     c.yaw = turnToward(c.yaw, desiredYaw, (meleeOnly ? 6 : 4.5) * dt);
 
@@ -237,6 +243,7 @@ export class BotController {
       if (this.lostT > 2.5 || dist > ENGAGE_DIST + 20) {
         this.target = null;
         this.state = 'wander';
+        c.setStance('stand');
         this.moveTarget.copy(this.lastKnown);
         this.hasMoveTarget = true;
         this.repathT = rand(2, 4);
@@ -298,7 +305,9 @@ export class BotController {
       vx = mx * speed;
       vz = mz * speed;
     }
-    c.applyMove(vx, vz, dt, game.world);
+    // 姿态速度系数(蹲射的 bot 移动减半)
+    const stanceMul = c.stance === 'crouch' ? 0.5 : 1;
+    c.applyMove(vx * stanceMul, vz * stanceMul, dt, game.world);
 
     // 攻击
     if (this.reactT > 0) {

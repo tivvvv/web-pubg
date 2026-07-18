@@ -170,6 +170,18 @@ export class Game {
         this.viewFpp = !this.viewFpp;
         this.hud.toast(this.viewFpp ? '第一人称' : '第三人称');
         break;
+      case 'crouch': {
+        // C: 站⇄蹲; 趴→蹲
+        const c = this.player.char;
+        c.setStance(c.stance === 'crouch' ? 'stand' : 'crouch');
+        break;
+      }
+      case 'prone': {
+        // Z: 站/蹲→趴; 趴→蹲
+        const c = this.player.char;
+        c.setStance(c.stance === 'prone' ? 'crouch' : 'prone');
+        break;
+      }
       case 'wheelUp': this.cycleSlot(-1); break;
       case 'wheelDown': this.cycleSlot(1); break;
       default: break;
@@ -902,6 +914,8 @@ export class Game {
     victim.hp = 0;
     victim.alive = false;
     victim.dieT = 0;
+    victim.stance = 'stand'; // 死亡复位姿态
+    victim.stanceF = 0;
     const placement = this.aliveCount + 1;
 
     // 掉落: 当前手持武器(保留弹匣), 否则随机物资

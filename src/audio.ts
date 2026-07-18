@@ -278,8 +278,8 @@ export class AudioSys {
     window.setTimeout(() => this.blip(520, 520, 0.1, 0.16, 'sine'), 160);
   }
 
-  step(): void {
-    this.noiseBurst(0.1, 0, 240, 0.8, 0.045);
+  step(vol = 1): void {
+    this.noiseBurst(0.1 * vol, 0, 240, 0.8, 0.045);
   }
 
   jumpLand(): void {

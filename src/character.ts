@@ -1,4 +1,4 @@
-// 低多边形人形角色(玩家与 bot 共用) + 背包物品 + 命中体
+// 低多边形人形角色(玩家与 bot 共用) + 背包物品 + 命中体 + 姿态(站/蹲/趴)
 import * as THREE from 'three';
 import type { AmmoType, ArmorState, GunState, MeleeState, ThrowableId } from './types';
 import type { HealId } from './heals';
@@ -7,6 +7,10 @@ import { buildHelmetModel, buildVestModel } from './armor';
 import { buildPackModel, type PackLevel } from './backpack';
 import { buildWeaponModel, type WeaponModel, type WeaponModelId } from './weaponmodels';
 import type { World } from './world';
+import { clamp } from './utils';
+
+export type Stance = 'stand' | 'crouch' | 'prone';
+const STANCE_TARGET: Record<Stance, number> = { stand: 0, crouch: 1, prone: 2 };
 
 export interface HumanParts {
   inner: THREE.Group;   // 模型根(bob/倒地旋转)
@@ -144,6 +148,8 @@ export class Character {
   swingT = 0;          // 挥击动画进度(1→0)
   lastMeleeT = -100;   // 上次挥击时间
   dieT = -1;           // >=0 表示死亡动画进度
+  stance: Stance = 'stand'; // 姿态: 站/蹲/趴
+  stanceF = 0;         // 姿态插值 0站→1蹲→2趴(平滑过渡)
   lastAttackerId = 0;
   lastShotT = -100;    // 最近一次开枪时间(小地图红点)
   kills = 0;
@@ -191,11 +197,28 @@ export class Character {
   }
 
   eyePos(out: THREE.Vector3): THREE.Vector3 {
-    return out.set(this.pos.x, this.pos.y + 1.58, this.pos.z);
+    return out.set(this.pos.x, this.pos.y + this.eyeHeight(), this.pos.z);
   }
 
   chestPos(out: THREE.Vector3): THREE.Vector3 {
-    return out.set(this.pos.x, this.pos.y + 1.15, this.pos.z);
+    return out.set(this.pos.x, this.pos.y + this.chestHeight(), this.pos.z);
+  }
+
+  // 姿态切换(任务4的灌木隐蔽也读这个状态)
+  setStance(s: Stance): void {
+    this.stance = s;
+  }
+
+  // 当前眼高(站1.62/蹲1.1/趴0.35, 随 stanceF 平滑)
+  eyeHeight(): number {
+    const f = this.stanceF;
+    return f <= 1 ? 1.62 - 0.52 * f : 1.1 - 0.75 * (f - 1);
+  }
+
+  // 胸部命中/瞄准参考高(站1.15/蹲0.72/趴0.3)
+  chestHeight(): number {
+    const f = this.stanceF;
+    return f <= 1 ? 1.15 - 0.43 * f : 0.72 - 0.42 * (f - 1);
   }
 
   muzzleWorld(out: THREE.Vector3): THREE.Vector3 {
@@ -276,10 +299,17 @@ export class Character {
     this.speed2d = Math.sqrt(vx * vx + vz * vz);
   }
 
-  // 模型同步: 位置/朝向/持械模型/挥击/走路摆动/倒地
+  // 模型同步: 位置/朝向/持械模型/挥击/走路摆动/倒地/姿态
   syncModel(dt: number, moving: boolean): void {
     this.group.position.copy(this.pos);
     this.group.rotation.y = this.yaw;
+    // 姿态插值: 蹲 ~0.25s, 趴 ~0.4s
+    const stTarget = STANCE_TARGET[this.stance];
+    if (this.stanceF !== stTarget) {
+      const rate = stTarget > 1 || this.stanceF > 1 ? 2.5 : 4;
+      this.stanceF = clamp(this.stanceF + Math.sign(stTarget - this.stanceF) * rate * dt, 0, 2);
+      if (Math.abs(this.stanceF - stTarget) < 0.03) this.stanceF = stTarget;
+    }
     const p = this.parts;
     // 持械模型切换(仅在栏位/武器变化时克隆)
     const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
@@ -321,6 +351,9 @@ export class Character {
       }
       return;
     }
+    // 姿态混合: fC 蹲权重(0..1), fP 趴权重(0..1)
+    const fC = Math.min(this.stanceF, 1);
+    const fP = Math.max(0, this.stanceF - 1);
     // 挥击动画(覆盖右臂姿态)
     if (this.swingT > 0) {
       this.swingT = Math.max(0, this.swingT - dt * 3.4);
@@ -328,20 +361,25 @@ export class Character {
     } else {
       p.armR.rotation.x = -1.3;
     }
+    // 走路摆动(蹲/趴时幅度衰减)
+    let legSwing = 0;
+    let bob = 0;
     if (moving && this.speed2d > 0.3) {
       this.walkPhase += dt * (2.0 + this.speed2d * 1.6);
-      const s = Math.sin(this.walkPhase);
-      p.legL.rotation.x = s * 0.72;
-      p.legR.rotation.x = -s * 0.72;
-      p.inner.position.y = Math.abs(Math.cos(this.walkPhase)) * 0.055;
-    } else {
-      p.legL.rotation.x *= 1 - Math.min(1, dt * 10);
-      p.legR.rotation.x *= 1 - Math.min(1, dt * 10);
-      p.inner.position.y *= 1 - Math.min(1, dt * 10);
+      legSwing = Math.sin(this.walkPhase) * 0.72 * (1 - 0.6 * fC - 0.4 * fP);
+      bob = Math.abs(Math.cos(this.walkPhase)) * 0.055 * (1 - 0.8 * fC);
     }
+    // 蹲: 腿前弯; 趴: 腿顺直
+    const legBend = -1.05 * fC * (1 - fP);
+    p.legL.rotation.x = legSwing + legBend;
+    p.legR.rotation.x = -legSwing + legBend;
+    // 身体下沉(蹲 -0.53 / 趴 +0.30 由旋转完成趴倒)与旋转(趴 = 面朝下平躺, 部分随瞄准俯仰)
+    p.inner.position.y = bob - 0.53 * fC + 0.83 * fP;
+    p.inner.rotation.x = 0.2 * fC + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);
   }
 
   // 解析命中: 头部球体 + 身体有向盒(随 yaw 旋转), 命中填充 res 并返回 true
+  // 姿态感知: 蹲头降至 1.02, 趴头 0.35 前移 1.1, 身体盒变低变长
   hitTest(
     ox: number, oy: number, oz: number,
     dx: number, dy: number, dz: number,
@@ -349,10 +387,17 @@ export class Character {
   ): boolean {
     let bestT = maxT;
     let head = false;
-    // 头部球体: 中心 pos+(0,1.55,0), r=0.26
-    const hx = this.pos.x - ox;
-    const hy = this.pos.y + 1.55 - oy;
-    const hz = this.pos.z - oz;
+    const f = this.stanceF;
+    const fC = Math.min(f, 1);
+    const fP = Math.max(0, f - 1);
+    const cosY = Math.cos(this.yaw);
+    const sinY = Math.sin(this.yaw);
+    // 头部球体: 中心 pos + 高 headY (+ 趴时前移 headFwd), r=0.26
+    const headY = 1.55 - 0.53 * fC - 0.67 * fP;
+    const headFwd = 1.1 * fP;
+    const hx = this.pos.x + sinY * headFwd - ox;
+    const hy = this.pos.y + headY - oy;
+    const hz = this.pos.z + cosY * headFwd - oz;
     const bHalf = hx * dx + hy * dy + hz * dz; // |d|=1
     const cSq = hx * hx + hy * hy + hz * hz - 0.26 * 0.26;
     if (cSq > 0 && bHalf > 0) {
@@ -365,17 +410,19 @@ export class Character {
         }
       }
     }
-    // 身体 OBB: 中心 pos+(0,0.78,0), 半尺寸 (0.3, 0.78, 0.22), 绕 Y 旋转 yaw
-    // 局部系 = R_y(-yaw) * (p - c): x'=x·cosY - z·sinY, z'=x·sinY + z·cosY
-    const cosY = Math.cos(this.yaw);
-    const sinY = Math.sin(this.yaw);
-    const lox0 = ox - this.pos.x;
-    const loz0 = oz - this.pos.z;
+    // 身体 OBB: 半尺寸随姿态(高 halfY, 长 halfZ), 趴时前移 bodyFwd
+    const bodyY = 0.78 - 0.26 * fC - 0.22 * fP;
+    const bodyFwd = 0.85 * fP;
+    const bodyHalfZ = 0.22 + 0.63 * fP;
+    const bcx = this.pos.x + sinY * bodyFwd;
+    const bcz = this.pos.z + cosY * bodyFwd;
+    const lox0 = ox - bcx;
+    const loz0 = oz - bcz;
     const lox = lox0 * cosY - loz0 * sinY;
     const loz = lox0 * sinY + loz0 * cosY;
     const ldx = dx * cosY - dz * sinY;
     const ldz = dx * sinY + dz * cosY;
-    const loy = oy - (this.pos.y + 0.78);
+    const loy = oy - (this.pos.y + bodyY);
     // slab
     let tmin = 0;
     let tmax = bestT;
@@ -394,10 +441,10 @@ export class Character {
     // y
     if (ok) {
       if (Math.abs(dy) < 1e-9) {
-        if (loy < -0.78 || loy > 0.78) ok = false;
+        if (loy < -bodyY || loy > bodyY) ok = false;
       } else {
-        let t1 = (-0.78 - loy) / dy;
-        let t2 = (0.78 - loy) / dy;
+        let t1 = (-bodyY - loy) / dy;
+        let t2 = (bodyY - loy) / dy;
         if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; }
         if (t1 > tmin) tmin = t1;
         if (t2 < tmax) tmax = t2;
@@ -407,10 +454,10 @@ export class Character {
     // z
     if (ok) {
       if (Math.abs(ldz) < 1e-9) {
-        if (loz < -0.22 || loz > 0.22) ok = false;
+        if (loz < -bodyHalfZ || loz > bodyHalfZ) ok = false;
       } else {
-        let t1 = (-0.22 - loz) / ldz;
-        let t2 = (0.22 - loz) / ldz;
+        let t1 = (-bodyHalfZ - loz) / ldz;
+        let t2 = (bodyHalfZ - loz) / ldz;
         if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; }
         if (t1 > tmin) tmin = t1;
         if (t2 < tmax) tmax = t2;

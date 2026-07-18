@@ -79,6 +79,8 @@ export class PlayerController {
     let vx = 0;
     let vz = 0;
     const sprint = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
+    // 疾跑/跳跃自动站起(仅站立可疾跑, 站/蹲可跳)
+    if (sprint && wlen > 0.001 && c.stance !== 'stand') c.setStance('stand');
     let jumped = false;
     if (wlen > 0.001) {
       wx /= wlen;
@@ -86,21 +88,23 @@ export class PlayerController {
       const forwardish = (wx * fwdX + wz * fwdZ) > 0.3;
       let speed = 4.3;
       if (this.aiming) speed = 2.7;
-      else if (sprint && forwardish) speed = 6.6;
+      else if (sprint && forwardish && c.stance === 'stand') speed = 6.6;
+      speed *= c.stance === 'crouch' ? 0.5 : c.stance === 'prone' ? 0.25 : 1; // 蹲 50% / 趴 25% 爬行
       const groundH = game.world.getHeight(c.pos.x, c.pos.z);
       if (c.pos.y < WATER_Y + 0.15 && groundH < WATER_Y) speed *= 0.55; // 涉水
       vx = wx * speed;
       vz = wz * speed;
-      // 脚步声
+      // 脚步声(趴下显著变轻)
       if (c.grounded) {
         this.stepAcc += speed * dt;
         if (this.stepAcc > 2.7) {
           this.stepAcc = 0;
-          game.audio.step();
+          game.audio.step(c.stance === 'prone' ? 0.35 : c.stance === 'crouch' ? 0.6 : 1);
         }
       }
     }
     if (input.keys.has('Space') && c.grounded) {
+      if (c.stance !== 'stand') c.setStance('stand'); // 起身再跳
       c.vy = 7.4;
       c.grounded = false;
       jumped = true;
@@ -148,21 +152,22 @@ export class PlayerController {
           this.startReload(game);
         } else if (game.playerShot()) {
           this.fireTimer = gun.def.fireInterval;
-          this.recoilP += gun.def.recoil;
+          this.recoilP += gun.def.recoil * (c.stance === 'crouch' ? 0.85 : c.stance === 'prone' ? 0.65 : 1);
           this.pitch = clamp(this.pitch + gun.def.recoil * 0.3, -1.25, 1.35);
           acted = true;
         }
       }
-      // 散布(供射击与准星)
-      const base = this.aiming ? gun.def.spreadAim : gun.def.spreadHip;
+      // 散布(供射击与准星); 蹲 -20% / 趴 -40%
+      const stanceAcc = c.stance === 'crouch' ? 0.8 : c.stance === 'prone' ? 0.6 : 1;
+      const base = (this.aiming ? gun.def.spreadAim : gun.def.spreadHip) * stanceAcc;
       const moveF = 1 + (c.speed2d / 6.6) * 0.9 + (c.grounded ? 0 : 0.7);
       this.spreadRad = lerp(this.spreadRad, base * moveF, Math.min(1, dt * 12));
     }
 
-    // ---- 包扎打断 ----
+    // ---- 包扎打断(快于爬行的移动/跳跃/开火) ----
     if (game.healT > 0) {
-      const sprinting = sprint && wlen > 0.001;
-      if (sprinting || jumped || acted) game.cancelHeal('包扎被打断');
+      const tooFast = c.speed2d > 1.3;
+      if (tooFast || jumped || acted) game.cancelHeal('包扎被打断');
     }
 
     // ---- 拾取提示(武器需按 F) ----
@@ -217,10 +222,10 @@ export class PlayerController {
     }
   }
 
-  // 投掷起点: TPP 从胸前出手, FPP 从眼位前方出手(不穿脸)
+  // 投掷起点: TPP 从胸前出手, FPP 从眼位前方出手(不穿脸); 均随姿态高度
   private throwStart(c: Character, out: THREE.Vector3, dir: THREE.Vector3, fpp: boolean): void {
     if (fpp) {
-      out.set(c.pos.x, c.pos.y + 1.55, c.pos.z).addScaledVector(dir, 0.35);
+      out.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.07, c.pos.z).addScaledVector(dir, 0.35);
     } else {
       c.chestPos(out);
       out.addScaledVector(dir, 0.4);
@@ -297,8 +302,8 @@ export class PlayerController {
     c.setFirstPerson(fpp);
 
     if (fpp) {
-      // 第一人称: 相机即眼位(1.62m), 直接看向, 无防穿拉近(camDist 保留供 TPP 恢复)
-      this.camera.position.set(c.pos.x, c.pos.y + 1.62, c.pos.z);
+      // 第一人称: 相机即眼位(随姿态 1.62/1.1/0.35), 直接看向, 无防穿拉近(camDist 保留供 TPP 恢复)
+      this.camera.position.set(c.pos.x, c.pos.y + c.eyeHeight(), c.pos.z);
       if (game.shakeAmp > 0.002) {
         this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
         this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
@@ -307,7 +312,7 @@ export class PlayerController {
       this.lookAt.copy(this.camera.position).addScaledVector(dir, 14);
       this.camera.lookAt(this.lookAt);
     } else {
-      this.pivot.set(c.pos.x, c.pos.y + 1.58, c.pos.z);
+      this.pivot.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.04, c.pos.z);
 
       const targetDist = this.aiming ? (gun?.def === WEAPONS.sniper ? 1.5 : 1.9) : 3.4;
       const shoulder = this.aiming ? 0.55 : 0.5;
