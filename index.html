@@ -24,7 +24,7 @@
       <!-- 小地图 -->
       <canvas id="minimap" width="180" height="180"></canvas>
 
-      <!-- 底部左: 血量 + 护具 -->
+      <!-- 底部左: 血量 + 护具 + 恢复品 -->
       <div id="bottom-left">
         <div id="hp-row">
           <span id="hp-text">100</span>
@@ -39,6 +39,13 @@
               <div class="armor-bar"><div class="armor-fill" id="armor-vest-fill"></div></div>
             </div>
           </div>
+        </div>
+        <div id="heals-row">
+          <span id="heal-counts"></span>
+          <span id="drink-buff">
+            <span class="buff-ico">↻</span>
+            <div class="buff-bar"><div id="drink-buff-fill"></div></div>
+          </span>
         </div>
       </div>
 
@@ -110,7 +117,7 @@
           <tr><td>R</td><td>换弹</td><td>1/2/3/4</td><td>武器栏(4=近战)</td></tr>
           <tr><td>F</td><td>拾取武器 / 开关门</td><td>滚轮</td><td>切换武器</td></tr>
           <tr><td>5</td><td>投掷物(再按切换)</td><td>左键按住</td><td>蓄力瞄准, 松开投掷</td></tr>
-          <tr><td>Tab / B</td><td>背包</td><td>X</td><td>使用医疗包</td></tr>
+          <tr><td>Tab / B</td><td>背包</td><td>X</td><td>使用恢复品</td></tr>
           <tr><td>M</td><td>静音</td><td>ESC</td><td>暂停</td></tr>
         </table>
         <button id="btn-start" class="btn">开始游戏</button>

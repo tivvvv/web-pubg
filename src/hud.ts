@@ -2,6 +2,7 @@
 import { fmtTime } from './utils';
 import type { ArmorState, GameStats } from './types';
 import { ARMORS, type ArmorKind } from './armor';
+import type { HealId } from './heals';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -16,7 +17,7 @@ export interface BackpackData {
   ammo: { name: string; count: number }[];
   throwables: { name: string; count: number }[];
   armor: { name: string; value: string }[];
-  medkits: number;
+  heals: { id: HealId; name: string; count: number }[];
 }
 
 export class Hud {
@@ -44,6 +45,9 @@ export class Hud {
   private pickupPrompt = el('pickup-prompt');
   private healCast = el('heal-cast');
   private healFill = el('heal-fill');
+  private healCountsEl = el('heal-counts');
+  private drinkBuff = el('drink-buff');
+  private drinkBuffFill = el('drink-buff-fill');
   private backpack = el('backpack');
   private bpContent = el('bp-content');
 
@@ -57,11 +61,12 @@ export class Hud {
   private toastTimer = 0;
   private hitTimer = 0;
   private dmgTimer = 0;
+  private healCountsKey = '';
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
   onResume: () => void = () => undefined;
-  onUseMedkit: () => void = () => undefined;
+  onUseHeal: (id: HealId) => void = () => undefined;
   onCloseBackpack: () => void = () => undefined;
 
   constructor() {
@@ -71,8 +76,8 @@ export class Hud {
     el<HTMLButtonElement>('btn-resume').addEventListener('click', () => this.onResume());
     this.backpack.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
-      if (t.id === 'bp-use-medkit') this.onUseMedkit();
-      else if (t.id === 'bp-close') this.onCloseBackpack();
+      if (t.id === 'bp-close') this.onCloseBackpack();
+      else if (t.id.startsWith('bp-use-')) this.onUseHeal(t.id.slice(7) as HealId);
     });
   }
 
@@ -170,6 +175,23 @@ export class Hud {
     }
   }
 
+  // 底栏恢复品计数(字符串化, 变化才写 DOM)
+  setHeals(counts: string): void {
+    if (counts === this.healCountsKey) return;
+    this.healCountsKey = counts;
+    this.healCountsEl.textContent = counts;
+  }
+
+  // 饮料 buff 指示: frac∈[0,1] 显示剩余进度, 其他值隐藏
+  setDrinkBuff(frac: number): void {
+    if (frac >= 0 && frac <= 1.001) {
+      this.drinkBuff.classList.add('show');
+      this.drinkBuffFill.style.width = `${(Math.min(1, frac) * 100).toFixed(0)}%`;
+    } else {
+      this.drinkBuff.classList.remove('show');
+    }
+  }
+
   showBackpack(on: boolean): void {
     this.backpack.classList.toggle('hidden', !on);
   }
@@ -189,14 +211,19 @@ export class Hud {
     const armorRows = data.armor
       .map((a) => `<div class="bp-row"><span class="bp-name">${a.name}</span><span class="bp-mag">${a.value}</span></div>`)
       .join('');
+    const healRows = data.heals
+      .map(
+        (h) =>
+          `<div class="bp-row"><span class="bp-name">${h.name}</span><span class="bp-mag">× ${h.count}</span>` +
+          `<button id="bp-use-${h.id}" class="bp-btn" ${h.count > 0 ? '' : 'disabled'}>使用</button></div>`,
+      )
+      .join('');
     this.bpContent.innerHTML =
       `<div class="bp-section">武器</div>${slotRows}` +
       `<div class="bp-section">护具</div>${armorRows}` +
       `<div class="bp-section">弹药</div>${ammoRows}` +
       `<div class="bp-section">投掷物</div>${throwRows}` +
-      `<div class="bp-section">物资</div>` +
-      `<div class="bp-row"><span class="bp-name">医疗包</span><span class="bp-mag">× ${data.medkits}</span>` +
-      `<button id="bp-use-medkit" class="bp-btn" ${data.medkits > 0 ? '' : 'disabled'}>使用 (X)</button></div>`;
+      `<div class="bp-section">恢复品 (X 智能使用)</div>${healRows}`;
   }
 
   killFeed(text: string): void {

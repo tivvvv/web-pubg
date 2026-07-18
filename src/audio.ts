@@ -260,6 +260,19 @@ export class AudioSys {
     window.setTimeout(() => this.blip(540, 720, 0.14, 0.15, 'sine'), 140);
   }
 
+  // 一次性医疗包完成: 清脆两声提示音
+  medkitDone(): void {
+    this.blip(880, 880, 0.07, 0.2, 'square');
+    window.setTimeout(() => this.blip(1320, 1320, 0.11, 0.2, 'square'), 110);
+  }
+
+  // 饮料: 两声咕嘟 + 气泡嘶声
+  drink(): void {
+    this.blip(300, 180, 0.08, 0.22, 'sine');
+    window.setTimeout(() => this.blip(340, 200, 0.08, 0.2, 'sine'), 130);
+    this.noiseBurst(0.1, 0, 5200, 0.8, 0.5);
+  }
+
   warn(): void {
     this.blip(520, 520, 0.1, 0.16, 'sine');
     window.setTimeout(() => this.blip(520, 520, 0.1, 0.16, 'sine'), 160);

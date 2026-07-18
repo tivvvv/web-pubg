@@ -39,6 +39,7 @@ export class BotController {
   private fragUsed = false;
   private stillT = 0;
   private fragOut = { x: 0, z: 0 };
+  private healCd = 0; // bot 恢复品使用冷却(即时结算, 冷却模拟读条间隔)
 
   private eye = new THREE.Vector3();
   private tgtPos = new THREE.Vector3();
@@ -83,9 +84,24 @@ export class BotController {
       this.updateEngage(dt, game);
     } else {
       this.updateWander(dt, game);
-      // 游走时安全则使用医疗包
-      if (c.medkits > 0 && c.hp < 60 && this.state === 'wander') {
-        game.useMedkit(c);
+      // 游走时安全则恢复: <60 绷带补到 75 / 危急用医疗包; 状态不错补饮料
+      this.healCd -= dt;
+      if (this.healCd <= 0 && this.state === 'wander') {
+        if (c.hp < 60) {
+          if (c.heals.medkit > 0 && c.hp < 35) {
+            c.heals.medkit--;
+            c.hp = 100;
+            this.healCd = 4;
+          } else if (c.heals.bandage > 0) {
+            c.heals.bandage--;
+            c.hp = Math.min(75, c.hp + 15);
+            this.healCd = 2;
+          }
+        } else if (c.heals.drink > 0 && c.hp < 92) {
+          c.heals.drink--;
+          c.hp = Math.min(100, c.hp + 40);
+          this.healCd = 2;
+        }
       }
     }
 

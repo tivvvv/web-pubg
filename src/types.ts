@@ -4,7 +4,7 @@ export type MeleeId = 'fists' | 'knife';
 export type AmmoType = 'pistol' | 'rifle' | 'smg' | 'sniper';
 export type ThrowableId = 'frag' | 'smoke';
 export type ArmorLootId = 'helmet1' | 'helmet2' | 'helmet3' | 'vest1' | 'vest2' | 'vest3';
-export type LootKind = WeaponId | 'knife' | 'ammo' | 'medkit' | ThrowableId | ArmorLootId;
+export type LootKind = WeaponId | 'knife' | 'ammo' | 'bandage' | 'medkit' | 'drink' | ThrowableId | ArmorLootId;
 
 // 已装备护具(定义见 armor.ts)
 export interface ArmorState {

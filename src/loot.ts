@@ -25,12 +25,16 @@ const GEO = {
   medBody: new THREE.BoxGeometry(0.34, 0.12, 0.26),
   crossV: new THREE.BoxGeometry(0.06, 0.03, 0.18),
   crossH: new THREE.BoxGeometry(0.18, 0.03, 0.06),
+  bandageRoll: new THREE.CylinderGeometry(0.09, 0.09, 0.22, 10),
+  drinkCan: new THREE.CylinderGeometry(0.07, 0.07, 0.2, 10),
   ring: new THREE.TorusGeometry(0.42, 0.025, 6, 24),
 };
 const MAT = {
   ammo: new THREE.MeshBasicMaterial({ color: 0x7be06a }),
   medkit: new THREE.MeshBasicMaterial({ color: 0xf2f2f2 }),
   cross: new THREE.MeshBasicMaterial({ color: 0xe33e3e }),
+  bandage: new THREE.MeshBasicMaterial({ color: 0xf5f0e2 }),
+  drink: new THREE.MeshBasicMaterial({ color: 0x3fc98e }),
 };
 // 每种类型的光环颜色(沿用旧配色编码)
 const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
@@ -40,7 +44,10 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   pistol: new THREE.MeshBasicMaterial({ color: 0xffd24d, transparent: true, opacity: 0.5 }),
   knife: new THREE.MeshBasicMaterial({ color: 0xdfe6ee, transparent: true, opacity: 0.5 }),
   ammo: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
-  medkit: new THREE.MeshBasicMaterial({ color: 0xf2f2f2, transparent: true, opacity: 0.5 }),
+  // 恢复品: 绿色系光环
+  bandage: new THREE.MeshBasicMaterial({ color: 0xbfe6b0, transparent: true, opacity: 0.5 }),
+  medkit: new THREE.MeshBasicMaterial({ color: 0x6fd88a, transparent: true, opacity: 0.5 }),
+  drink: new THREE.MeshBasicMaterial({ color: 0x5ee0c0, transparent: true, opacity: 0.5 }),
   frag: new THREE.MeshBasicMaterial({ color: 0x86c03c, transparent: true, opacity: 0.5 }),
   smoke: new THREE.MeshBasicMaterial({ color: 0xd7dde3, transparent: true, opacity: 0.5 }),
   // 护具: 蓝白色系光环
@@ -77,6 +84,14 @@ function buildLootMesh(kind: LootKind): THREE.Group {
       am.position.y = info.kind === 'helmet' ? -0.05 : 0.1;
       holder.add(am);
     }
+  } else if (kind === 'bandage') {
+    // 绷带卷(放倒的白色小卷)
+    const m = new THREE.Mesh(GEO.bandageRoll, MAT.bandage);
+    m.rotation.z = Math.PI / 2;
+    holder.add(m);
+  } else if (kind === 'drink') {
+    // 饮料小罐
+    holder.add(new THREE.Mesh(GEO.drinkCan, MAT.drink));
   } else if (kind === 'ammo') {
     holder.add(new THREE.Mesh(GEO.ammo, MAT.ammo));
   } else {
@@ -143,8 +158,10 @@ export class LootManager {
       if (r < 0.8) return 'vest3';
       if (r < 0.83) return 'helmet2';
       if (r < 0.86) return 'vest2';
-      if (r < 0.94) return 'ammo';
-      return 'medkit';
+      if (r < 0.92) return 'ammo';
+      if (r < 0.96) return 'bandage';
+      if (r < 0.98) return 'drink';
+      return 'medkit'; // 高级房才有像样概率
     }
     if (table === 'indoor') {
       if (r < 0.15) return 'rifle';
@@ -158,7 +175,9 @@ export class LootManager {
       if (r < 0.67) return 'vest1';
       if (r < 0.69) return 'helmet2';
       if (r < 0.71) return 'vest2';
-      if (r < 0.86) return 'ammo';
+      if (r < 0.84) return 'ammo';
+      if (r < 0.94) return 'bandage';
+      if (r < 0.98) return 'drink';
       return 'medkit';
     }
     if (r < 0.08) return 'rifle';
@@ -172,7 +191,9 @@ export class LootManager {
     if (r < 0.56) return 'vest1';
     if (r < 0.58) return 'helmet2';
     if (r < 0.6) return 'vest2';
-    if (r < 0.82) return 'ammo';
+    if (r < 0.8) return 'ammo';
+    if (r < 0.92) return 'bandage';
+    if (r < 0.97) return 'drink';
     return 'medkit';
   }
 

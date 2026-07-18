@@ -1,6 +1,7 @@
 // 低多边形人形角色(玩家与 bot 共用) + 背包物品 + 命中体
 import * as THREE from 'three';
 import type { AmmoType, ArmorState, GunState, MeleeState, ThrowableId } from './types';
+import type { HealId } from './heals';
 import { MELEE } from './weapons';
 import { buildHelmetModel, buildVestModel } from './armor';
 import { buildWeaponModel, type WeaponModel, type WeaponModelId } from './weaponmodels';
@@ -131,7 +132,7 @@ export class Character {
   guns: (GunState | null)[] = [null, null, null]; // 0/1 主武器, 2 手枪
   melee: MeleeState = { def: MELEE.fists };        // 近战(默认拳头)
   ammo: Record<AmmoType, number> = { pistol: 0, rifle: 0, smg: 0, sniper: 0 };
-  medkits = 0;
+  heals: Record<HealId, number> = { bandage: 0, medkit: 0, drink: 0 }; // 恢复品存量
   throwables: Record<ThrowableId, number> = { frag: 0, smoke: 0 };
   throwKind: ThrowableId = 'frag'; // 当前选中的投掷物类型
   curSlot = 3; // 0/1 主武器, 2 手枪, 3 近战, 4 投掷物

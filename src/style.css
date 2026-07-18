@@ -141,6 +141,56 @@ body {
   transition: width 0.15s;
 }
 
+/* 恢复品计数 + 饮料 buff */
+#heals-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 5px;
+  min-height: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cfe8c8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+
+#drink-buff {
+  display: none;
+  align-items: center;
+  gap: 4px;
+}
+
+#drink-buff.show {
+  display: flex;
+}
+
+.buff-ico {
+  color: #6fe3a5;
+  font-size: 13px;
+  animation: buff-spin 1.6s linear infinite;
+}
+
+@keyframes buff-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.buff-bar {
+  width: 56px;
+  height: 5px;
+  background: rgba(8, 10, 8, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+#drink-buff-fill {
+  height: 100%;
+  width: 0%;
+  background: #6fe3a5;
+}
+
 /* 护具栏: 头盔/防弹衣耐久条 */
 #armor-row {
   display: flex;

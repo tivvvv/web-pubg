@@ -7,6 +7,7 @@ import type { Destructible } from './buildings';
 import { Character, BOT_SHIRTS } from './character';
 import { Effects } from './effects';
 import { Hud, type BackpackData } from './hud';
+import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
 import { Input, type Action } from './input';
 import { LootManager, isWeaponKind, type LootItem } from './loot';
 import { Minimap } from './minimap';
@@ -21,7 +22,6 @@ import { Zone } from './zone';
 
 const TOTAL = 24;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
-const HEAL_TIME = 1.5;
 const SLOT_LABELS = ['主武器1', '主武器2', '手枪', '近战'];
 
 export class Game {
@@ -40,7 +40,9 @@ export class Game {
   promptItem: LootItem | null = null;   // 当前可拾取武器提示
   promptDoor: Destructible | null = null; // 当前可开/关的门提示(优先于武器当看得更正)
   backpackOpen = false;
-  healT = -1;                            // >0 = 包扎进行中(剩余秒)
+  healT = -1;                            // >0 = 恢复品读条中(剩余秒)
+  healKind: HealId | null = null;        // 读条中的恢复品种类
+  drinkT = -1;                           // >0 = 饮料 buff 剩余秒(20s/40HP 预算)
   shakeAmp = 0;                          // 相机震动幅度(爆炸)
 
   private renderer: THREE.WebGLRenderer;
@@ -101,9 +103,9 @@ export class Game {
     this.hud.onStart = () => this.startMatch();
     this.hud.onRestart = () => this.startMatch();
     this.hud.onResume = () => this.input.requestLock();
-    this.hud.onUseMedkit = () => {
+    this.hud.onUseHeal = (id) => {
       if (this.player) {
-        this.useMedkit(this.player.char);
+        this.useHealItem(this.player.char, id);
         this.refreshBackpack();
       }
     };
@@ -161,7 +163,7 @@ export class Game {
       case 'slot4': this.player.switchSlot(3, this); break;
       case 'pickup': this.playerPick(); break;
       case 'slot5': this.selectThrowable(); break;
-      case 'heal': this.useMedkit(this.player.char); break;
+      case 'heal': this.quickHeal(this.player.char); break;
       case 'wheelUp': this.cycleSlot(-1); break;
       case 'wheelDown': this.cycleSlot(1); break;
       default: break;
@@ -243,62 +245,105 @@ export class Game {
           value: a ? `${ARMORS[k][a.level].name} · 耐久 ${Math.ceil(a.durability)}/${ARMORS[k][a.level].maxDurability}` : '无',
         };
       }),
-      medkits: c.medkits,
+      heals: HEAL_ORDER.map((id) => ({ id, name: HEALS[id].name, count: c.heals[id] })),
     };
     this.hud.backpackUpdate(data);
   }
 
-  // ---- 医疗包 ----
+  // ---- 恢复品 ----
 
-  useMedkit(c: Character): void {
-    if (!c.alive) return;
-    if (!c.isPlayer) {
-      // bot: 安全时直接使用
-      if (c.medkits > 0 && c.hp < 70) {
-        c.medkits--;
-        c.hp = Math.min(100, c.hp + 50);
-      }
-      return;
-    }
+  // X = 智能快速恢复: ≤50 优先医疗包; <75 用绷带; 否则补饮料
+  quickHeal(c: Character): void {
     if (this.healT > 0) return;
-    if (c.medkits <= 0) {
-      this.hud.toast('没有医疗包');
+    if (c.hp <= 50 && c.heals.medkit > 0) return this.startHeal(c, 'medkit');
+    if (c.hp < 75 && c.heals.bandage > 0) return this.startHeal(c, 'bandage');
+    if (c.hp < 99.5 && c.heals.drink > 0) return this.startHeal(c, 'drink');
+    this.hud.toast('没有可用的恢复品');
+  }
+
+  // 背包单项使用(带条件提示)
+  useHealItem(c: Character, id: HealId): void {
+    if (this.healT > 0) return;
+    const def = HEALS[id];
+    if (c.heals[id] <= 0) {
+      this.hud.toast(`没有${def.name}`);
       return;
     }
-    if (c.hp >= 99.5) {
-      this.hud.toast('生命值已满');
+    if (c.hp >= def.cap - 0.5) {
+      this.hud.toast(id === 'bandage' ? '绷带最多恢复到 75 点' : '生命值已满');
       return;
     }
-    this.healT = HEAL_TIME;
+    this.startHeal(c, id);
+  }
+
+  private startHeal(c: Character, id: HealId): void {
+    if (!c.alive || this.healT > 0) return;
+    const def = HEALS[id];
+    if (c.heals[id] <= 0 || c.hp >= def.cap - 0.5) return;
+    this.healT = def.cast;
+    this.healKind = id;
   }
 
   cancelHeal(reason: string): void {
     if (this.healT <= 0) return;
     this.healT = -1;
+    this.healKind = null;
     this.hud.setHealCast(-1);
     this.hud.toast(reason);
   }
 
   private updateHeal(dt: number): void {
-    if (this.healT <= 0) return;
-    const player = this.player as PlayerController;
-    if (!player.char.alive) {
-      this.healT = -1;
-      this.hud.setHealCast(-1);
+    if (this.healT > 0) {
+      const player = this.player as PlayerController;
+      const id = this.healKind as HealId;
+      const def = HEALS[id];
+      if (!player.char.alive) {
+        this.healT = -1;
+        this.healKind = null;
+        this.hud.setHealCast(-1);
+      } else {
+        this.healT -= dt;
+        this.hud.setHealCast(1 - Math.max(0, this.healT) / def.cast);
+        if (this.healT <= 0) {
+          const c = player.char;
+          if (c.heals[id] > 0 && c.hp < def.cap - 0.5) {
+            c.heals[id]--;
+            if (id === 'drink') {
+              this.drinkT = DRINK_DURATION; // 刷新 20s/40HP 预算(不叠加)
+              this.audio.drink();
+              this.hud.toast('饮料生效: 生命持续恢复中…');
+            } else if (id === 'medkit') {
+              c.hp = 100;
+              this.audio.medkitDone();
+              this.hud.toast('生命已完全恢复');
+            } else {
+              c.hp = Math.min(75, c.hp + 15);
+              this.audio.heal();
+              this.hud.toast('恢复 15 点生命');
+            }
+          }
+          this.healT = -1;
+          this.healKind = null;
+          this.hud.setHealCast(-1);
+        }
+      }
+    }
+    this.updateDrink(dt);
+  }
+
+  // 饮料 buff: 2 HP/s 平滑恢复, 可到 100
+  private updateDrink(dt: number): void {
+    if (this.drinkT <= 0) return;
+    const c = this.player?.char;
+    if (!c || !c.alive) {
+      this.drinkT = -1;
+      this.hud.setDrinkBuff(-1);
       return;
     }
-    this.healT -= dt;
-    this.hud.setHealCast(1 - Math.max(0, this.healT) / HEAL_TIME);
-    if (this.healT <= 0) {
-      const c = player.char;
-      if (c.medkits > 0 && c.hp < 99.5) {
-        c.medkits--;
-        c.hp = Math.min(100, c.hp + 50);
-        this.audio.heal();
-        this.hud.toast('恢复 50 点生命');
-      }
-      this.hud.setHealCast(-1);
-    }
+    this.drinkT -= dt;
+    if (c.hp < 100) c.hp = Math.min(100, c.hp + (DRINK_TOTAL / DRINK_DURATION) * dt);
+    this.hud.setDrinkBuff(Math.max(0, this.drinkT) / DRINK_DURATION);
+    if (this.drinkT <= 0) this.hud.setDrinkBuff(-1);
   }
 
   // ---- 对局管理 ----
@@ -349,6 +394,7 @@ export class Game {
       bot.char.pos.set(p.x, this.world.getHeight(p.x, p.z), p.z);
       bot.char.yaw = rand(0, Math.PI * 2);
       if (Math.random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
+      if (Math.random() < 0.5) bot.char.heals.bandage = 1 + Math.floor(Math.random() * 2); // 50% 带 1~2 绷带
       // 40% bot 开局自带 L1~L2 头盔/防弹衣
       if (Math.random() < 0.4) {
         const lv: ArmorLevel = Math.random() < 0.65 ? 1 : 2;
@@ -377,6 +423,8 @@ export class Game {
     this.zoneDmgT = 0;
     this.minimapT = 0;
     this.healT = -1;
+    this.healKind = null;
+    this.drinkT = -1;
     this.promptItem = null;
     this.promptDoor = null;
     this.backpackOpen = false;
@@ -388,6 +436,7 @@ export class Game {
     this.hud.setZoneTint(false);
     this.hud.showBackpack(false);
     this.hud.setHealCast(-1);
+    this.hud.setDrinkBuff(-1);
     this.hud.setPickupPrompt(null);
     this.hud.showScreen(null);
     this.hud.toast('赤手空拳！找到武器后按 F 拾取');
@@ -821,6 +870,7 @@ export class Game {
     }
     victim.hp -= dmg;
     victim.lastAttackerId = attacker?.id ?? 0;
+    if (victim.isPlayer && dmg > 0) this.cancelHeal('受伤打断恢复'); // 新增: 受伤取消读条
     if (victim.isPlayer && attacker) {
       const ang = Math.atan2(attacker.pos.x - victim.pos.x, attacker.pos.z - victim.pos.z);
       const rel = ang - (this.player?.yaw ?? 0);
@@ -855,8 +905,13 @@ export class Game {
     } else if (victim.melee.def.id === 'knife') {
       this.loot.spawn('knife', gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
     } else {
-      const kind: LootKind = Math.random() < 0.4 ? 'medkit' : 'ammo';
+      const kind: LootKind = Math.random() < 0.4 ? 'bandage' : 'ammo';
       this.loot.spawn(kind, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
+    }
+    // 恢复品掉落(成叠, ammo 字段携带数量)
+    for (const id of HEAL_ORDER) {
+      const n = victim.heals[id];
+      if (n > 0) this.loot.spawn(id, gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7), -1, n);
     }
     // 投掷物掉落(成小叠)
     for (const t of ['frag', 'smoke'] as const) {
@@ -1019,12 +1074,20 @@ export class Game {
       }
       return true;
     }
-    if (item.kind === 'medkit') {
-      if (c.medkits >= 8) return false;
-      c.medkits++;
-      this.loot.consume(item);
+    if (item.kind === 'bandage' || item.kind === 'medkit' || item.kind === 'drink') {
+      const def = HEALS[item.kind];
+      const stack = item.ammo > 0 ? item.ammo : 1; // ammo 字段复用为叠放数量
+      const space = def.max - c.heals[item.kind];
+      if (space <= 0) return false; // 满了, 留在地上
+      const take = Math.min(space, stack);
+      c.heals[item.kind] += take;
+      if (take < stack) {
+        item.ammo = stack - take; // 剩余留在地上
+      } else {
+        this.loot.consume(item);
+      }
       if (c.isPlayer) {
-        this.hud.toast('拾取医疗包 (X 使用)');
+        this.hud.toast(`拾取${def.name}${take > 1 ? `×${take}` : ''} (X 使用)`);
         this.audio.pickup();
       }
       return true;
@@ -1088,6 +1151,7 @@ export class Game {
     const player = this.player as PlayerController;
     const c = player.char;
     this.hud.setHP(c.hp);
+    this.hud.setHeals(`绷带×${c.heals.bandage}  医疗包×${c.heals.medkit}  饮料×${c.heals.drink}`);
     const gun = c.heldGun();
     if (c.curSlot === 3) {
       this.hud.setWeapon(c.melee.def.name, '—', '', '近战');
