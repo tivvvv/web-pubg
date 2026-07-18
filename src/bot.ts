@@ -42,6 +42,10 @@ export class BotController {
   private fragOut = { x: 0, z: 0 };
   private healCd = 0; // bot 恢复品使用冷却(即时结算, 冷却模拟读条间隔)
   private engageCrouch = false; // 本次交战是否蹲下对枪(索敌成功时 15% 掷定)
+  // 空降状态: 高空自由落体 → 开伞滑翔 → 落地(null 恢复正常 AI)
+  descent: 'freefall' | 'canopy' | null = null;
+  vy = 0;
+  readonly dropTarget = new THREE.Vector3();
 
   private eye = new THREE.Vector3();
   private tgtPos = new THREE.Vector3();
@@ -55,7 +59,20 @@ export class BotController {
 
   update(dt: number, game: Game): void {
     const c = this.char;
-    if (!c.alive) return;
+    if (!c.alive) {
+      // 空中被击杀: 继续坠地
+      if (this.descent) {
+        c.pos.y += this.vy * dt;
+        const g = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y);
+        if (c.pos.y <= g) this.finishDescent(g);
+      }
+      return;
+    }
+    // 空降阶段: 自由落体/滑翔, 落地后恢复正常 AI
+    if (this.descent) {
+      this.updateDescent(dt, game);
+      return;
+    }
     this.fireTimer -= dt;
 
     // 换弹(仅枪械, 消耗对应类型弹药)
@@ -156,6 +173,45 @@ export class BotController {
     c.yaw = Math.atan2(dx / d, dz / d);
     c.applyMove((dx / d) * 6.2, (dz / d) * 6.2, dt, game.world);
     return true;
+  }
+
+  // 空降物理: 逼近终端速度, 缓推向投放点, 70m 自动开伞, 触地恢复
+  private updateDescent(dt: number, game: Game): void {
+    const c = this.char;
+    const vt = this.descent === 'freefall' ? -55 : -10;
+    this.vy += (vt - this.vy) * (1 - Math.exp(-dt * 1.2));
+    const dx = this.dropTarget.x - c.pos.x;
+    const dz = this.dropTarget.z - c.pos.z;
+    const dl = Math.hypot(dx, dz);
+    const hv = this.descent === 'freefall' ? 7 : 5;
+    if (dl > 1) {
+      const push = Math.min(hv, dl * 0.5) * dt;
+      c.pos.x += (dx / dl) * push;
+      c.pos.z += (dz / dl) * push;
+    }
+    c.pos.y += this.vy * dt;
+    if (dl > 2) c.yaw = Math.atan2(dx, dz);
+    const agl = c.pos.y - game.world.getHeight(c.pos.x, c.pos.z);
+    if (this.descent === 'freefall' && agl <= 70) {
+      this.descent = 'canopy';
+      c.airPose = 'canopy';
+      c.attachCanopy(0x7a8a6a);
+    }
+    const g = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y);
+    if (c.pos.y <= g) this.finishDescent(g);
+  }
+
+  // 落地: 恢复站立/AI, 卸伞
+  private finishDescent(groundY: number): void {
+    const c = this.char;
+    c.pos.y = groundY;
+    c.vy = 0;
+    this.vy = 0;
+    this.descent = null;
+    c.airPose = null;
+    c.stance = 'stand';
+    c.stanceF = 0;
+    c.removeCanopy();
   }
 
   // 是否想要地上这件武器

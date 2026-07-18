@@ -45,6 +45,7 @@ export class Hud {
   private zoneTint = el('zone-tint');
   private hud = el('hud');
   private pickupPrompt = el('pickup-prompt');
+  private altMeter = el('alt-meter');
   private healCast = el('heal-cast');
   private healFill = el('heal-fill');
   private healCountsEl = el('heal-counts');
@@ -181,6 +182,16 @@ export class Hud {
     el.classList.remove('show');
     void el.offsetWidth;
     el.classList.add('show');
+  }
+
+  // 空降仪表(高度+垂直速度; alt<0 隐藏)
+  setAltitude(alt: number, vy: number): void {
+    if (alt < 0) {
+      this.altMeter.classList.remove('show');
+      return;
+    }
+    this.altMeter.classList.add('show');
+    this.altMeter.textContent = `高度 ${Math.max(0, Math.round(alt))}m · 下降 ${Math.round(Math.abs(vy))} m/s`;
   }
 
   // frac in [0,1] 显示包扎进度, 其他值隐藏

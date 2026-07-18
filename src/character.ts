@@ -183,6 +183,8 @@ export class Character {
   stance: Stance = 'stand'; // 姿态: 站/蹲/趴
   stanceF = 0;         // 姿态插值 0站→1蹲→2趴(平滑过渡)
   groundH = 0;         // 脚下地面高(供贴地阴影)
+  airPose: 'fall' | 'canopy' | null = null; // 空降姿势(跳伞自由落体/开伞滑翔)
+  canopyGroup: THREE.Group | null = null;   // 降落伞模型(开伞挂载, 落地卸载)
   private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
   lastAttackerId = 0;
   lastShotT = -100;    // 最近一次开枪时间(小地图红点)
@@ -241,6 +243,39 @@ export class Character {
   // 姿态切换(任务4的灌木隐蔽也读这个状态)
   setStance(s: Stance): void {
     this.stance = s;
+  }
+
+  // 挂载降落伞(开伞): 弧形伞盖 + 吊绳, 跟随角色
+  attachCanopy(color: number): void {
+    this.removeCanopy();
+    const g = new THREE.Group();
+    const mat = new THREE.MeshLambertMaterial({ color });
+    const mkPanel = (x: number, rz: number): THREE.Mesh => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.14, 1.5), mat);
+      m.position.set(x, 0, 0);
+      m.rotation.z = rz;
+      return m;
+    };
+    g.add(mkPanel(-1.1, 0.32), mkPanel(0, 0), mkPanel(1.1, -0.32));
+    const lineMat = new THREE.MeshLambertMaterial({ color: 0xcccccc });
+    for (const [lx, lz] of [[-1.5, -0.55], [-1.5, 0.55], [1.5, -0.55], [1.5, 0.55]] as const) {
+      const line = new THREE.Mesh(new THREE.BoxGeometry(0.02, 2.0, 0.02), lineMat);
+      line.position.set(lx * 0.62, -1.0, lz * 0.62);
+      line.rotation.z = lx > 0 ? 0.28 : -0.28;
+      line.rotation.x = lz > 0 ? 0.18 : -0.18;
+      g.add(line);
+    }
+    g.position.set(0, 2.6, 0);
+    this.parts.inner.add(g);
+    this.canopyGroup = g;
+  }
+
+  // 卸载降落伞(落地/重开)
+  removeCanopy(): void {
+    if (this.canopyGroup) {
+      this.parts.inner.remove(this.canopyGroup);
+      this.canopyGroup = null;
+    }
   }
 
   // 当前眼高(站1.62/蹲1.1/趴0.35, 随 stanceF 平滑)
@@ -348,8 +383,10 @@ export class Character {
     const p = this.parts;
     // 持械模型切换(仅在栏位/武器变化时克隆)
     const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
-    const wantId: WeaponModelId | null =
-      gun ? gun.def.id
+    const wantId: WeaponModelId | null = this.airPose
+      ? null // 空降收枪
+      : gun
+        ? gun.def.id
         : this.curSlot === 3 && this.melee.def.id === 'knife' ? 'knife'
           : this.curSlot === 4 ? this.throwKind
             : null;
@@ -383,6 +420,25 @@ export class Character {
         const e = 1 - (1 - this.dieT) * (1 - this.dieT);
         p.inner.rotation.x = -Math.PI / 2 * e;
         p.inner.position.y = 0.15 * e;
+      }
+      return;
+    }
+    // 空降姿势覆盖: 自由落体(展开俯冲) / 开伞(悬挂)
+    if (this.airPose) {
+      if (this.airPose === 'fall') {
+        p.inner.rotation.x = Math.PI / 2 * 0.92; // 面朝下俯冲
+        p.inner.position.y = 0.3;
+        p.armL.rotation.set(-0.3, 0, 1.15);
+        p.armR.rotation.set(-0.3, 0, -1.15);
+        p.legL.rotation.set(0.28, 0, 0.25);
+        p.legR.rotation.set(-0.18, 0, -0.25);
+      } else {
+        p.inner.rotation.x = 0.12; // 悬挂微后仰
+        p.inner.position.y = 0;
+        p.armL.rotation.set(-2.7, 0, 0.5);
+        p.armR.rotation.set(-2.7, 0, -0.5);
+        p.legL.rotation.set(0.32, 0, 0.06);
+        p.legR.rotation.set(0.18, 0, -0.06);
       }
       return;
     }

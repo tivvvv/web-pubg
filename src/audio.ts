@@ -285,4 +285,51 @@ export class AudioSys {
   jumpLand(): void {
     this.noiseBurst(0.16, 0, 180, 0.8, 0.07);
   }
+
+  // 开伞: 嘭 + 伞布抖动
+  canopyDeploy(): void {
+    this.thump(0.5, 0, 200, 60, 0.25);
+    this.noiseBurst(0.3, 0, 1400, 0.7, 0.3);
+  }
+
+  // 风声(自由落体/滑翔, 速度跟随, 落地停止)
+  private windSrc: AudioBufferSourceNode | null = null;
+  private windGain: GainNode | null = null;
+  windSet(vol: number): void {
+    if (!this.ctx || !this.noiseBuf || !this.master) return;
+    if (!this.windSrc) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      src.loop = true;
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 800;
+      bp.Q.value = 0.5;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      src.connect(bp).connect(g).connect(this.master);
+      src.start();
+      this.windSrc = src;
+      this.windGain = g;
+    }
+    (this.windGain as GainNode).gain.setTargetAtTime(vol * 0.3, this.ctx.currentTime, 0.1);
+  }
+
+  windStop(): void {
+    if (this.windGain && this.ctx) {
+      this.windGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.12);
+    }
+    const src = this.windSrc;
+    this.windSrc = null;
+    this.windGain = null;
+    if (src) {
+      window.setTimeout(() => {
+        try {
+          src.stop();
+        } catch {
+          /* 已停止 */
+        }
+      }, 450);
+    }
+  }
 }

@@ -82,6 +82,9 @@ export class Game {
   healT = -1;                            // >0 = 恢复品读条中(剩余秒)
   healKind: HealId | null = null;        // 读条中的恢复品种类
   drinkT = -1;                           // >0 = 饮料 buff 剩余秒(20s/40HP 预算)
+  flightAngle = 0;                       // 航线角(每局随机)
+  private planeMesh: THREE.Group | null = null; // 运输机模型(舱内阶段可见)
+  private zoneArmed = false;             // 跳伞后才启动毒圈计时
   shakeAmp = 0;                          // 相机震动幅度(爆炸)
 
   private renderer: THREE.WebGLRenderer;
@@ -223,10 +226,21 @@ export class Game {
       return;
     }
     if (a === 'backpack') {
-      if (this.state === 'playing') this.toggleBackpack();
+      if (this.state === 'playing' && !this.player?.descent) this.toggleBackpack();
       return;
     }
     if (this.state !== 'playing' || !this.player?.alive || this.backpackOpen) return;
+    // 空降阶段: 仅 V 视角与 F 跳伞可用
+    const descent = this.player.descent;
+    if (descent) {
+      if (a === 'viewmode') {
+        this.viewFpp = !this.viewFpp;
+        this.hud.toast(this.viewFpp ? '第一人称' : '第三人称');
+      } else if (a === 'pickup' && descent === 'plane') {
+        this.player.startFreefall(this);
+      }
+      return;
+    }
     switch (a) {
       case 'reload': this.player.startReload(this); break;
       case 'slot1': this.player.switchSlot(0, this); break;
@@ -439,6 +453,17 @@ export class Game {
     if (this.drinkT <= 0) this.hud.setDrinkBuff(-1);
   }
 
+  // 航线点: s 为里程(0→1000 穿越岛心, 高 200m)
+  flightPoint(out: THREE.Vector3, s: number): void {
+    const d = s - 500;
+    out.set(Math.cos(this.flightAngle) * d, 200, Math.sin(this.flightAngle) * d);
+  }
+
+  // 玩家跳伞(手动/自动): 启动毒圈计时
+  onPlayerJump(): void {
+    this.zoneArmed = true;
+  }
+
   // ---- 对局管理 ----
 
   startMatch(): void {
@@ -475,17 +500,37 @@ export class Game {
     // 极端兜底(几乎不可能触发)
     while (pts.length < TOTAL) pts.push({ x: rand(-60, 60), z: rand(-60, 60) });
 
-    const p0 = pts[0] as { x: number; z: number };
-    this.player.char.pos.set(p0.x, this.world.getHeight(p0.x, p0.z), p0.z);
-    this.player.yaw = rand(0, Math.PI * 2);
+    // 玩家: 进入舱内航线阶段(随机航线角)
+    this.flightAngle = rand(0, Math.PI * 2);
+    this.player.descent = 'plane';
+    this.player.planeS = 0;
+    this.player.vy = 0;
+    this.flightPoint(this.player.char.pos, 0);
+    this.player.yaw = this.flightAngle + Math.PI / 2;
     this.chars.push(this.player.char);
     this.charsGroup.add(this.player.char.group);
+    // 运输机模型(舱内阶段跟随航线)
+    const planeMat = new THREE.MeshLambertMaterial({ color: 0x7a8288 });
+    const plane = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.0, 9), planeMat);
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(11, 0.18, 2.4), planeMat);
+    wing.position.set(0, 0.9, -0.4);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.6, 1.8), planeMat);
+    tail.position.set(0, 1.4, 4.2);
+    plane.add(body, wing, tail);
+    this.planeMesh = plane;
+    this.scene.add(plane);
 
     for (let i = 1; i < TOTAL; i++) {
       const bot = new BotController(BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`, BOT_SHIRTS[(i - 1) % BOT_SHIRTS.length] ?? 0x888888);
       const p = pts[i] as { x: number; z: number };
-      bot.char.pos.set(p.x, this.world.getHeight(p.x, p.z), p.z);
+      // bot: 投放点高空自由落体(高度错开, 落地时间自然分散)
+      bot.char.pos.set(p.x + rand(-25, 25), 190 + Math.random() * 45, p.z + rand(-25, 25));
       bot.char.yaw = rand(0, Math.PI * 2);
+      bot.char.airPose = 'fall';
+      bot.descent = 'freefall';
+      bot.vy = -2;
+      bot.dropTarget.set(p.x, 0, p.z);
       if (Math.random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
       if (Math.random() < 0.5) bot.char.heals.bandage = 1 + Math.floor(Math.random() * 2); // 50% 带 1~2 绷带
       if (Math.random() < 0.35) bot.char.pack = { level: Math.random() < 0.7 ? 1 : 2 }; // 35% 带 L1~L2 背包
@@ -519,6 +564,8 @@ export class Game {
     this.healT = -1;
     this.healKind = null;
     this.drinkT = -1;
+    this.zoneArmed = false; // 跳伞前毒圈不计时
+    this.hud.setAltitude(-1, 0);
     this.promptItem = null;
     this.promptDoor = null;
     this.backpackOpen = false;
@@ -533,7 +580,7 @@ export class Game {
     this.hud.setDrinkBuff(-1);
     this.hud.setPickupPrompt(null);
     this.hud.showScreen(null);
-    this.hud.toast('赤手空拳！找到武器后按 F 拾取');
+    this.hud.toast('航线已开启: 按 F 跳伞');
     this.state = 'playing';
     this.onResize();
     this.input.requestLock();
@@ -613,8 +660,19 @@ export class Game {
     player.update(dt, this.input, this);
     // 2 bots
     for (const b of this.bots) b.update(dt, this);
-    // 3 毒圈
-    this.zone.update(dt);
+    // 3 毒圈(跳伞后才计时) + 运输机模型跟随/离场
+    if (this.zoneArmed) {
+      this.zone.update(dt);
+      if (this.planeMesh) {
+        this.scene.remove(this.planeMesh);
+        this.planeMesh = null;
+      }
+    }
+    if (this.planeMesh && player.descent === 'plane') {
+      this.flightPoint(this.tmpP, player.planeS);
+      this.planeMesh.position.set(this.tmpP.x, this.tmpP.y - 1.1, this.tmpP.z);
+      this.planeMesh.rotation.y = Math.atan2(Math.cos(this.flightAngle), Math.sin(this.flightAngle));
+    }
     if (this.zone.justBeganShrink) {
       this.hud.toast('毒圈开始缩小！');
       this.audio.warn();
@@ -1375,6 +1433,16 @@ export class Game {
     const c = player.char;
     this.hud.setHP(c.hp);
     this.hud.setHeals(`绷带×${c.heals.bandage}  医疗包×${c.heals.medkit}  饮料×${c.heals.drink}`);
+    // 空降仪表与提示
+    if (player.descent) {
+      const agl = c.pos.y - this.world.getHeight(c.pos.x, c.pos.z);
+      this.hud.setAltitude(agl, player.vy);
+      if (player.descent === 'plane') this.hud.setPickupPrompt('按 F 跳伞');
+      else if (player.descent === 'freefall' && agl < 150) this.hud.setPickupPrompt('按 Space 开伞');
+      else this.hud.setPickupPrompt(null); // 开伞后清除
+    } else {
+      this.hud.setAltitude(-1, 0);
+    }
     const gun = c.heldGun();
     const noAmmo = gun !== null && gun.mag <= 0 && c.ammo[gun.def.ammo] <= 0;
     this.hud.setNoAmmo(noAmmo);

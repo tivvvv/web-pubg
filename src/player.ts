@@ -19,12 +19,17 @@ export class PlayerController {
   pitch = 0.1;
   aiming = false;
   reloading = false;
+  // 空降状态: 舱内航线 → 自由落体 → 开伞滑翔 → 落地(null)
+  descent: 'plane' | 'freefall' | 'canopy' | null = null;
+  planeS = 0;          // 航线里程(m)
+  vy = 0;              // 垂直速度(m/s, 负=下降)
 
   private recoilP = 0;
   private fireTimer = 0;
   private reloadT = 0;
   private camDist = 3.4;
   private fov = BASE_FOV;
+  private hv = new THREE.Vector2(); // 空降水平速度
   private stepAcc = 0;
   private throwHold = false; // 正在按住左键蓄力瞄准
   private holdT = 0;         // 蓄力时长
@@ -60,6 +65,13 @@ export class PlayerController {
     this.yaw -= dx * 0.0021 * zoomScale;
     this.pitch = clamp(this.pitch - dy * 0.0021 * zoomScale, -1.25, 1.35);
     this.recoilP *= Math.exp(-8 * dt);
+
+    // ---- 空降阶段: 舱内/自由落体/开伞滑翔(全程禁射击/道具/姿态) ----
+    if (this.descent) {
+      this.updateDescent(dt, input, game);
+      this.updateCamera(dt, game);
+      return;
+    }
 
     const gun = c.heldGun();
     this.aiming = input.rmb && !this.reloading && gun !== null;
@@ -265,6 +277,93 @@ export class PlayerController {
     }
     game.grenades.hidePreview();
     return false;
+  }
+
+  // ---- 空降物理 ----
+
+  // 跳伞(舱内按 F / 航线末端自动): 进入自由落体
+  startFreefall(game: Game): void {
+    if (this.descent !== 'plane') return;
+    this.descent = 'freefall';
+    this.vy = -2;
+    this.char.airPose = 'fall';
+    game.onPlayerJump();
+  }
+
+  // 开伞: 自动 70m 或手动 Space(<150m)
+  private deployCanopy(game: Game): void {
+    if (this.descent !== 'freefall') return;
+    this.descent = 'canopy';
+    this.vy = -9;
+    this.char.airPose = 'canopy';
+    this.char.attachCanopy(0xd8843c);
+    game.audio.canopyDeploy();
+  }
+
+  // 着陆: 恢复站立/操控, 卸伞
+  private land(game: Game, groundY: number): void {
+    const c = this.char;
+    c.pos.y = groundY;
+    c.vy = 0;
+    this.vy = 0;
+    this.hv.set(0, 0);
+    this.descent = null;
+    c.airPose = null;
+    c.stance = 'stand';
+    c.stanceF = 0;
+    c.removeCanopy();
+    game.audio.windStop();
+    game.audio.jumpLand();
+  }
+
+  private updateDescent(dt: number, input: Input, game: Game): void {
+    const c = this.char;
+    if (this.descent === 'plane') {
+      this.planeS += 92 * dt;
+      game.flightPoint(c.pos, this.planeS);
+      game.audio.windSet(0.25);
+      if (this.planeS > 980) this.startFreefall(game); // 航线末端自动跳伞
+      return;
+    }
+    // 水平操控(WASD 相对视线)
+    const fwdX = Math.sin(this.yaw);
+    const fwdZ = Math.cos(this.yaw);
+    const rightX = -fwdZ;
+    const rightZ = fwdX;
+    let wx = 0;
+    let wz = 0;
+    if (input.keys.has('KeyW')) { wx += fwdX; wz += fwdZ; }
+    if (input.keys.has('KeyS')) { wx -= fwdX; wz -= fwdZ; }
+    if (input.keys.has('KeyD')) { wx += rightX; wz += rightZ; }
+    if (input.keys.has('KeyA')) { wx -= rightX; wz -= rightZ; }
+    const wl = Math.hypot(wx, wz);
+    const maxHv = this.descent === 'freefall' ? 18 : 12;
+    if (wl > 0.001) {
+      wx /= wl;
+      wz /= wl;
+      this.hv.x = lerp(this.hv.x, wx * maxHv, Math.min(1, dt * 1.6));
+      this.hv.y = lerp(this.hv.y, wz * maxHv, Math.min(1, dt * 1.6));
+    } else {
+      this.hv.x *= Math.exp(-0.5 * dt);
+      this.hv.y *= Math.exp(-0.5 * dt);
+    }
+    // 垂直逼近终端速度(自由落体 55 / 滑翔 10)
+    const vt = this.descent === 'freefall' ? -55 : -10;
+    const k = this.descent === 'freefall' ? 1.1 : 2.2;
+    this.vy += (vt - this.vy) * (1 - Math.exp(-dt * k));
+    c.pos.x += this.hv.x * dt;
+    c.pos.z += this.hv.y * dt;
+    c.pos.y += this.vy * dt;
+    c.yaw = this.yaw;
+    game.audio.windSet(Math.min(1, Math.abs(this.vy) / 55));
+    // 开伞: 自动 70m / 手动 <150m
+    const agl = c.pos.y - game.world.getHeight(c.pos.x, c.pos.z);
+    if (this.descent === 'freefall' && (agl <= 70 || (input.keys.has('Space') && agl < 150))) {
+      this.deployCanopy(game);
+    }
+    // 着陆(groundHeight 含屋顶/桥面)
+    const g = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y);
+    if (c.pos.y <= g) this.land(game, g);
   }
 
   startReload(game: Game): void {
