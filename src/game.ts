@@ -421,6 +421,7 @@ export class Game {
     }
     this.hud.update(dt);
     const cam = this.state === 'menu' || !this.player ? this.menuCam : this.player.camera;
+    this.world.updateVisuals(dt, cam.position); // 水波/植被摇摆/云漂移(全状态)
     this.renderer.render(this.scene, cam);
   }
 

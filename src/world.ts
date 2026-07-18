@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { Noise2D, fbm } from './noise';
 import { Buildings } from './buildings';
+import { Sky } from './sky';
 import type { Collider, DestructibleLike, SurfaceKind } from './types';
 import { clamp, mulberry32, smoothstep } from './utils';
 
@@ -32,6 +33,10 @@ export class World {
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
   private sun: THREE.DirectionalLight;
+  private sky: Sky;
+  private timeU = { value: 0 };   // 共享时间 uniform(水波/植被摇摆)
+  private camU = { value: new THREE.Vector3() }; // 共享相机 uniform(草距离消退)
+  private elapsed = 0;
 
   constructor(scene: THREE.Scene) {
     const n1 = new Noise2D(1337);
@@ -72,8 +77,10 @@ export class World {
     const cSandWet = new THREE.Color(0xa5987a);
     const cGrassA = new THREE.Color(0x679c46);
     const cGrassB = new THREE.Color(0x87b25a);
+    const cDry = new THREE.Color(0xa6ac62);
     const cRock = new THREE.Color(0x8d8c86);
     const tmpC = new THREE.Color();
+    const grassC = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
@@ -83,19 +90,26 @@ export class World {
       const sz = (this.getHeight(x, z + CELL) - this.getHeight(x, z - CELL)) / (2 * CELL);
       const slope = Math.sqrt(sx * sx + sz * sz);
       const vary = n2.noise(x * 0.05, z * 0.05) * 0.5 + 0.5;
-      if (h < WATER_Y - 0.2) {
-        tmpC.copy(cSandWet);
-      } else if (h < WATER_Y + 0.65) {
-        tmpC.copy(cSand);
-      } else {
-        tmpC.copy(cGrassA).lerp(cGrassB, vary);
+      // 基底: 湿沙→干沙, 平滑过渡到草地
+      tmpC.copy(h < WATER_Y - 0.2 ? cSandWet : cSand);
+      grassC.copy(cGrassA).lerp(cGrassB, vary);
+      // 大尺度补丁: 偏湿暗 / 偏干黄
+      const pn = fbm(n1, x * 0.013 + 7, z * 0.013 - 3, 3);
+      if (pn < -0.12) {
+        grassC.multiplyScalar(0.82);
+        grassC.g *= 1.06;
+      } else if (pn > 0.15) {
+        grassC.lerp(cDry, smoothstep(0.15, 0.45, pn));
       }
+      tmpC.lerp(grassC, smoothstep(WATER_Y + 0.2, WATER_Y + 1.2, h));
       const rockF = Math.max(smoothstep(0.55, 0.95, slope), smoothstep(12, 16, h));
       tmpC.lerp(cRock, rockF);
-      const shade = 0.92 + vary * 0.12;
-      colors[i * 3] = tmpC.r * shade;
-      colors[i * 3 + 1] = tmpC.g * shade;
-      colors[i * 3 + 2] = tmpC.b * shade;
+      // 逐顶点确定性抖动, 打散色带
+      const jh = Math.sin(i * 12.9898) * 43758.5453;
+      const j = 1 + (jh - Math.floor(jh) - 0.5) * 0.05;
+      colors[i * 3] = tmpC.r * j;
+      colors[i * 3 + 1] = tmpC.g * j;
+      colors[i * 3 + 2] = tmpC.b * j;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
@@ -103,21 +117,45 @@ export class World {
     terrain.receiveShadow = true;
     scene.add(terrain);
 
-    // 水面
-    const water = new THREE.Mesh(
-      new THREE.PlaneGeometry(1800, 1800),
-      new THREE.MeshLambertMaterial({ color: 0x2f6f8f, transparent: true, opacity: 0.8 }),
-    );
+    // 水面(高光 + 顶点波浪 + 法线微扰)
+    const waterMat = new THREE.MeshPhongMaterial({
+      color: 0x2e6f93,
+      specular: 0x99ccee,
+      shininess: 90,
+      transparent: true,
+      opacity: 0.8,
+    });
+    const timeU = this.timeU;
+    waterMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = timeU;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uTime;')
+        .replace(
+          '#include <beginnormal_vertex>',
+          `#include <beginnormal_vertex>
+  objectNormal = normalize(objectNormal + vec3(
+    0.045 * cos(position.x * 0.05 + uTime * 0.8),
+    0.045 * sin(position.y * 0.07 + uTime * 0.6),
+    0.0));`,
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+  transformed.z += sin(position.x * 0.08 + uTime * 1.2) * 0.05
+                 + cos(position.y * 0.06 + uTime * 0.9) * 0.05;`,
+        );
+    };
+    waterMat.customProgramCacheKey = () => 'water-bob';
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800, 48, 48), waterMat);
     water.rotation.x = -Math.PI / 2;
     water.position.y = WATER_Y;
     scene.add(water);
 
-    // 天空 / 雾 / 光照
-    scene.background = new THREE.Color(0x87b7dd);
-    scene.fog = new THREE.Fog(0xa8c6de, 150, 640);
-    const hemi = new THREE.HemisphereLight(0xbfd9f2, 0x5f7048, 0.9);
+    // 天空 / 雾 / 光照(雾色与天穹地平线一致)
+    scene.fog = new THREE.Fog(0xcfe0ee, 150, 640);
+    const hemi = new THREE.HemisphereLight(0xcfe4f7, 0x6d7a50, 0.85);
     scene.add(hemi);
-    this.sun = new THREE.DirectionalLight(0xfff1d6, 2.1);
+    this.sun = new THREE.DirectionalLight(0xffe9c4, 2.3);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.camera.left = -60;
@@ -130,6 +168,7 @@ export class World {
     this.sun.shadow.normalBias = 0.03;
     scene.add(this.sun);
     scene.add(this.sun.target);
+    this.sky = new Sky(scene);
 
     this.buildStatics(scene);
   }
@@ -202,22 +241,27 @@ export class World {
     // ---- 房屋村庄(先生成, 树木岩石随后避开) ----
     this.buildings.build(scene, this);
 
-    // ---- 树木 ----
+    // ---- 树木(松树 60% + 阔叶 40%, 树干/碰撞体逻辑不变) ----
     const treeCap = 350;
+    const upY = new THREE.Vector3(0, 1, 0);
     const trunkMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.2, 0.34, 3.4, 6),
       new THREE.MeshLambertMaterial({ color: 0x6b4a2e }),
       treeCap,
     );
-    const canopyMesh = new THREE.InstancedMesh(
-      new THREE.ConeGeometry(1.7, 4.4, 7),
-      new THREE.MeshLambertMaterial({ color: 0x3f7a33 }),
-      treeCap,
-    );
+    const canopyMat = new THREE.MeshLambertMaterial({ color: 0x3f7a33 });
+    const canopyMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(1.7, 4.4, 7), canopyMat, treeCap);
+    const broadMat = new THREE.MeshLambertMaterial({ color: 0x568c3f });
+    const broadMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.9, 1), broadMat, treeCap);
+    this.addSway(canopyMat, 0.09, -2.0, 2.5);
+    this.addSway(broadMat, 0.09, -1.5, 2.0);
     trunkMesh.castShadow = true;
     canopyMesh.castShadow = true;
+    broadMesh.castShadow = true;
     const placedPts: number[] = [];
     const canopyC = new THREE.Color();
+    let pineCount = 0;
+    let broadCount = 0;
     let treeCount = 0;
     for (let t = 0; t < 4000 && treeCount < treeCap; t++) {
       const x = (rng() * 2 - 1) * 330;
@@ -237,27 +281,54 @@ export class World {
       if (!ok) continue;
       placedPts.push(x, z);
       const s = 0.8 + rng() * 0.55;
-      vPos.set(x, h + 1.7 * s, z);
-      vScale.set(s, s, s);
-      q0.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI * 2);
-      m4.compose(vPos, q0, vScale);
-      trunkMesh.setMatrixAt(treeCount, m4);
-      vPos.set(x, h + (3.4 + 2.0) * s, z);
-      m4.compose(vPos, q0, vScale);
-      canopyMesh.setMatrixAt(treeCount, m4);
-      const g = 0.75 + rng() * 0.5;
-      canopyC.setRGB(0.22 * g, 0.42 * g, 0.18 * g);
-      canopyMesh.setColorAt(treeCount, canopyC);
+      q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
+      if (rng() < 0.6) {
+        // 松树: 锥形树冠
+        vPos.set(x, h + 1.7 * s, z);
+        vScale.set(s, s, s);
+        m4.compose(vPos, q0, vScale);
+        trunkMesh.setMatrixAt(treeCount, m4);
+        vPos.set(x, h + (3.4 + 2.0) * s, z);
+        m4.compose(vPos, q0, vScale);
+        canopyMesh.setMatrixAt(pineCount, m4);
+        const g = 0.75 + rng() * 0.5;
+        canopyC.setRGB(0.22 * g, 0.42 * g, 0.18 * g);
+        canopyMesh.setColorAt(pineCount, canopyC);
+        pineCount++;
+      } else {
+        // 阔叶: 树干压矮, 扁球形树冠
+        const st = s * 0.75;
+        vPos.set(x, h + 1.7 * st, z);
+        vScale.set(s, st, s);
+        m4.compose(vPos, q0, vScale);
+        trunkMesh.setMatrixAt(treeCount, m4);
+        const cs = s * 1.15;
+        vPos.set(x, h + 3.4 * st + 1.15 * cs, z);
+        vScale.set(cs, cs * 0.8, cs);
+        m4.compose(vPos, q0, vScale);
+        broadMesh.setMatrixAt(broadCount, m4);
+        const g = 0.7 + rng() * 0.55;
+        canopyC.setRGB(0.3 * g, 0.5 * g, 0.2 * g);
+        broadMesh.setColorAt(broadCount, canopyC);
+        broadCount++;
+      }
       treeCount++;
       this.addCollider({ kind: 'cyl', x, z, r: 0.42 * s, y0: h - 0.5, y1: h + 3.4 * s, tag: 'tree' });
     }
     trunkMesh.count = treeCount;
-    canopyMesh.count = treeCount;
+    canopyMesh.count = pineCount;
+    broadMesh.count = broadCount;
     trunkMesh.instanceMatrix.needsUpdate = true;
     canopyMesh.instanceMatrix.needsUpdate = true;
+    broadMesh.instanceMatrix.needsUpdate = true;
     if (canopyMesh.instanceColor) canopyMesh.instanceColor.needsUpdate = true;
+    if (broadMesh.instanceColor) broadMesh.instanceColor.needsUpdate = true;
+    trunkMesh.computeBoundingSphere();
+    canopyMesh.computeBoundingSphere();
+    broadMesh.computeBoundingSphere();
     scene.add(trunkMesh);
     scene.add(canopyMesh);
+    scene.add(broadMesh);
 
     // ---- 岩石 ----
     const rockCap = 120;
@@ -292,6 +363,90 @@ export class World {
     rockMesh.instanceMatrix.needsUpdate = true;
     if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
     scene.add(rockMesh);
+
+    // ---- 草丛(纯装饰: 无碰撞体, 不挡子弹/视线) ----
+    const grassCap = navigator.hardwareConcurrency <= 4 ? 2600 : 4500;
+    const grassGeo = makeGrassGeo();
+    const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    this.addSway(grassMat, 0.06, 0.0, 0.55, true, true);
+    const grassMesh = new THREE.InstancedMesh(grassGeo, grassMat, grassCap);
+    grassMesh.receiveShadow = true;
+    const cG1 = new THREE.Color(0x5e9440); // 与地形草地同管线(sRGB→线性)
+    const cG2 = new THREE.Color(0xa8ad5e);
+    let grassCount = 0;
+    for (let t = 0; t < grassCap * 4 && grassCount < grassCap; t++) {
+      // 按簇散布: 每簇 5-9 丛, 视觉成团而不是均匀稀点
+      const cx = (rng() * 2 - 1) * 330;
+      const cz = (rng() * 2 - 1) * 330;
+      const ch = this.getHeight(cx, cz);
+      if (ch < WATER_Y + 0.4 || ch > 12 || this.slopeAt(cx, cz) > 0.55) continue;
+      if (this.inPlot(cx, cz, 1.5)) continue;
+      const n = 5 + Math.floor(rng() * 5);
+      for (let k = 0; k < n && grassCount < grassCap; k++) {
+        const x = cx + (rng() * 2 - 1) * 2.6;
+        const z = cz + (rng() * 2 - 1) * 2.6;
+        const h = this.getHeight(x, z);
+        if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.55) continue;
+        if (this.inPlot(x, z, 1.5)) continue;
+        const s = 0.9 + rng() * 0.6;
+        vPos.set(x, h - 0.02, z);
+        vScale.set(s, s, s);
+        q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
+        m4.compose(vPos, q0, vScale);
+        grassMesh.setMatrixAt(grassCount, m4);
+        const gy = rng();
+        canopyC.copy(cG1).lerp(cG2, gy * gy); // 绿→干黄, 偏绿居多
+        grassMesh.setColorAt(grassCount, canopyC);
+        grassCount++;
+      }
+    }
+    grassMesh.count = grassCount;
+    grassMesh.instanceMatrix.needsUpdate = true;
+    if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
+    grassMesh.computeBoundingSphere();
+    scene.add(grassMesh);
+  }
+
+  // 植被顶点位移摇摆(InstancedMesh 顶点着色器注入, 零 CPU 逐帧开销)
+  // fade=true 时按与相机距离把实例缩成退化三角形(草丛远距消退)
+  // upNormal=true 时片元法线强制朝上(双面草叶背光面不发黑, 与地形光照一致)
+  private addSway(mat: THREE.Material, amp: number, lo: number, hi: number, fade = false, upNormal = false): void {
+    const timeU = this.timeU;
+    const camU = this.camU;
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = timeU;
+      shader.uniforms.uCamPos = camU;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform vec3 uCamPos;')
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+#ifdef USE_INSTANCING
+  vec2 swayIP = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+  float swayPhase = swayIP.x * 0.37 + swayIP.y * 0.53;
+  float swayW = smoothstep(${lo.toFixed(2)}, ${hi.toFixed(2)}, transformed.y);
+  transformed.x += sin(uTime * 1.15 + swayPhase) * ${amp.toFixed(3)} * swayW;
+  transformed.z += cos(uTime * 0.9 + swayPhase * 1.31) * ${amp.toFixed(3)} * swayW;
+  ${fade ? 'transformed *= 1.0 - smoothstep(95.0, 120.0, distance(swayIP, uCamPos.xz));' : ''}
+#endif`,
+        );
+      if (upNormal) {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <normal_fragment_begin>',
+          `#include <normal_fragment_begin>
+normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
+        );
+      }
+    };
+    mat.customProgramCacheKey = () => `sway:${amp}:${lo}:${hi}:${fade}:${upNormal}`;
+  }
+
+  // 每帧视觉更新: 水面波浪 / 植被摇摆 / 云漂移(所有相机状态下都执行)
+  updateVisuals(dt: number, camPos: THREE.Vector3): void {
+    this.elapsed += dt;
+    this.timeU.value = this.elapsed;
+    this.camU.value.copy(camPos);
+    this.sky.update(dt, camPos);
   }
 
   // 阴影相机跟随玩家
@@ -472,6 +627,37 @@ export class World {
     }
     return true;
   }
+}
+
+// 草丛几何体: 5 叶片丛(圆盘内散布), 根深暗/尖亮(顶点色围绕 1.0, 与 instanceColor 相乘)
+// 法线统一朝上 —— 让叶片接受与地形一致的光照, 避免逆光黑刺
+function makeGrassGeo(): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const nrm: number[] = [];
+  const rng = mulberry32(9917);
+  for (let b = 0; b < 5; b++) {
+    const a = rng() * Math.PI * 2;
+    const rr = rng() * 0.16;
+    const ox = Math.cos(a) * rr;
+    const oz = Math.sin(a) * rr;
+    const fa = rng() * Math.PI * 2;
+    const dx = Math.cos(fa);
+    const dz = Math.sin(fa);
+    const h = 0.38 + rng() * 0.24;
+    const w = 0.05 + rng() * 0.02;
+    const lean = 0.1 + rng() * 0.12; // 叶尖微后仰
+    const bx = -dz * w;
+    const bz = dx * w;
+    pos.push(ox - bx, 0, oz - bz, ox + bx, 0, oz + bz, ox + dx * lean, h, oz + dz * lean);
+    nrm.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
+    col.push(0.62, 0.62, 0.62, 0.62, 0.62, 0.62, 1.12, 1.12, 1.1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
 }
 
 // 射线 vs AABB(slab), 未命中返回 -1
