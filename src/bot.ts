@@ -8,6 +8,7 @@ import { isWeaponKind } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
 import { isPackKind, packLevelFromLoot } from './backpack';
 import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
+import { probeVault, startVault, updateVaultMotion } from './vault';
 import type { Game } from './game';
 
 const ENGAGE_DIST = 92;
@@ -33,6 +34,7 @@ export class BotController {
   private strafeT = 0;
   private strafeDir = 1;
   private repathT = 0;
+  private vaultProbeT = 0; // 翻越探测节流
   private moveTarget = new THREE.Vector3();
   private hasMoveTarget = false;
   private lastKnown = new THREE.Vector3();
@@ -98,6 +100,9 @@ export class BotController {
       this.swimToBank(dt, game);
       return;
     }
+    // 翻越中: 脚本位移
+    c.vaultCd = Math.max(0, c.vaultCd - dt);
+    if (updateVaultMotion(c, dt)) return;
     this.fireTimer -= dt;
 
     // 换弹(仅枪械, 消耗对应类型弹药)
@@ -456,6 +461,23 @@ export class BotController {
     if (this.reactT > 0) {
       this.reactT -= dt;
       return;
+    }
+    // 交战中被可翻越障碍(窗台/矮墙)挡住且目标在对面: 翻越过去
+    this.vaultProbeT -= dt;
+    if (this.vaultProbeT <= 0) {
+      this.vaultProbeT = 0.3;
+      if (!c.vault && c.vaultCd <= 0 && dist > 1.6) {
+        const probe = probeVault(c, dx, dz, game.world);
+        if (probe) {
+          const dLand = Math.hypot(probe.landX - t.pos.x, probe.landZ - t.pos.z);
+          if (dLand < dist - 1) {
+            if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
+            startVault(c, probe);
+            game.soundAt(c.pos, (dd, p) => game.audio.melee(dd, p));
+            return;
+          }
+        }
+      }
     }
     if (meleeOnly) {
       if (dist < c.melee.def.range * 0.92) game.meleeAttack(c);

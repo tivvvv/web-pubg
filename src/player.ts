@@ -7,6 +7,7 @@ import { ARMORS, armorFromLoot } from './armor';
 import { MELEE, WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF } from './world';
 import { VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
+import { probeVault, startVault, updateVaultMotion } from './vault';
 import { clamp, lerp } from './utils';
 import type { Game } from './game';
 
@@ -90,6 +91,16 @@ export class PlayerController {
       }
     }
 
+    // ---- 翻越中: 锁定移动/攻击输入, 只保留视角 ----
+    c.vaultCd = Math.max(0, c.vaultCd - dt);
+    if (c.vault) {
+      updateVaultMotion(c, dt);
+      if (!c.vault) game.audio.jumpLand();
+      c.yaw = this.yaw;
+      this.updateCamera(dt, game);
+      return;
+    }
+
     const gun = c.heldGun();
     this.aiming = input.rmb && !this.reloading && gun !== null && !c.swimming;
 
@@ -135,11 +146,24 @@ export class PlayerController {
         }
       }
     }
-    if (input.keys.has('Space') && c.grounded && !c.swimming) {
-      if (c.stance !== 'stand') c.setStance('stand'); // 起身再跳
-      c.vy = 7.4;
-      c.grounded = false;
-      jumped = true;
+    if (input.keys.has('Space') && c.grounded && !c.swimming && c.vaultCd <= 0) {
+      // 先尝试翻越: 站/蹲朝可翻越障碍(趴下/恢复读条中不可翻越)
+      let vaulted = false;
+      if (c.stance !== 'prone' && wlen > 0.001 && game.healT <= 0) {
+        const probe = probeVault(c, wx, wz, game.world);
+        if (probe) {
+          if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
+          startVault(c, probe);
+          game.audio.vault();
+          vaulted = true;
+        }
+      }
+      if (!vaulted) {
+        if (c.stance !== 'stand') c.setStance('stand'); // 起身再跳
+        c.vy = 7.4;
+        c.grounded = false;
+        jumped = true;
+      }
     }
     const wasAir = !c.grounded;
     if (c.swimming) {

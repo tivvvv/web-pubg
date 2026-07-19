@@ -9,6 +9,7 @@ import { isWeaponKind } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
 import { isPackKind } from './backpack';
 import { seatWorldAt, type Vehicle } from './vehicles';
+import { probeVault, startVault, updateVaultMotion } from './vault';
 import { WEAPONS } from './weapons';
 import { angleDiff, rand, turnToward } from './utils';
 
@@ -34,6 +35,7 @@ export class TeammateController {
   private reactT = 0;
   private healCd = 0;
   private stuckT = 0;
+  private vaultProbeT = 0; // 翻越探测节流
   private strafeT = 0;
   private strafeDir = 1;
   private eye = new THREE.Vector3();
@@ -105,6 +107,10 @@ export class TeammateController {
         return;
       }
     }
+
+    // ---- 翻越中: 脚本位移 ----
+    c.vaultCd = Math.max(0, c.vaultCd - dt);
+    if (updateVaultMotion(c, dt)) return;
 
     // ---- 游泳: 跟随玩家渡河, 不交战不拾取 ----
     game.updateSwim(c);
@@ -345,6 +351,23 @@ export class TeammateController {
       return;
     }
     if (d > 2.2) {
+      // 跟随被可翻越障碍挡住且玩家在对面: 翻越(节流探测)
+      this.vaultProbeT -= dt;
+      if (this.vaultProbeT <= 0) {
+        this.vaultProbeT = 0.4;
+        if (!c.vault && c.vaultCd <= 0) {
+          const probe = probeVault(c, dx, dz, game.world);
+          if (probe) {
+            const dLand = Math.hypot(probe.landX - tx, probe.landZ - tz);
+            if (dLand < d - 1) {
+              if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
+              startVault(c, probe);
+              game.soundAt(c.pos, (dd, p2) => game.audio.melee(dd, p2));
+              return;
+            }
+          }
+        }
+      }
       const sp = pd > 14 || player.char.speed2d > 5 ? 6.6 : 4.3;
       c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 5 * dt);
       moveChar(c, (dx / d) * Math.min(sp, d * 1.5), (dz / d) * Math.min(sp, d * 1.5), dt, game.world);

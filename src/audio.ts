@@ -328,6 +328,12 @@ export class AudioSys {
     this.noiseBurst(0.16, 0, 180, 0.8, 0.07);
   }
 
+  // 翻越: 布料窸窣 + 短闷响
+  vault(): void {
+    this.noiseBurst(0.14, 0, 2600, 0.7, 0.09);
+    this.thump(0.2, 0, 220, 90, 0.1);
+  }
+
   // 开伞: 嘭 + 伞布抖动
   canopyDeploy(): void {
     this.thump(0.5, 0, 200, 60, 0.25);

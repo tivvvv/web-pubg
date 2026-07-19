@@ -13,6 +13,19 @@ import { clamp } from './utils';
 export type Stance = 'stand' | 'crouch' | 'prone';
 const STANCE_TARGET: Record<Stance, number> = { stand: 0, crouch: 1, prone: 2 };
 
+// 翻越状态(脚本化运动: 起跳点→顶点上弧→落点)
+export interface VaultState {
+  t: number;      // 已进行秒数
+  dur: number;    // 总时长(~0.7s)
+  x0: number;
+  y0: number;
+  z0: number;
+  x1: number;
+  y1: number;
+  z1: number;
+  topY: number;   // 障碍顶 + 抬腿余量
+}
+
 export interface HumanParts {
   inner: THREE.Group;   // 模型根(bob/倒地旋转)
   torso: THREE.Mesh;
@@ -250,6 +263,8 @@ export class Character {
   swimT = 0;             // 游泳累计时间(浮沉/划臂相位)
   swimDip = 0;           // 高处落水下潜剩余秒(0.4s 俯冲后浮起)
   swimAcc = 0;           // 划水距离累计(划水声/小水花节流)
+  vault: VaultState | null = null; // 翻越中(脚本位移, 输入锁定)
+  vaultCd = 0;           // 翻越/跳跃冷却(落地 0.4s)
   private swimF = 0;     // 游泳姿态混合 0..1(平滑进出)
   canopyGroup: THREE.Group | null = null;   // 降落伞模型(开伞挂载, 落地卸载)
   private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
@@ -537,6 +552,22 @@ export class Character {
         p.legL.rotation.set(-1.35, 0, 0.08);
         p.legR.rotation.set(-1.3, 0, -0.08);
       }
+      return;
+    }
+    // 翻越姿势: 收腿前倾 + 单手撑沿
+    if (this.vault) {
+      const k = Math.min(1, this.vault.t / this.vault.dur);
+      const tuck = Math.sin(Math.min(1, k) * Math.PI); // 中段收腿最大
+      p.inner.rotation.x = 0.45 * tuck;
+      p.inner.rotation.y = 0;
+      p.inner.position.y = 0;
+      p.inner.position.z = 0;
+      p.legL.rotation.x = -1.45 * tuck;
+      p.legR.rotation.x = -1.25 * tuck;
+      p.armL.rotation.set(-1.15 + 0.5 * tuck, 0, 0.3);
+      p.armR.rotation.set(-0.5 - 0.4 * tuck, 0, -0.25); // 右臂下压撑沿
+      p.armL.position.z = 0;
+      p.armR.position.z = 0;
       return;
     }
     // 游泳姿势: 水平俯身贴水面 + 交替划臂打水(swimF 平滑进出)
