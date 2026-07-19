@@ -624,6 +624,15 @@ export class BotController {
       }
     }
 
+    // 空投好奇: 被抽中的附近 bot 改道去摸空投
+    if (!gearFound) {
+      const cp = game.airdrop.investigatePoint(c.id);
+      if (cp) {
+        this.moveTarget.set(cp.x, 0, cp.z);
+        this.hasMoveTarget = true;
+      }
+    }
+
     const dx = this.moveTarget.x - c.pos.x;
     const dz = this.moveTarget.z - c.pos.z;
     const d = Math.hypot(dx, dz);

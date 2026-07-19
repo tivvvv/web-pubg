@@ -59,53 +59,8 @@ function makeMarkerTexture(): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
-// 低模军用运输机: 机身/高置主翼/尾翼/4 发螺旋桨(旋转桨盘) + 尾部跳板的暗示
-// 共享材质, 单实例; 返回桨盘供每帧旋转
-function buildTransportPlane(): { group: THREE.Group; props: THREE.Object3D[] } {
-  const camo = new THREE.MeshLambertMaterial({ color: 0x5d6b58 });   // 哑光军绿
-  const camoDark = new THREE.MeshLambertMaterial({ color: 0x46523f }); // 腹面/细节
-  const glass = new THREE.MeshLambertMaterial({ color: 0x2c3844 });
-  const propMat = new THREE.MeshBasicMaterial({ color: 0x1c1c1c, transparent: true, opacity: 0.42, side: THREE.DoubleSide });
-  const g = new THREE.Group();
-  const box = (mat: THREE.Material, w: number, h: number, d: number, x: number, y: number, z: number): THREE.Mesh => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    m.position.set(x, y, z);
-    g.add(m);
-    return m;
-  };
-  // 机身(+Z 为机头) + 机头收缩 + 驾驶舱玻璃
-  box(camo, 2.4, 2.3, 12.5, 0, 0, 0);
-  const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 1.05, 2.2, 4), camo);
-  nose.rotation.x = -Math.PI / 2;
-  nose.rotation.y = Math.PI / 4;
-  nose.position.set(0, -0.1, 7.3);
-  g.add(nose);
-  box(glass, 1.6, 0.7, 0.9, 0, 0.75, 6.1);
-  // 高置主翼 + 翼尖
-  box(camo, 16.5, 0.28, 2.9, 0, 1.05, 0.6);
-  box(camoDark, 0.7, 0.24, 2.6, -8.4, 1.05, 0.6);
-  box(camoDark, 0.7, 0.24, 2.6, 8.4, 1.05, 0.6);
-  // 4 发发动机舱 + 桨盘
-  const props: THREE.Object3D[] = [];
-  for (const ex of [-5.6, -2.7, 2.7, 5.6]) {
-    box(camoDark, 0.85, 0.85, 2.6, ex, 0.55, 1.6);
-    const pg = new THREE.Group();
-    pg.position.set(ex, 0.55, 3.0);
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.06, 12), propMat);
-    disc.rotation.x = Math.PI / 2;
-    pg.add(disc);
-    g.add(pg);
-    props.push(pg);
-  }
-  // 尾翼: 垂尾 + 平尾
-  box(camo, 0.3, 2.6, 2.4, 0, 1.9, -5.6);
-  box(camo, 5.6, 0.22, 1.7, 0, 1.35, -5.7);
-  // 尾跳板暗示(机尾腹面暗色斜板)
-  const ramp = box(camoDark, 1.9, 0.18, 2.6, 0, -0.95, -6.3);
-  ramp.rotation.x = 0.35;
-  return { group: g, props };
-}
 import { ARMORS, armorFromLoot, armorLootKind, isArmorKind, type ArmorKind, type ArmorLevel } from './armor';
+import { AirdropManager, type Crate } from './airdrop';
 import { AudioSys } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
 import { BotController, BOT_NAMES } from './bot';
@@ -125,6 +80,7 @@ import type { AmmoType, DestructibleLike, GameStats, LootKind, ThrowableId } fro
 import { clamp, dist2D, rand } from './utils';
 import { AMMO_BOX, AMMO_LOOT_KIND, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan, makeShotResult, pelletFalloff } from './weapons';
 import { MUZZLE_SCALE } from './weaponmodels';
+import { buildTransportPlane } from './planemodel';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
 
@@ -137,6 +93,7 @@ export class Game {
   readonly effects: Effects;
   readonly zone: Zone;
   readonly loot: LootManager;
+  readonly airdrop: AirdropManager;
   readonly grenades: GrenadeManager;
   readonly vehicles: VehicleManager;
   readonly hud: Hud;
@@ -149,6 +106,7 @@ export class Game {
   promptItem: LootItem | null = null;   // 当前可拾取武器提示
   promptDoor: Destructible | null = null; // 当前可开/关的门提示(优先于武器当看得更正)
   promptVehicle: Vehicle | null = null;   // 当前可驾驶载具提示
+  promptCrate: Crate | null = null;       // 当前可开启的空投提示
   backpackOpen = false;
   viewFpp = false;                     // 第一人称(V 切换, 会话内跨对局记忆)
   healT = -1;                            // >0 = 恢复品读条中(剩余秒)
@@ -158,22 +116,22 @@ export class Game {
   planeS = 0;                            // 运输机里程(玩家跳伞后继续飞离)
   private planeMesh: THREE.Group | null = null; // 运输机模型(舱内阶段可见)
   private planeProps: THREE.Object3D[] = [];    // 螺旋桨桨盘(每帧旋转)
-  private zoneArmed = false;             // 跳伞后才启动毒圈计时
+  zoneArmed = false;                    // 跳伞后才启动毒圈计时
   shakeAmp = 0;                          // 相机震动幅度(爆炸)
 
   private renderer: THREE.WebGLRenderer;
-  private scene = new THREE.Scene();
+  readonly scene = new THREE.Scene();
   private minimap: Minimap;
   private charsGroup = new THREE.Group();
   private player: PlayerController | null = null;
-  private bots: BotController[] = [];
+  bots: BotController[] = [];
   private mates: TeammateController[] = [];
   private squadTags: THREE.Sprite[] = [];
   private state: 'menu' | 'playing' | 'paused' | 'over' = 'menu';
   private lastT = performance.now();
   private menuCam = new THREE.PerspectiveCamera(60, 1, 0.5, 1200);
   private menuAngle = 0;
-  private now = 0;
+  now = 0;
   private damageDealt = 0;
   private deathT = -1;
   private playerPlacement = TOTAL;
@@ -256,6 +214,7 @@ export class Game {
     this.effects = new Effects(this.scene);
     this.zone = new Zone(this.scene);
     this.loot = new LootManager(this.scene);
+    this.airdrop = new AirdropManager(this, this.scene);
     this.grenades = new GrenadeManager(this.scene);
     this.vehicles = new VehicleManager(this.scene);
     this.audio = new AudioSys();
@@ -690,6 +649,7 @@ export class Game {
     this.shotDots = this.bots.map(() => ({ x: 0, z: 0 }));
     this.world.buildings.reset(); // 门窗恢复: 窗全修好, 门 30% 预破坏
     this.grenades.reset();
+    this.airdrop.reset(); // 空投清零(飞机/箱子/烟柱/碰撞)
     this.shakeAmp = 0;
     this.loot.populate(this.world);
     this.vehicles.populate(this.world);
@@ -711,6 +671,7 @@ export class Game {
     this.hud.setAltitude(-1, 0);
     this.promptItem = null;
     this.promptDoor = null;
+    this.promptCrate = null;
     this.backpackOpen = false;
     this.hudSlotsKey = '';
 
@@ -842,6 +803,7 @@ export class Game {
       this.audio.warn();
     }
     this.updateZoneDamage(dt);
+    this.airdrop.update(dt); // 空投排程/飞机/落箱/烟柱
     // 4 角色间软碰撞
     this.separateChars();
     // 5 模型/特效/拾取物/包扎
@@ -1518,6 +1480,13 @@ export class Game {
       this.hud.setPickupPrompt(null);
       return;
     }
+    const crate = this.promptCrate;
+    if (crate) {
+      this.airdrop.open(crate);
+      this.promptCrate = null;
+      this.hud.setPickupPrompt(null);
+      return;
+    }
     const item = this.promptItem;
     if (!item || !item.active) return;
     if (isArmorKind(item.kind)) this.tryPickupArmor(player.char, item);
@@ -1832,6 +1801,6 @@ export class Game {
       s.x = c.pos.x;
       s.z = c.pos.z;
     }
-    this.minimap.draw(this.zone, player.char.pos.x, player.char.pos.z, player.yaw, this.shotDots, n, this.mapVehicles, this.mapSquad);
+    this.minimap.draw(this.zone, player.char.pos.x, player.char.pos.z, player.yaw, this.shotDots, n, this.mapVehicles, this.mapSquad, this.airdrop.icon());
   }
 }

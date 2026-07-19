@@ -93,11 +93,29 @@ export class Minimap {
     shotCount: number,
     vehicles: readonly { x: number; z: number; dead: boolean }[],
     squad: readonly { x: number; z: number }[],
+    airdrop: { x: number; z: number } | null = null,
   ): void {
     const ctx = this.ctx;
     const s = this.size;
     ctx.clearRect(0, 0, s, s);
     ctx.drawImage(this.base, 0, 0, s, s);
+
+    // 空投标记(红色菱形)
+    if (airdrop) {
+      const ax = this.toMap(airdrop.x);
+      const az = this.toMap(airdrop.z);
+      ctx.fillStyle = '#ff5a3c';
+      ctx.beginPath();
+      ctx.moveTo(ax, az - 4.2);
+      ctx.lineTo(ax + 4.2, az);
+      ctx.lineTo(ax, az + 4.2);
+      ctx.lineTo(ax - 4.2, az);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
 
     // 载具标记(深灰方块, 残骸变暗)
     for (const v of vehicles) {

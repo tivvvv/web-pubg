@@ -257,10 +257,18 @@ export class PlayerController {
     game.promptItem = null;
     game.promptDoor = null;
     game.promptVehicle = null;
+    game.promptCrate = null;
     // 两者同时在场: 看得更正的优先
     if (door && (!item || door.dot >= itemDot)) {
       game.promptDoor = door.d;
       game.hud.setPickupPrompt(door.d.open ? '按 F 关门' : '按 F 开门');
+      return;
+    }
+    // 空投候选: 2.8m 内落地未开的空投
+    const crate = game.airdrop.nearestClosedCrate(c.pos.x, c.pos.y, c.pos.z, 2.8);
+    if (crate) {
+      game.promptCrate = crate;
+      game.hud.setPickupPrompt('按 F 打开空投');
       return;
     }
     // 载具候选: 2.6m 内可驾驶载具

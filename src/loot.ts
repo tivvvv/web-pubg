@@ -19,7 +19,7 @@ export interface LootItem {
   outdoor: boolean; // 野外锚点刷新(枪支/独立弹药), 用于统计与调试
 }
 
-const LOOT_CAP = 212; // 室内配对 + 野外补齐 + 野外武器/弹药新增
+const LOOT_CAP = 240; // 室内配对 + 野外补齐 + 野外武器/弹药 + 空投内容物
 
 // 共享几何/材质
 const GEO = {
