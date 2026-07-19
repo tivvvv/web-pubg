@@ -174,9 +174,10 @@ export class TeammateController {
   // ---- 空降物理(跟随玩家落点) ----
   private updateDescent(dt: number, game: Game): void {
     const c = this.char;
-    // 等待跳伞延迟: 还在"机舱"跟玩家
+    // 等待跳伞延迟: 还在"机舱"跟玩家(舱内隐藏, 玩家起跳后显形跟进)
     if (this.jumpDelay > 0) {
       this.jumpDelay -= dt;
+      c.group.visible = game.playerCtl?.descent !== 'plane';
       const p = game.playerCtl?.char.pos;
       if (p) c.pos.set(p.x + this.followDist * 0.5, p.y, p.z + this.followDist * 0.5);
       if (this.jumpDelay > 0) return;

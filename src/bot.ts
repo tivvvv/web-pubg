@@ -13,6 +13,8 @@ import type { Game } from './game';
 const ENGAGE_DIST = 92;
 // 游泳找岸的 4 个采样方向
 const SWIM_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+// bot 降落伞配色(哑光低饱和, 按角色 id 轮换; 队友另用绿色系)
+const BOT_CANOPIES = [0x7a8a6a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a, 0x8a6e62] as const;
 
 export class BotController {
   readonly char: Character;
@@ -46,6 +48,7 @@ export class BotController {
   private engageCrouch = false; // 本次交战是否蹲下对枪(索敌成功时 15% 掷定)
   // 空降状态: 高空自由落体 → 开伞滑翔 → 落地(null 恢复正常 AI)
   descent: 'freefall' | 'canopy' | null = null;
+  jumpS = -1;          // ≥0 = 还在机上, 到达该航线里程即跳伞
   vy = 0;
   readonly dropTarget = new THREE.Vector3();
 
@@ -67,6 +70,18 @@ export class BotController {
         c.pos.y += this.vy * dt;
         const g = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y);
         if (c.pos.y <= g) this.finishDescent(g);
+      }
+      return;
+    }
+    // 舱内等待: 跟随飞机(隐藏), 到达出舱里程跳伞
+    if (this.jumpS >= 0) {
+      game.flightPoint(c.pos, Math.min(game.planeS, this.jumpS));
+      if (game.planeS >= this.jumpS) {
+        this.jumpS = -1;
+        this.descent = 'freefall';
+        this.vy = -2;
+        c.airPose = 'fall';
+        c.group.visible = true;
       }
       return;
     }
@@ -241,7 +256,7 @@ export class BotController {
     if (this.descent === 'freefall' && agl <= 70) {
       this.descent = 'canopy';
       c.airPose = 'canopy';
-      c.attachCanopy(0x7a8a6a);
+      c.attachCanopy(BOT_CANOPIES[c.id % BOT_CANOPIES.length] as number);
     }
     const g = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y);
     if (c.pos.y <= g) this.finishDescent(g);

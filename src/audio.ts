@@ -415,4 +415,52 @@ export class AudioSys {
       }, 450);
     }
   }
+
+  // 运输机引擎低鸣(双锯齿微失谐 + 低通; 舱内阶段循环, 跳伞后淡出)
+  private planeOsc: OscillatorNode[] | null = null;
+  private planeGain: GainNode | null = null;
+  planeDroneSet(vol: number): void {
+    if (!this.ctx || !this.master) return;
+    if (!this.planeOsc) {
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 150;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      lp.connect(g).connect(this.master);
+      const o1 = this.ctx.createOscillator();
+      o1.type = 'sawtooth';
+      o1.frequency.value = 52;
+      const o2 = this.ctx.createOscillator();
+      o2.type = 'sawtooth';
+      o2.frequency.value = 52.8;
+      o1.connect(lp);
+      o2.connect(lp);
+      o1.start();
+      o2.start();
+      this.planeOsc = [o1, o2];
+      this.planeGain = g;
+    }
+    (this.planeGain as GainNode).gain.setTargetAtTime(vol * 0.16, this.ctx.currentTime, 0.15);
+  }
+
+  planeDroneStop(): void {
+    if (this.planeGain && this.ctx) {
+      this.planeGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.2);
+    }
+    const oscs = this.planeOsc;
+    this.planeOsc = null;
+    this.planeGain = null;
+    if (oscs) {
+      window.setTimeout(() => {
+        for (const o of oscs) {
+          try {
+            o.stop();
+          } catch {
+            /* 已停止 */
+          }
+        }
+      }, 600);
+    }
+  }
 }

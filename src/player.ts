@@ -75,7 +75,8 @@ export class PlayerController {
     // ---- 空降阶段: 舱内/自由落体/开伞滑翔(全程禁射击/道具/姿态) ----
     if (this.descent) {
       this.updateDescent(dt, input, game);
-      this.updateCamera(dt, game);
+      if (this.descent === 'plane') this.planeCamera(dt, dx, dy, game);
+      else this.updateCamera(dt, game);
       return;
     }
 
@@ -340,6 +341,8 @@ export class PlayerController {
     this.descent = 'freefall';
     this.vy = -2;
     this.char.airPose = 'fall';
+    this.char.group.visible = true;
+    game.audio.planeDroneStop();
     game.onPlayerJump();
   }
 
@@ -374,7 +377,8 @@ export class PlayerController {
     if (this.descent === 'plane') {
       this.planeS += 92 * dt;
       game.flightPoint(c.pos, this.planeS);
-      game.audio.windSet(0.25);
+      c.group.visible = false; // 舱内隐藏(机外追击机位看不到自己)
+      game.audio.planeDroneSet(0.85);
       if (this.planeS > 980) this.startFreefall(game); // 航线末端自动跳伞
       return;
     }
@@ -597,6 +601,31 @@ export class PlayerController {
     const cp = Math.cos(p);
     out.set(Math.sin(this.yaw) * cp, Math.sin(p), Math.cos(this.yaw) * cp);
     return out;
+  }
+
+  // 舱内追击机位: 右后上方看运输机, 鼠标可小幅偏移视线
+  private planeLookYaw = 0;
+  private planeLookPitch = 0;
+  private planeCamera(dt: number, dx: number, dy: number, game: Game): void {
+    this.planeLookYaw = clamp(this.planeLookYaw - dx * 0.0021, -1.15, 1.15);
+    this.planeLookPitch = clamp(this.planeLookPitch - dy * 0.0021, -0.5, 0.5);
+    const A = game.flightAngle;
+    const fx = Math.cos(A);
+    const fz = Math.sin(A);
+    const rx = -fz;
+    const rz = fx;
+    const p = this.char.pos;
+    this.camera.position.set(p.x - fx * 17 + rx * 7.5, p.y + 4.6, p.z - fz * 17 + rz * 7.5);
+    this.lookAt.set(p.x + fx * 6, p.y - 0.5, p.z + fz * 6);
+    this.camera.lookAt(this.lookAt);
+    this.camera.rotateY(this.planeLookYaw);
+    this.camera.rotateX(this.planeLookPitch);
+    const targetFov = BASE_FOV;
+    this.fov = lerp(this.fov, targetFov, Math.min(1, dt * 10));
+    if (Math.abs(this.fov - this.camera.fov) > 0.05) {
+      this.camera.fov = this.fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   private updateCamera(dt: number, game: Game): void {

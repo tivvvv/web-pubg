@@ -58,6 +58,53 @@ function makeMarkerTexture(): THREE.Texture {
   g.fillRect(29, 40, 6, 6);
   return new THREE.CanvasTexture(c);
 }
+
+// 低模军用运输机: 机身/高置主翼/尾翼/4 发螺旋桨(旋转桨盘) + 尾部跳板的暗示
+// 共享材质, 单实例; 返回桨盘供每帧旋转
+function buildTransportPlane(): { group: THREE.Group; props: THREE.Object3D[] } {
+  const camo = new THREE.MeshLambertMaterial({ color: 0x5d6b58 });   // 哑光军绿
+  const camoDark = new THREE.MeshLambertMaterial({ color: 0x46523f }); // 腹面/细节
+  const glass = new THREE.MeshLambertMaterial({ color: 0x2c3844 });
+  const propMat = new THREE.MeshBasicMaterial({ color: 0x1c1c1c, transparent: true, opacity: 0.42, side: THREE.DoubleSide });
+  const g = new THREE.Group();
+  const box = (mat: THREE.Material, w: number, h: number, d: number, x: number, y: number, z: number): THREE.Mesh => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    g.add(m);
+    return m;
+  };
+  // 机身(+Z 为机头) + 机头收缩 + 驾驶舱玻璃
+  box(camo, 2.4, 2.3, 12.5, 0, 0, 0);
+  const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 1.05, 2.2, 4), camo);
+  nose.rotation.x = -Math.PI / 2;
+  nose.rotation.y = Math.PI / 4;
+  nose.position.set(0, -0.1, 7.3);
+  g.add(nose);
+  box(glass, 1.6, 0.7, 0.9, 0, 0.75, 6.1);
+  // 高置主翼 + 翼尖
+  box(camo, 16.5, 0.28, 2.9, 0, 1.05, 0.6);
+  box(camoDark, 0.7, 0.24, 2.6, -8.4, 1.05, 0.6);
+  box(camoDark, 0.7, 0.24, 2.6, 8.4, 1.05, 0.6);
+  // 4 发发动机舱 + 桨盘
+  const props: THREE.Object3D[] = [];
+  for (const ex of [-5.6, -2.7, 2.7, 5.6]) {
+    box(camoDark, 0.85, 0.85, 2.6, ex, 0.55, 1.6);
+    const pg = new THREE.Group();
+    pg.position.set(ex, 0.55, 3.0);
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.06, 12), propMat);
+    disc.rotation.x = Math.PI / 2;
+    pg.add(disc);
+    g.add(pg);
+    props.push(pg);
+  }
+  // 尾翼: 垂尾 + 平尾
+  box(camo, 0.3, 2.6, 2.4, 0, 1.9, -5.6);
+  box(camo, 5.6, 0.22, 1.7, 0, 1.35, -5.7);
+  // 尾跳板暗示(机尾腹面暗色斜板)
+  const ramp = box(camoDark, 1.9, 0.18, 2.6, 0, -0.95, -6.3);
+  ramp.rotation.x = 0.35;
+  return { group: g, props };
+}
 import { ARMORS, armorFromLoot, armorLootKind, isArmorKind, type ArmorKind, type ArmorLevel } from './armor';
 import { AudioSys } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
@@ -108,7 +155,9 @@ export class Game {
   healKind: HealId | null = null;        // 读条中的恢复品种类
   drinkT = -1;                           // >0 = 饮料 buff 剩余秒(20s/40HP 预算)
   flightAngle = 0;                       // 航线角(每局随机)
+  planeS = 0;                            // 运输机里程(玩家跳伞后继续飞离)
   private planeMesh: THREE.Group | null = null; // 运输机模型(舱内阶段可见)
+  private planeProps: THREE.Object3D[] = [];    // 螺旋桨桨盘(每帧旋转)
   private zoneArmed = false;             // 跳伞后才启动毒圈计时
   shakeAmp = 0;                          // 相机震动幅度(爆炸)
 
@@ -526,6 +575,7 @@ export class Game {
   startMatch(): void {
     this.audio.unlock();
     this.audio.windStop(); // 上一局可能死在自由落体(风声未停)
+    this.audio.planeDroneStop(); // 上一局可能死在舱内(引擎声未停)
     // 清理旧角色
     this.charsGroup.clear();
     this.chars.length = 0;
@@ -540,12 +590,21 @@ export class Game {
     }
     this.player = new PlayerController(0x3a6ea5);
 
-    // 出生点: 拒绝采样, 最小间距
+    // 出生点: 拒绝采样, 最小间距(偏向航线两侧 150m 内, 便于滑翔到达)
+    this.flightAngle = rand(0, Math.PI * 2);
+    const dirX = Math.cos(this.flightAngle);
+    const dirZ = Math.sin(this.flightAngle);
+    const lineDist = (x: number, z: number): number => Math.abs(x * dirZ - z * dirX);
     const pts: { x: number; z: number }[] = [];
     let guard = 0;
     while (pts.length < TOTAL && guard++ < 6000) {
-      const x = rand(-300, 300);
-      const z = rand(-300, 300);
+      let x = 0;
+      let z = 0;
+      for (let retry = 0; retry < 6; retry++) {
+        x = rand(-300, 300);
+        z = rand(-300, 300);
+        if (lineDist(x, z) < 150 || retry === 5) break;
+      }
       if (!this.world.pointFree(x, z, 0.5, WATER_Y + 0.7, 12)) continue;
       let ok = true;
       for (const p of pts) {
@@ -566,9 +625,8 @@ export class Game {
     // 极端兜底(几乎不可能触发)
     while (pts.length < TOTAL) pts.push({ x: rand(-60, 60), z: rand(-60, 60) });
 
-    // 玩家: 进入舱内航线阶段(随机航线角)
+    // 玩家: 进入舱内航线阶段(航线角已在出生点采样时确定)
     this.player.char.team = 'squad';
-    this.flightAngle = rand(0, Math.PI * 2);
     this.player.descent = 'plane';
     this.player.planeS = 0;
     this.player.vy = 0;
@@ -576,17 +634,12 @@ export class Game {
     this.player.yaw = this.flightAngle + Math.PI / 2;
     this.chars.push(this.player.char);
     this.charsGroup.add(this.player.char.group);
-    // 运输机模型(舱内阶段跟随航线)
-    const planeMat = new THREE.MeshLambertMaterial({ color: 0x7a8288 });
-    const plane = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.0, 9), planeMat);
-    const wing = new THREE.Mesh(new THREE.BoxGeometry(11, 0.18, 2.4), planeMat);
-    wing.position.set(0, 0.9, -0.4);
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.6, 1.8), planeMat);
-    tail.position.set(0, 1.4, 4.2);
-    plane.add(body, wing, tail);
-    this.planeMesh = plane;
-    this.scene.add(plane);
+    // 运输机模型(低模军机, 舱内阶段跟随航线, 跳伞后飞离)
+    const planeBuild = buildTransportPlane();
+    this.planeMesh = planeBuild.group;
+    this.planeProps = planeBuild.props;
+    this.planeS = 0;
+    this.scene.add(planeBuild.group);
 
     for (let i = 1; i < TOTAL; i++) {
       const p = pts[i] as { x: number; z: number };
@@ -609,14 +662,13 @@ export class Game {
         this.scene.add(tag);
         continue;
       }
-      // 敌方 bot ×20(高空投放)
+      // 敌方 bot ×20(同机跳伞: 按投放点在航线上的投影里程错峰出舱)
       const bot = new BotController(BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`, BOT_SHIRTS[(i - 1) % BOT_SHIRTS.length] ?? 0x888888);
-      // bot: 投放点高空自由落体(高度错开, 落地时间自然分散)
-      bot.char.pos.set(p.x + rand(-25, 25), 190 + Math.random() * 45, p.z + rand(-25, 25));
+      bot.char.pos.copy(this.player.char.pos); // 在机舱内(隐藏)
       bot.char.yaw = rand(0, Math.PI * 2);
-      bot.char.airPose = 'fall';
-      bot.descent = 'freefall';
-      bot.vy = -2;
+      bot.char.airPose = 'sit';
+      bot.char.group.visible = false;
+      bot.jumpS = clamp(500 + p.x * dirX + p.z * dirZ + rand(-55, 55), 40, 950);
       bot.dropTarget.set(p.x, 0, p.z);
       if (Math.random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
       if (Math.random() < 0.5) bot.char.heals.bandage = 1 + Math.floor(Math.random() * 2); // 50% 带 1~2 绷带
@@ -710,7 +762,7 @@ export class Game {
   private updateBlobShadows(): void {
     let i = 0;
     for (const c of this.chars) {
-      if (!c.alive) continue;
+      if (!c.alive || !c.group.visible) continue;
       const prone = c.stanceF > 1.2;
       this.tmpP.set(c.pos.x, c.groundH + 0.035, c.pos.z);
       this.tmpQ.setFromAxisAngle(UP_Y, c.yaw);
@@ -764,20 +816,26 @@ export class Game {
       tag.visible = c.alive && dp < 60;
       tag.position.set(c.pos.x, c.pos.y + 2.05, c.pos.z);
     }
-    // 3 毒圈(跳伞后才计时) + 运输机模型跟随/离场
+    // 3 毒圈(跳伞后才计时) + 运输机离场
     if (this.zoneArmed) {
       this.zone.update(dt);
       const pc = this.player?.char;
       if (pc) this.zone.trackPlayer(pc.pos.x, pc.pos.z);
-      if (this.planeMesh) {
+    }
+    // 运输机: 舱内跟随玩家里程, 跳伞后继续飞离并爬升, 出界销毁(重开时 startMatch 兜底清除)
+    if (this.planeMesh) {
+      if (player.descent === 'plane') this.planeS = player.planeS;
+      else this.planeS += 92 * dt;
+      const climb = player.descent === 'plane' ? 0 : Math.max(0, (this.planeS - 980) * 0.12);
+      this.flightPoint(this.tmpP, this.planeS);
+      this.planeMesh.position.set(this.tmpP.x, this.tmpP.y - 1.1 + climb, this.tmpP.z);
+      this.planeMesh.rotation.y = Math.atan2(Math.cos(this.flightAngle), Math.sin(this.flightAngle));
+      for (const p of this.planeProps) p.rotation.z += dt * 34;
+      if (this.planeS > 1500) {
         this.scene.remove(this.planeMesh);
         this.planeMesh = null;
+        this.planeProps = [];
       }
-    }
-    if (this.planeMesh && player.descent === 'plane') {
-      this.flightPoint(this.tmpP, player.planeS);
-      this.planeMesh.position.set(this.tmpP.x, this.tmpP.y - 1.1, this.tmpP.z);
-      this.planeMesh.rotation.y = Math.atan2(Math.cos(this.flightAngle), Math.sin(this.flightAngle));
     }
     if (this.zone.justBeganShrink) {
       this.hud.toast('毒圈开始缩小！');
@@ -823,10 +881,10 @@ export class Game {
     const cs = this.chars;
     for (let i = 0; i < cs.length; i++) {
       const a = cs[i] as Character;
-      if (!a.alive) continue;
+      if (!a.alive || !a.group.visible) continue;
       for (let j = i + 1; j < cs.length; j++) {
         const b = cs[j] as Character;
-        if (!b.alive) continue;
+        if (!b.alive || !b.group.visible) continue;
         const dx = b.pos.x - a.pos.x;
         const dz = b.pos.z - a.pos.z;
         const rr = a.radius + b.radius;
