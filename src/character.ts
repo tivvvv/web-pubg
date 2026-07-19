@@ -179,6 +179,7 @@ export class Character {
   pack: { level: PackLevel } | null = null; // 已装备背包(加负重)
 
   swingT = 0;          // 挥击动画进度(1→0)
+  swingSide = 1;       // 出拳侧(1 右 / -1 左, 每次挥击交替)
   lastMeleeT = -100;   // 上次挥击时间
   dieT = -1;           // >=0 表示死亡动画进度
   stance: Stance = 'stand'; // 姿态: 站/蹲/趴
@@ -456,12 +457,34 @@ export class Character {
     const fP = Math.max(0, this.stanceF - 1);
     // 疾跑摆臂(不瞄准时, 与腿反相)
     const sprintF = this.speed2d > 5 && this.aimPitch < 0.01 ? Math.min(1, (this.speed2d - 5) / 1.6) : 0;
-    // 挥击动画(覆盖右臂姿态)
+    // 挥击动画(快进慢回: 交替直拳 / 砍刀横斩; 命中时机不变)
     if (this.swingT > 0) {
       this.swingT = Math.max(0, this.swingT - dt * 3.4);
-      p.armR.rotation.x = -1.3 - Math.sin(this.swingT * Math.PI) * 1.15;
+      const prog = 1 - this.swingT; // 0→1
+      const ext = Math.sin(Math.min(1, prog * 1.9) * Math.PI); // 峰值偏前的出收曲线
+      const side = this.swingSide;
+      const arm = side > 0 ? p.armR : p.armL;
+      if (this.melee.def.id === 'knife') {
+        // 砍刀: 大幅度横斩(手臂横扫过身)
+        arm.rotation.x = -1.5;
+        arm.rotation.z = side * (0.95 - prog * 1.9);
+        arm.position.z = 0.1 + ext * 0.28;
+      } else {
+        // 交替直拳: 拳峰前送 + 躯干微转 + 小前冲
+        arm.rotation.x = -1.3 - ext * 0.55;
+        arm.rotation.z = (side > 0 ? -0.1 : 0.25) + side * -ext * 0.12;
+        arm.position.z = ext * 0.4;
+      }
+      p.inner.rotation.y = -side * ext * 0.3;
+      p.inner.position.z = ext * 0.07;
     } else {
+      // 复位(挥臂基线; armL 的 z 由持枪姿态段每帧重写)
       p.armR.rotation.x = -1.3 + this.lastLegSwing * sprintF;
+      p.armR.rotation.z = -0.1;
+      p.armR.position.z = 0;
+      p.armL.position.z = 0;
+      p.inner.rotation.y = 0;
+      p.inner.position.z = 0;
     }
     if (sprintF > 0) {
       p.armL.rotation.x = -1.5 - this.lastLegSwing * sprintF;

@@ -88,6 +88,11 @@ interface SmokeCol {
   vy: number[];
 }
 
+interface SlashArc {
+  mesh: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+  life: number;
+}
+
 export class Effects {
   private tracers: Tracer[] = [];
   private tracerIdx = 0;
@@ -99,6 +104,8 @@ export class Effects {
   private smokeCols: SmokeCol[] = [];
   private colIdx = 0;
   private puffTex: THREE.Texture;
+  private arcs: SlashArc[] = [];
+  private arcIdx = 0;
   private points: THREE.Points;
   private pPos: Float32Array;
   private pCol: Float32Array;
@@ -153,6 +160,19 @@ export class Effects {
       mesh.frustumCulled = false;
       scene.add(mesh);
       this.rings.push({ mesh, life: 0 });
+    }
+
+    // 斩击弧池(砍刀表现: 白弧 0.15s 渐隐)
+    for (let i = 0; i < 4; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.95, 16, 1, -0.6, 1.9), mat);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      this.arcs.push({ mesh, life: 0 });
     }
 
     // 烟柱池(每柱 3 层 sprite, ~3s 上升)
@@ -285,6 +305,18 @@ export class Effects {
     this.burst(p, 10, 1.0, 0.75, 0.3, 9);       // 火星
   }
 
+  // 砍刀斩击弧(白色弧形残影, 0.15s; 倾斜朝向便于第三人称观察)
+  slashArc(pos: THREE.Vector3, yaw: number, side: number): void {
+    const a = this.arcs[this.arcIdx] as SlashArc;
+    this.arcIdx = (this.arcIdx + 1) % this.arcs.length;
+    a.mesh.position.copy(pos);
+    a.mesh.rotation.set(-0.85, yaw, side > 0 ? -0.4 : 2.0, 'YXZ');
+    a.mesh.scale.setScalar(1.1);
+    a.mesh.material.opacity = 0.85;
+    a.mesh.visible = true;
+    a.life = 0.15;
+  }
+
   // 水面溅射(白色喷沫)
   splash(p: THREE.Vector3): void {
     this.burst(p, 14, 0.85, 0.93, 1.0, 3.6);
@@ -337,6 +369,16 @@ export class Effects {
         });
       }
     }
+    // 斩击弧: 扩张 + 渐隐
+    for (const a of this.arcs) {
+      if (a.life > 0) {
+        a.life -= dt;
+        const t = 1 - Math.max(0, a.life) / 0.15;
+        a.mesh.scale.setScalar(1 + t * 0.6);
+        a.mesh.material.opacity = 0.7 * (1 - t);
+        if (a.life <= 0) a.mesh.visible = false;
+      }
+    }
     // 粒子
     let any = false;
     for (let i = 0; i < PARTICLE_CAP; i++) {
@@ -381,6 +423,10 @@ export class Effects {
     for (const col of this.smokeCols) {
       col.life = 0;
       for (const sp of col.sprites) sp.visible = false;
+    }
+    for (const a of this.arcs) {
+      a.life = 0;
+      a.mesh.visible = false;
     }
     this.light.intensity = 0;
     for (let i = 0; i < PARTICLE_CAP; i++) {

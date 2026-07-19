@@ -1119,6 +1119,16 @@ export class Game {
     if (this.now - attacker.lastMeleeT < m.cooldown) return false;
     attacker.lastMeleeT = this.now;
     attacker.swingT = 1;
+    attacker.swingSide *= -1; // 交替出拳
+    // 砍刀: 白色斩击弧(纯表现, 对象池)
+    if (m.id === 'knife') {
+      this.tmpEnd.set(
+        attacker.pos.x + Math.sin(attacker.yaw) * 0.7,
+        attacker.pos.y + 1.25,
+        attacker.pos.z + Math.cos(attacker.yaw) * 0.7,
+      );
+      this.effects.slashArc(this.tmpEnd, attacker.yaw, attacker.swingSide);
+    }
     // 挥击音效(玩家原声, 他人按距离/方位)
     if (attacker.isPlayer) {
       this.audio.melee(0, 0);

@@ -500,7 +500,7 @@ export class Buildings {
       { x: ix0 + w * 0.5, y: f2, z: iz0 + d * 0.3, premium: true },
       { x: ix1 - w * 0.22, y: f2, z: iz1 - d * 0.2, premium: true },
     );
-    this.rail(box, stairX1, f2, holeZ0, stairX1 + 0.08, f2 + 0.95, iz1);
+    this.rail(box, stairX1, holeZ0, stairX1 + 0.08, iz1, f2, 0.95);
     const uwt = f2 + 2.5;
     const win2 = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f2 + 0.9, y1: f2 + 0.9 + WIN_H });
     this.wallRun(world, box, 'x', iz0, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.35)], p.wall, WT2, 1);
@@ -541,7 +541,7 @@ export class Buildings {
     this.stairs(box, stairX0, stairX1, iz1 - 0.6, holeZ0 + 0.15, f1, rise, FLOOR2_C);
     box('floor', stairX1, wt1, iz0, ix1, f2, iz1, FLOOR2_C);
     box('floor', ix0, wt1, iz0, stairX1, f2, holeZ0, FLOOR2_C);
-    this.rail(box, stairX1, f2, holeZ0, stairX1 + 0.08, f2 + 0.95, iz1);
+    this.rail(box, stairX1, holeZ0, stairX1 + 0.08, iz1, f2, 0.95);
 
     // 二层房间占北 55%: 房间南墙(zRoom)开门通向露台
     const zRoom = iz0 + d * 0.55;
@@ -598,7 +598,7 @@ export class Buildings {
     this.stairs(box, s1x0, s1x1, iz1 - 0.6, hole1Z0 + 0.15, f1, rise, FLOOR2_C);
     box('floor', s1x1, wt1, iz0, ix1, f2, iz1, FLOOR2_C);
     box('floor', ix0, wt1, iz0, s1x1, f2, hole1Z0, FLOOR2_C);
-    this.rail(box, s1x1, f2, hole1Z0, s1x1 + 0.08, f2 + 0.95, iz1);
+    this.rail(box, s1x1, hole1Z0, s1x1 + 0.08, iz1, f2, 0.95);
 
     // 2F 墙 + 窗(南北两面双窗, 东西单窗)
     const win2 = (a0: number): Op => win(a0, f2);
@@ -621,7 +621,7 @@ export class Buildings {
     // 3F 板: 西全宽 + 东南角北部条(留出跑梯2井口)
     box('floor', ix0, wt2, iz0, s2x0, f3, iz1, FLOOR2_C);
     box('floor', s2x0, wt2, iz0, ix1, f3, hole2Z1, FLOOR2_C);
-    this.rail(box, s2x0 - 0.08, f3, hole2Z1, s2x0, f3 + 0.95, iz1);
+    this.rail(box, s2x0 - 0.08, hole2Z1, s2x0, iz1, f3, 0.95);
 
     // 3F 墙 + 窗(南北双窗, 东西单窗) + 顶层高级物资
     const win3 = (a0: number): Op => win(a0, f3);
