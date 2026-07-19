@@ -35,45 +35,49 @@ export class Zone {
   private startRadius = 310;
   private mesh: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
   private timeU = { value: 0 };
+  private proxU = { value: 1 };
 
   constructor(scene: THREE.Scene) {
     const geo = new THREE.CylinderGeometry(1, 1, 1, 96, 1, true);
-    // 顶部渐隐 alphaMap: 墙顶硬边会在天上画出一个灰色圆罩(叠加混合+双面两层)
+    // alphaMap 纵向渐变: 顶部渐隐(避免硬边在天上画出灰罩) + 柔和墙身 + 底部亮基带
+    // canvas y=0 = 圆柱顶(v=1); alphaMap 取 g 通道
     const cv = document.createElement('canvas');
     cv.width = 1;
     cv.height = 64;
     const cx = cv.getContext('2d');
     if (cx) {
       const gr = cx.createLinearGradient(0, 0, 0, 64);
-      gr.addColorStop(0, '#000000'); // canvas 顶 = 圆柱顶(v=1): 全透明
-      gr.addColorStop(0.25, '#000000');
-      gr.addColorStop(0.5, '#ffffff');
-      gr.addColorStop(1, '#ffffff');
+      gr.addColorStop(0, '#000000'); // 顶: 全透明
+      gr.addColorStop(0.45, '#8c8c8c'); // 墙身 ~0.55
+      gr.addColorStop(0.9, '#999999'); // 近底 ~0.6
+      gr.addColorStop(1, '#ffffff'); // 基带 1.0
       cx.fillStyle = gr;
       cx.fillRect(0, 0, 1, 64);
     }
     const fadeTex = new THREE.CanvasTexture(cv);
     const mat = new THREE.MeshBasicMaterial({
-      color: 0x3f9fff, transparent: true, opacity: 0.16,
+      color: 0x3f9fff, transparent: true, opacity: 0.29,
       side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
       depthWrite: false, fog: false, alphaMap: fadeTex,
     });
-    // 扫描线微光(time uniform; alphaMap 顶部渐隐保持生效)
+    // 底部发光基带 + 缓慢呼吸 + 近墙增亮(uProx); 无扫描线
     const timeU = this.timeU;
+    const proxU = this.proxU;
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = timeU;
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying float vWy;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWy = (modelMatrix * vec4(transformed, 1.0)).y;');
+      shader.uniforms.uProx = proxU;
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying float vWy;')
+        .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uProx;')
         .replace(
           '#include <alphamap_fragment>',
           `#include <alphamap_fragment>
-  diffuseColor.a *= 0.78 + 0.22 * sin(vWy * 4.5 - uTime * 2.4);`,
+  float baseBand = smoothstep(0.14, 0.02, vAlphaMapUv.y);
+  float breathe = 0.92 + 0.08 * sin(uTime * 0.7);
+  diffuseColor.a *= (1.0 + baseBand * 1.0) * breathe * uProx;
+  diffuseColor.rgb += vec3(0.35, 0.75, 1.0) * baseBand * 0.18 * (0.5 + 0.5 * uProx);`,
         );
     };
-    mat.customProgramCacheKey = () => 'zone-wall-shimmer';
+    mat.customProgramCacheKey = () => 'zone-wall-v2';
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 5;
@@ -123,6 +127,12 @@ export class Zone {
     const dx = x - this.center.x;
     const dz = z - this.center.y;
     return Math.sqrt(dx * dx + dz * dz) - this.radius;
+  }
+
+  // 近墙增亮: 每帧传入本地玩家位置, 距墙 ≤40m 时 uProx 从 1 平滑升到 ~1.45
+  trackPlayer(px: number, pz: number): void {
+    const d = Math.abs(Math.hypot(px - this.center.x, pz - this.center.y) - this.radius);
+    this.proxU.value = 1 + 0.45 * (1 - THREE.MathUtils.smoothstep(d, 8, 40));
   }
 
   update(dt: number): void {

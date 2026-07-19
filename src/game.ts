@@ -147,7 +147,9 @@ export class Game {
   private tmpRight = new THREE.Vector3();
   private blobs: THREE.InstancedMesh;
   private lootMarker: THREE.Sprite;
-  private doorFrame: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>;
+  private doorFrame: THREE.Group;
+  private doorFrameEdgeMat: THREE.LineBasicMaterial;
+  private doorFrameGlowMat: THREE.MeshBasicMaterial;
   private tmpM4 = new THREE.Matrix4();
   private tmpQ = new THREE.Quaternion();
   private tmpP = new THREE.Vector3();
@@ -183,12 +185,23 @@ export class Game {
     this.lootMarker.scale.set(0.42, 0.42, 1);
     this.lootMarker.visible = false;
     this.scene.add(this.lootMarker);
-    this.doorFrame = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshBasicMaterial({
-        color: 0x6fc7ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, wireframe: true,
+    this.doorFrame = new THREE.Group();
+    // 干净描边(无对角线): 12 条盒棱线 + 一层柔和附加底光, 都不是线框三角面
+    const doorEdge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+      new THREE.LineBasicMaterial({
+        color: 0x9fd8ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
       }),
     );
+    const doorGlow = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial({
+        color: 0x6fc7ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+      }),
+    );
+    this.doorFrame.add(doorEdge, doorGlow);
+    this.doorFrameEdgeMat = doorEdge.material;
+    this.doorFrameGlowMat = doorGlow.material;
     this.doorFrame.visible = false;
     this.scene.add(this.doorFrame);
     this.effects = new Effects(this.scene);
@@ -722,7 +735,9 @@ export class Game {
       this.doorFrame.visible = true;
       this.doorFrame.position.set((col.minX + col.maxX) / 2, (col.minY + col.maxY) / 2, (col.minZ + col.maxZ) / 2);
       this.doorFrame.scale.set(col.maxX - col.minX + 0.14, col.maxY - col.minY + 0.14, col.maxZ - col.minZ + 0.14);
-      this.doorFrame.material.opacity = 0.3 + Math.sin(this.now * 6) * 0.18;
+      const pulse = 0.5 + Math.sin(this.now * 6) * 0.25;
+      this.doorFrameEdgeMat.opacity = pulse;
+      this.doorFrameGlowMat.opacity = pulse * 0.3;
     } else {
       this.doorFrame.visible = false;
     }
@@ -748,6 +763,8 @@ export class Game {
     // 3 毒圈(跳伞后才计时) + 运输机模型跟随/离场
     if (this.zoneArmed) {
       this.zone.update(dt);
+      const pc = this.player?.char;
+      if (pc) this.zone.trackPlayer(pc.pos.x, pc.pos.z);
       if (this.planeMesh) {
         this.scene.remove(this.planeMesh);
         this.planeMesh = null;
