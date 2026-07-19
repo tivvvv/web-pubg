@@ -27,7 +27,24 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     auto: false, magSize: 5, reloadTime: 2.8, spreadHip: 0.035, spreadAim: 0.0012,
     recoil: 0.05, zoom: 4, tier: 4, ammo: 'sniper',
   },
+  shotgun: {
+    id: 'shotgun', name: 'S686 双管霰弹枪', damage: 11, headMult: 2, fireInterval: 0.3,
+    auto: false, magSize: 2, reloadTime: 2.6, spreadHip: 0.05, spreadAim: 0.045,
+    recoil: 0.03, zoom: 1.15, tier: 1.5, ammo: 'shotgun',
+    pellets: 8, falloff: [8, 30, 0.3, 40], // 8m 全伤 → 30m 三成 → 40m 归零
+  },
 };
+
+// 单发伤害的距离衰减系数(无 falloff 定义恒 1)
+export function pelletFalloff(def: WeaponDef, t: number): number {
+  const f = def.falloff;
+  if (!f) return 1;
+  const [full, min, minF, zero] = f;
+  if (t <= full) return 1;
+  if (t >= zero) return 0;
+  if (t <= min) return 1 - (1 - minF) * ((t - full) / (min - full));
+  return minF * (1 - (t - min) / (zero - min));
+}
 
 export const MELEE: Record<MeleeId, MeleeDef> = {
   fists: { id: 'fists', name: '拳头', damage: 15, range: 2.2, cooldown: 0.45 },
@@ -41,13 +58,13 @@ export const THROWABLES: Record<ThrowableId, { id: ThrowableId; name: string; ma
 };
 
 export const AMMO_NAME: Record<AmmoType, string> = {
-  pistol: '手枪弹', rifle: '步枪弹', smg: '冲锋枪弹', sniper: '狙击弹',
+  pistol: '手枪弹', rifle: '步枪弹', smg: '冲锋枪弹', sniper: '狙击弹', shotgun: '霰弹(12号)',
 };
 
 // 地面弹药包(分类型): 每包含量 / loot 类型映射 / 类别配色(与武器光环一致)
-export const AMMO_BOX: Record<AmmoType, number> = { rifle: 30, smg: 40, sniper: 10, pistol: 20 };
+export const AMMO_BOX: Record<AmmoType, number> = { rifle: 30, smg: 40, sniper: 10, pistol: 20, shotgun: 15 };
 export const AMMO_LOOT_KIND: Record<AmmoType, LootKind> = {
-  rifle: 'ammoRifle', smg: 'ammoSmg', sniper: 'ammoSniper', pistol: 'ammoPistol',
+  rifle: 'ammoRifle', smg: 'ammoSmg', sniper: 'ammoSniper', pistol: 'ammoPistol', shotgun: 'ammoShotgun',
 };
 export function ammoTypeFromLoot(kind: LootKind): AmmoType | null {
   switch (kind) {
@@ -55,11 +72,12 @@ export function ammoTypeFromLoot(kind: LootKind): AmmoType | null {
     case 'ammoSmg': return 'smg';
     case 'ammoSniper': return 'sniper';
     case 'ammoPistol': return 'pistol';
+    case 'ammoShotgun': return 'shotgun';
     default: return null;
   }
 }
 export const AMMO_CLASS_COLOR: Record<AmmoType, number> = {
-  rifle: 0xff7a29, smg: 0x37e0d8, sniper: 0xc05cff, pistol: 0xffd24d,
+  rifle: 0xff7a29, smg: 0x37e0d8, sniper: 0xc05cff, pistol: 0xffd24d, shotgun: 0xe05a3a,
 };
 
 export interface ShotResult {

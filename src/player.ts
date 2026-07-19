@@ -582,7 +582,8 @@ export class PlayerController {
     if (!gun || this.reloading || gun.mag >= gun.def.magSize || this.char.ammo[gun.def.ammo] <= 0) return;
     this.reloading = true;
     this.reloadT = gun.def.reloadTime;
-    game.audio.reload();
+    if (gun.def.id === 'shotgun') game.audio.reloadShotgun();
+    else game.audio.reload();
   }
 
   switchSlot(i: number, game: Game): void {

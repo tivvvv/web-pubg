@@ -1,10 +1,10 @@
 // 共享类型定义
-export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'sniper';
+export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'sniper' | 'shotgun';
 export type MeleeId = 'fists' | 'knife';
-export type AmmoType = 'pistol' | 'rifle' | 'smg' | 'sniper';
+export type AmmoType = 'pistol' | 'rifle' | 'smg' | 'sniper' | 'shotgun';
 export type ThrowableId = 'frag' | 'smoke';
 export type ArmorLootId = 'helmet1' | 'helmet2' | 'helmet3' | 'vest1' | 'vest2' | 'vest3';
-export type LootKind = WeaponId | 'knife' | 'ammoRifle' | 'ammoSmg' | 'ammoSniper' | 'ammoPistol' | 'bandage' | 'medkit' | 'drink' | 'pack1' | 'pack2' | 'pack3' | ThrowableId | ArmorLootId;
+export type LootKind = WeaponId | 'knife' | 'ammoRifle' | 'ammoSmg' | 'ammoSniper' | 'ammoPistol' | 'ammoShotgun' | 'bandage' | 'medkit' | 'drink' | 'pack1' | 'pack2' | 'pack3' | ThrowableId | ArmorLootId;
 
 // 已装备护具(定义见 armor.ts)
 export interface ArmorState {
@@ -27,6 +27,8 @@ export interface WeaponDef {
   zoom: number;          // 瞄准时 FOV 缩放倍率
   tier: number;          // 武器品级(bot 选枪用)
   ammo: AmmoType;        // 弹药类型
+  pellets?: number;      // 霰弹颗数(默认 1, 每颗独立 hitscan)
+  falloff?: [number, number, number, number]; // 伤害衰减: [全伤 m, 最低系数 m, 最低系数, 归零 m]
 }
 
 export interface GunState {

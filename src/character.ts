@@ -229,7 +229,7 @@ export class Character {
   // ---- 背包 ----
   guns: (GunState | null)[] = [null, null, null]; // 0/1 主武器, 2 手枪
   melee: MeleeState = { def: MELEE.fists };        // 近战(默认拳头)
-  ammo: Record<AmmoType, number> = { pistol: 0, rifle: 0, smg: 0, sniper: 0 };
+  ammo: Record<AmmoType, number> = { pistol: 0, rifle: 0, smg: 0, sniper: 0, shotgun: 0 };
   heals: Record<HealId, number> = { bandage: 0, medkit: 0, drink: 0 }; // 恢复品存量
   throwables: Record<ThrowableId, number> = { frag: 0, smoke: 0 };
   throwKind: ThrowableId = 'frag'; // 当前选中的投掷物类型
@@ -493,7 +493,7 @@ export class Character {
       p.held.mag.visible = this.reload01 < 0.4 || this.reload01 > 0.68;
     }
     // 左臂大致迎向护木(长枪更前伸), 持刀/徒手放松
-    if (wantId === 'rifle' || wantId === 'sniper') {
+    if (wantId === 'rifle' || wantId === 'sniper' || wantId === 'shotgun') {
       p.armL.rotation.x = -1.5;
       p.armL.rotation.z = 0.5;
     } else if (wantId === 'smg' || wantId === 'pistol') {

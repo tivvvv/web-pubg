@@ -290,6 +290,7 @@ export class TeammateController {
     const gun = c.heldGun();
     if (!gun || this.reloadT > 0) return;
     if (angleDiff(c.yaw, desiredYaw) > 0.22) return;
+    if (gun.def.id === 'shotgun' && dist > 26) return; // 霰弹仅限近距
     if (this.burstLeft > 0) {
       this.shotT -= dt;
       if (this.shotT <= 0 && this.fireTimer <= 0) {

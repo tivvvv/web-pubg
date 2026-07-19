@@ -60,6 +60,8 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   ammoSmg: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
   ammoSniper: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
   ammoPistol: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
+  ammoShotgun: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
+  shotgun: new THREE.MeshBasicMaterial({ color: 0xe05a3a, transparent: true, opacity: 0.5 }),
   // 恢复品: 绿色系光环
   bandage: new THREE.MeshBasicMaterial({ color: 0xbfe6b0, transparent: true, opacity: 0.5 }),
   medkit: new THREE.MeshBasicMaterial({ color: 0x6fd88a, transparent: true, opacity: 0.5 }),
@@ -120,9 +122,9 @@ function buildLootMesh(kind: LootKind): THREE.Group {
   } else if (kind === 'drink') {
     // 饮料小罐
     holder.add(new THREE.Mesh(GEO.drinkCan, MAT.drink));
-  } else if (kind === 'ammoRifle' || kind === 'ammoSmg' || kind === 'ammoSniper' || kind === 'ammoPistol') {
+  } else if (kind === 'ammoRifle' || kind === 'ammoSmg' || kind === 'ammoSniper' || kind === 'ammoPistol' || kind === 'ammoShotgun') {
     // 分类弹药盒: 深灰盒体 + 枪种色带
-    const t = kind === 'ammoRifle' ? 'rifle' : kind === 'ammoSmg' ? 'smg' : kind === 'ammoSniper' ? 'sniper' : 'pistol';
+    const t = kind === 'ammoRifle' ? 'rifle' : kind === 'ammoSmg' ? 'smg' : kind === 'ammoSniper' ? 'sniper' : kind === 'ammoShotgun' ? 'shotgun' : 'pistol';
     holder.add(new THREE.Mesh(GEO.ammo, MAT.ammoBody));
     holder.add(new THREE.Mesh(GEO.ammoBand, bandMat(t)));
   } else {
@@ -143,7 +145,7 @@ function buildLootMesh(kind: LootKind): THREE.Group {
 }
 
 export function isWeaponKind(kind: LootKind): kind is WeaponId | 'knife' {
-  return kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol' || kind === 'knife';
+  return kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun' || kind === 'knife';
 }
 
 export class LootManager {
@@ -196,11 +198,12 @@ export class LootManager {
     return it ? 1 : 0;
   }
 
-  // 野外枪支稀有度: 手枪/冲锋枪常见, 步枪少见, 狙击稀有
+  // 野外枪支稀有度: 手枪/冲锋枪常见, 步枪少见, 狙击稀有, 霰弹补充近战位
   private rollOutdoorGun(): LootKind {
     const r = Math.random();
-    if (r < 0.32) return 'pistol';
-    if (r < 0.62) return 'smg';
+    if (r < 0.28) return 'pistol';
+    if (r < 0.52) return 'smg';
+    if (r < 0.68) return 'shotgun';
     if (r < 0.88) return 'rifle';
     return 'sniper';
   }
@@ -330,12 +333,13 @@ export class LootManager {
     return spawned;
   }
 
-  // 弹药包按类型子掷: 步枪弹/冲锋枪弹偏多
+  // 弹药包按类型子掷: 步枪弹/冲锋枪弹偏多, 霰弹少量
   private rollAmmo(): LootKind {
     const r = Math.random();
-    if (r < 0.35) return 'ammoRifle';
-    if (r < 0.65) return 'ammoSmg';
-    if (r < 0.85) return 'ammoPistol';
+    if (r < 0.3) return 'ammoRifle';
+    if (r < 0.58) return 'ammoSmg';
+    if (r < 0.78) return 'ammoPistol';
+    if (r < 0.92) return 'ammoShotgun';
     return 'ammoSniper';
   }
 
@@ -343,10 +347,11 @@ export class LootManager {
     const r = Math.random();
     if (table === 'premium') {
       // 二楼: 偏高级枪, 三级甲只在这里像样地刷
-      if (r < 0.28) return 'rifle';
-      if (r < 0.51) return 'sniper';
-      if (r < 0.64) return 'smg';
-      if (r < 0.69) return 'frag';
+      if (r < 0.26) return 'rifle';
+      if (r < 0.46) return 'sniper';
+      if (r < 0.56) return 'shotgun';
+      if (r < 0.66) return 'smg';
+      if (r < 0.7) return 'frag';
       if (r < 0.74) return 'smoke';
       if (r < 0.77) return 'helmet3';
       if (r < 0.8) return 'vest3';
@@ -361,37 +366,39 @@ export class LootManager {
     }
     if (table === 'indoor') {
       if (r < 0.15) return 'rifle';
-      if (r < 0.27) return 'smg';
-      if (r < 0.33) return 'sniper';
-      if (r < 0.41) return 'pistol';
-      if (r < 0.47) return 'knife';
-      if (r < 0.52) return 'frag';
-      if (r < 0.57) return 'smoke';
-      if (r < 0.62) return 'helmet1';
-      if (r < 0.67) return 'vest1';
-      if (r < 0.69) return 'helmet2';
-      if (r < 0.71) return 'vest2';
-      if (r < 0.83) return this.rollAmmo();
-      if (r < 0.89) return 'pack1';
-      if (r < 0.91) return 'pack2';
+      if (r < 0.26) return 'smg';
+      if (r < 0.35) return 'shotgun';
+      if (r < 0.4) return 'sniper';
+      if (r < 0.47) return 'pistol';
+      if (r < 0.52) return 'knife';
+      if (r < 0.56) return 'frag';
+      if (r < 0.6) return 'smoke';
+      if (r < 0.65) return 'helmet1';
+      if (r < 0.7) return 'vest1';
+      if (r < 0.72) return 'helmet2';
+      if (r < 0.74) return 'vest2';
+      if (r < 0.85) return this.rollAmmo();
+      if (r < 0.9) return 'pack1';
+      if (r < 0.92) return 'pack2';
       if (r < 0.97) return 'bandage';
       if (r < 0.99) return 'drink';
       return 'medkit';
     }
-    if (r < 0.08) return 'rifle';
-    if (r < 0.16) return 'smg';
-    if (r < 0.21) return 'sniper';
-    if (r < 0.28) return 'pistol';
-    if (r < 0.34) return 'knife';
-    if (r < 0.39) return 'frag';
-    if (r < 0.44) return 'smoke';
-    if (r < 0.5) return 'helmet1';
-    if (r < 0.56) return 'vest1';
-    if (r < 0.58) return 'helmet2';
-    if (r < 0.6) return 'vest2';
-    if (r < 0.78) return this.rollAmmo();
-    if (r < 0.83) return 'pack1';
-    if (r < 0.85) return 'pack2';
+    if (r < 0.07) return 'rifle';
+    if (r < 0.14) return 'smg';
+    if (r < 0.21) return 'shotgun';
+    if (r < 0.25) return 'sniper';
+    if (r < 0.31) return 'pistol';
+    if (r < 0.37) return 'knife';
+    if (r < 0.42) return 'frag';
+    if (r < 0.47) return 'smoke';
+    if (r < 0.53) return 'helmet1';
+    if (r < 0.59) return 'vest1';
+    if (r < 0.61) return 'helmet2';
+    if (r < 0.63) return 'vest2';
+    if (r < 0.8) return this.rollAmmo();
+    if (r < 0.85) return 'pack1';
+    if (r < 0.87) return 'pack2';
     if (r < 0.94) return 'bandage';
     if (r < 0.98) return 'drink';
     return 'medkit';
@@ -412,16 +419,16 @@ export class LootManager {
       this.root.add(item.group);
       item.kind = kind;
     }
-    if (kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol') {
+    if (kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun') {
       item.mag = Math.max(0, mag); // 地面武器默认空弹匣; 死亡掉落携带剩余弹匣
       item.ammo = Math.max(0, ammo);
     } else if (kind === 'frag' || kind === 'smoke') {
       item.mag = -1;
       // 投掷物掉落用 ammo 字段携带堆叠数(死亡掉落时为 >1 的 stack)
       item.ammo = Math.max(1, ammo);
-    } else if (kind === 'ammoRifle' || kind === 'ammoSmg' || kind === 'ammoSniper' || kind === 'ammoPistol') {
+    } else if (kind === 'ammoRifle' || kind === 'ammoSmg' || kind === 'ammoSniper' || kind === 'ammoPistol' || kind === 'ammoShotgun') {
       item.mag = -1;
-      const t = kind === 'ammoRifle' ? 'rifle' : kind === 'ammoSmg' ? 'smg' : kind === 'ammoSniper' ? 'sniper' : 'pistol';
+      const t = kind === 'ammoRifle' ? 'rifle' : kind === 'ammoSmg' ? 'smg' : kind === 'ammoSniper' ? 'sniper' : kind === 'ammoShotgun' ? 'shotgun' : 'pistol';
       item.ammo = ammo > 0 ? ammo : AMMO_BOX[t]; // 弹药包: ammo 字段为剩余弹量
     } else {
       item.mag = -1;

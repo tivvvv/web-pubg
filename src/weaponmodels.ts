@@ -13,9 +13,9 @@ export interface WeaponModel {
   mag: THREE.Object3D | null; // 弹匣部件(换弹动画隐藏/重现)
 }
 
-// 枪口火光缩放(狙击更大, 手枪更小)
+// 枪口火光缩放(狙击更大, 手枪更小, 霰弹最大)
 export const MUZZLE_SCALE: Record<WeaponId, number> = {
-  pistol: 0.65, smg: 0.85, rifle: 1.0, sniper: 1.5,
+  pistol: 0.65, smg: 0.85, rifle: 1.0, sniper: 1.5, shotgun: 1.35,
 };
 
 // 共享几何: 单位盒 / 单位圆柱(沿 Y, 半径 1 高 1) / 单位球
@@ -225,6 +225,33 @@ function buildSmoke(): WeaponModel {
   return { group: g, muzzle: muzzleAt(g, 0, 0.1, 0), mag: null };
 }
 
+// ── S686 双管霰弹枪 (~0.75m): 并排双管/木制枪托+护木/中折铰链/珠形准星 ──
+function buildShotgun(): WeaponModel {
+  const g = new THREE.Group();
+  // 机匣(铰链块) + 顶部锁扣
+  b(g, MAT_DK, 0.06, 0.075, 0.16, 0, 0.02, -0.02);
+  b(g, MAT_LT, 0.02, 0.02, 0.05, 0, 0.068, -0.06);           // 开锁拨杆
+  // 并排双管(左右各一) + 上下层板
+  cz(g, MAT_DK, 0.013, 0.52, -0.018, 0.035, 0.32);
+  cz(g, MAT_DK, 0.013, 0.52, 0.018, 0.035, 0.32);
+  b(g, MAT_DK, 0.05, 0.008, 0.52, 0, 0.048, 0.32);           // 管间上肋条
+  // 木制护木(前段包裹双管) + 木纹深色下托
+  b(g, MAT_TN, 0.058, 0.055, 0.24, 0, 0.012, 0.3);
+  b(g, MAT_DK, 0.008, 0.02, 0.5, 0, -0.012, 0.32);           // 管下衬
+  // 中折铰链暗示(管尾与机匣之间的亮环)
+  cz(g, MAT_LT, 0.021, 0.02, -0.018, 0.035, 0.06);
+  cz(g, MAT_LT, 0.021, 0.02, 0.018, 0.035, 0.06);
+  // 珠形准星
+  b(g, MAT_LT, 0.007, 0.014, 0.007, 0, 0.062, 0.56);
+  // 木制枪托(后收细) + 托底板
+  b(g, MAT_TN, 0.052, 0.075, 0.24, 0, 0.005, -0.22);
+  b(g, MAT_TN, 0.045, 0.09, 0.06, 0, -0.01, -0.36);
+  b(g, MAT_DK, 0.047, 0.1, 0.014, 0, -0.01, -0.395);         // 托底板
+  b(g, MAT_DK, 0.006, 0.026, 0.008, 0, -0.042, 0.01);        // 扳机
+  b(g, MAT_DK, 0.008, 0.006, 0.06, 0, -0.058, -0.01);        // 扳机护圈底
+  return { group: g, muzzle: muzzleAt(g, 0, 0.035, 0.59), mag: null };
+}
+
 // 原型缓存: 每型只建一次, 之后一律 clone(true)(共享几何/材质)
 const protos = new Map<WeaponModelId, WeaponModel>();
 function proto(id: WeaponModelId): WeaponModel {
@@ -234,6 +261,7 @@ function proto(id: WeaponModelId): WeaponModel {
       case 'rifle': p = buildRifle(); break;
       case 'smg': p = buildSmg(); break;
       case 'sniper': p = buildSniper(); break;
+      case 'shotgun': p = buildShotgun(); break;
       case 'pistol': p = buildPistol(); break;
       case 'knife': p = buildKnife(); break;
       case 'frag': p = buildFrag(); break;

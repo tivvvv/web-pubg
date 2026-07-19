@@ -55,7 +55,7 @@ export function carryCapacity(pack: { level: PackLevel } | null): number {
 }
 
 export function carryWeight(c: CarryState): number {
-  const rounds = c.ammo.pistol + c.ammo.rifle + c.ammo.smg + c.ammo.sniper;
+  const rounds = c.ammo.pistol + c.ammo.rifle + c.ammo.smg + c.ammo.sniper + c.ammo.shotgun;
   return (
     rounds * ROUND_WEIGHT +
     c.heals.bandage * HEAL_WEIGHT.bandage +

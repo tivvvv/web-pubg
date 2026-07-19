@@ -464,6 +464,7 @@ export class BotController {
     const gun = c.heldGun();
     if (!gun || this.reloadT > 0 || !this.losOk) return;
     if (angleDiff(c.yaw, desiredYaw) > 0.22) return;
+    if (gun.def.id === 'shotgun' && dist > 26) return; // 霰弹只在近距离开火(远则继续逼近)
 
     if (this.burstLeft > 0) {
       this.shotT -= dt;

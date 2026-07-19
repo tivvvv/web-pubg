@@ -123,7 +123,7 @@ import { TeammateController } from './teammate';
 import { VEHICLE_SPEC, VehicleManager, type Vehicle } from './vehicles';
 import type { AmmoType, DestructibleLike, GameStats, LootKind, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
-import { AMMO_BOX, AMMO_LOOT_KIND, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan, makeShotResult } from './weapons';
+import { AMMO_BOX, AMMO_LOOT_KIND, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan, makeShotResult, pelletFalloff } from './weapons';
 import { MUZZLE_SCALE } from './weaponmodels';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
@@ -433,7 +433,7 @@ export class Game {
           mag: '',
         };
       }),
-      ammo: (['rifle', 'smg', 'sniper', 'pistol'] as const).map((t) => ({
+      ammo: (['rifle', 'smg', 'sniper', 'pistol', 'shotgun'] as const).map((t) => ({
         name: AMMO_NAME[t],
         count: c.ammo[t],
       })),
@@ -1016,54 +1016,71 @@ export class Game {
     if (!gun || gun.mag <= 0) return false;
     gun.mag--;
     shooter.lastShotT = this.now;
-    this.tmpA.copy(dir);
-    applySpread(this.tmpA, spread, this.tmpEnd);
-    hitscan(this.world, this.chars, shooter, origin, this.tmpA, 260, this.staticHit, this.shotRes);
     shooter.muzzleWorld(this.tmpMuzzle);
     this.effects.muzzleFlash(this.tmpMuzzle, MUZZLE_SCALE[gun.def.id]);
-    const res = this.shotRes;
-    // 载具命中判定: 命中比当前更近且非"打中该车司机"时, 视为车身中弹
-    const vHit = this.vehicles.raycast(origin, this.tmpA, res.hit ? res.t : 260);
-    if (vHit && (!res.hit || vHit.t < res.t) && !(res.char && res.char === vHit.v.driver && res.t < vHit.t + 0.6)) {
-      this.tmpEnd.copy(origin).addScaledVector(this.tmpA, vHit.t);
-      this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
-      this.effects.impactSpark(this.tmpEnd);
-      this.vehicles.damage(vHit.v, gun.def.damage);
-    } else if (res.hit) {
-      this.effects.tracer(this.tmpMuzzle, res.point, 0xffd27a);
-      if (res.char) {
-        const victim = res.char;
-        let dmg = gun.def.damage * (res.head ? gun.def.headMult : 1);
-        if (!shooter.isPlayer && victim.isPlayer) dmg *= BOT_VS_PLAYER_DMG;
-        this.effects.impactBlood(res.point);
-        if (shooter.isPlayer) {
-          this.damageDealt += dmg;
-          this.audio.hit(res.head);
-          this.hud.hitmarker(res.head ? 'head' : 'hit');
-        }
-        this.damageChar(victim, dmg, res.head, shooter);
-        if (!victim.alive && shooter.isPlayer) this.hud.hitmarker('kill');
-      } else if (res.surface === 'door' || res.surface === 'window') {
-        // 可破坏物: 扣血 + 木屑/玻璃粒子音效
-        const d = this.staticHit.destruct;
-        if (d && d.alive) {
-          this.hitDestructible(d, gun.def.damage, res.point);
-        } else {
+    const pellets = gun.def.pellets ?? 1;
+    // 霰弹: 固定锥形散布(不吃机瞄), 枪口烟; 单发枪保持原逻辑
+    const cone = pellets > 1 ? gun.def.spreadHip : spread;
+    if (pellets > 1) this.effects.impactDust(this.tmpMuzzle);
+    let anyChar = false;
+    let anyHead = false;
+    let anyKill = false;
+    for (let p = 0; p < pellets; p++) {
+      this.tmpA.copy(dir);
+      applySpread(this.tmpA, cone, this.tmpEnd);
+      hitscan(this.world, this.chars, shooter, origin, this.tmpA, 260, this.staticHit, this.shotRes);
+      const res = this.shotRes;
+      // 载具命中判定: 命中比当前更近且非"打中该车司机"时, 视为车身中弹
+      const vHit = this.vehicles.raycast(origin, this.tmpA, res.hit ? res.t : 260);
+      if (vHit && (!res.hit || vHit.t < res.t) && !(res.char && res.char === vHit.v.driver && res.t < vHit.t + 0.6)) {
+        this.tmpEnd.copy(origin).addScaledVector(this.tmpA, vHit.t);
+        if (pellets === 1) this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
+        this.effects.impactSpark(this.tmpEnd);
+        this.vehicles.damage(vHit.v, gun.def.damage * pelletFalloff(gun.def, vHit.t));
+      } else if (res.hit) {
+        if (pellets === 1) this.effects.tracer(this.tmpMuzzle, res.point, 0xffd27a);
+        if (res.char) {
+          const victim = res.char;
+          const dmg = gun.def.damage * pelletFalloff(gun.def, res.t) * (res.head ? gun.def.headMult : 1)
+            * (!shooter.isPlayer && victim.isPlayer ? BOT_VS_PLAYER_DMG : 1);
+          if (dmg > 0) {
+            this.effects.impactBlood(res.point);
+            if (shooter.isPlayer) {
+              this.damageDealt += dmg;
+              anyChar = true;
+              if (res.head) anyHead = true;
+            }
+            this.damageChar(victim, dmg, res.head, shooter);
+            if (!victim.alive && shooter.isPlayer) anyKill = true;
+          }
+        } else if (res.surface === 'door' || res.surface === 'window') {
+          // 可破坏物: 扣血 + 木屑/玻璃粒子音效
+          const d = this.staticHit.destruct;
+          if (d && d.alive) {
+            this.hitDestructible(d, gun.def.damage, res.point);
+          } else {
+            this.effects.impactDust(res.point);
+          }
+        } else if (res.surface === 'terrain' || res.surface === 'floor') {
           this.effects.impactDust(res.point);
+        } else if (res.surface === 'rock') {
+          this.effects.impactRock(res.point);
+        } else {
+          this.effects.impactSpark(res.point);
         }
-      } else if (res.surface === 'terrain' || res.surface === 'floor') {
-        this.effects.impactDust(res.point);
-      } else if (res.surface === 'rock') {
-        this.effects.impactRock(res.point);
-      } else {
-        this.effects.impactSpark(res.point);
+        // 弹着点入水: 白色溅沫
+        if (res.point.y < WATER_Y) this.effects.splash(res.point);
+      } else if (pellets === 1) {
+        this.tmpEnd.copy(origin).addScaledVector(this.tmpA, 260);
+        this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
       }
-      // 弹着点入水: 白色溅沫
-      if (res.point.y < WATER_Y) this.effects.splash(res.point);
-    } else {
-      this.tmpEnd.copy(origin).addScaledVector(this.tmpA, 260);
-      this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
     }
+    // 命中反馈(玩家): 每发只响一次(霰弹多颗合并)
+    if (shooter.isPlayer && anyChar) {
+      this.audio.hit(anyHead);
+      this.hud.hitmarker(anyHead ? 'head' : 'hit');
+    }
+    if (anyKill) this.hud.hitmarker('kill');
     // 音效: 他人枪声按距离/方位衰减
     if (shooter.isPlayer) {
       this.audio.shot(gun.def.id, 0, 0);
@@ -1368,12 +1385,12 @@ export class Game {
     } else if (victim.melee.def.id === 'knife') {
       this.loot.spawn('knife', gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
     } else {
-      const kinds: LootKind[] = ['ammoRifle', 'ammoSmg', 'ammoPistol', 'ammoSniper'];
+      const kinds: LootKind[] = ['ammoRifle', 'ammoSmg', 'ammoPistol', 'ammoSniper', 'ammoShotgun'];
       const kind: LootKind = Math.random() < 0.4 ? 'bandage' : (kinds[Math.floor(Math.random() * kinds.length)] as LootKind);
       this.loot.spawn(kind, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
     }
     // 弹药储备按类型成包掉落
-    for (const t of ['pistol', 'rifle', 'smg', 'sniper'] as const) {
+    for (const t of ['pistol', 'rifle', 'smg', 'sniper', 'shotgun'] as const) {
       const n = victim.ammo[t];
       if (n > 0) this.loot.spawn(AMMO_LOOT_KIND[t], gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7), -1, n);
     }

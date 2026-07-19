@@ -118,6 +118,11 @@ export class AudioSys {
         this.noiseBurst(0.85 * att, pan, 420, 0.5, 0.38);
         this.thump(0.6 * att, pan, 130, 38, 0.32);
         break;
+      case 'shotgun':
+        // 霰弹: 低沉轰响(比步枪更低频更厚)
+        this.noiseBurst(0.75 * att, pan, 380, 0.6, 0.3);
+        this.thump(0.6 * att, pan, 120, 30, 0.3);
+        break;
     }
   }
 
@@ -138,6 +143,14 @@ export class AudioSys {
   reload(): void {
     this.blip(300, 180, 0.05, 0.15, 'square');
     window.setTimeout(() => this.blip(420, 300, 0.05, 0.15, 'square'), 160);
+  }
+
+  // 双管霰弹装填: 开膛 + 两次塞弹 + 合膛(对位 2.6s 装填)
+  reloadShotgun(): void {
+    this.blip(260, 180, 0.06, 0.16, 'square'); // 开膛
+    window.setTimeout(() => this.blip(520, 380, 0.04, 0.18, 'square'), 700);  // 第一发
+    window.setTimeout(() => this.blip(520, 380, 0.04, 0.18, 'square'), 1600); // 第二发
+    window.setTimeout(() => this.blip(340, 260, 0.06, 0.18, 'square'), 2300); // 合膛
   }
 
   empty(): void {
