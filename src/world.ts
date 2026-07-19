@@ -31,6 +31,7 @@ export interface Platform {
 export class World {
   readonly colliders: Collider[] = [];
   readonly cyls: Extract<Collider, { kind: 'cyl' }>[] = [];
+  readonly boatPts: { x: number; z: number }[] = []; // 搁浅渔船(野外战利品锚点)
   readonly aabbs: Extract<Collider, { kind: 'aabb' }>[] = [];
   readonly platforms: Platform[] = []; // 楼梯踏步等"可站立但无碰撞体"平台
   readonly buildings = new Buildings();
@@ -609,6 +610,7 @@ export class World {
       boatMesh.setMatrixAt(boatCount * 3 + 2, m4);
       boatCount++;
       this.addCollider({ kind: 'cyl', x, z, r: 1.7, y0: h - 0.3, y1: h + 0.9, tag: 'rock' });
+      this.boatPts.push({ x, z });
     }
     boatMesh.count = boatCount * 3;
     boatMesh.instanceMatrix.needsUpdate = true;

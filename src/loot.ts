@@ -6,7 +6,7 @@ import { AMMO_BOX, AMMO_CLASS_COLOR, AMMO_LOOT_KIND, WEAPONS } from './weapons';
 import { armorFromLoot, buildHelmetModel, buildVestModel, isArmorKind } from './armor';
 import { buildPackModel, isPackKind, packLevelFromLoot } from './backpack';
 import { buildWeaponModel } from './weaponmodels';
-import { WATER_Y, type World } from './world';
+import { WATER_Y, riverZAt, type World } from './world';
 
 export interface LootItem {
   kind: LootKind;
@@ -16,9 +16,10 @@ export interface LootItem {
   phase: number;
   mag: number;   // 枪械: 已装弹数(-1 = 非武器)
   ammo: number;  // 枪械: 附带备弹; 弹药包: 剩余弹量; 叠放物: 数量; 护具: 耐久
+  outdoor: boolean; // 野外锚点刷新(枪支/独立弹药), 用于统计与调试
 }
 
-const LOOT_CAP = 175; // 武器+配套弹药配对后总数上升
+const LOOT_CAP = 212; // 室内配对 + 野外补齐 + 野外武器/弹药新增
 
 // 共享几何/材质
 const GEO = {
@@ -165,7 +166,7 @@ export class LootManager {
       const kind = this.rollKind(s.premium ? 'premium' : 'indoor');
       this.spawn(kind, s.x, s.y, s.z);
       count++;
-      count += this.pairAmmo(kind, s.x, s.y, s.z, 0.8);
+      count += this.pairAmmo(world, kind, s.x, s.y, s.z, 0.8);
     }
     // 野外散布补齐
     for (let t = 0; t < 1200 && count < 138; t++) {
@@ -176,18 +177,157 @@ export class LootManager {
       const y = world.getHeight(x, z);
       this.spawn(kind, x, y, z);
       count++;
-      count += this.pairAmmo(kind, x, y, z, 0.6);
+      count += this.pairAmmo(world, kind, x, y, z, 0.6);
     }
+    // 野外武器/弹药锚点(纯补充, 不挤占室内与野外通用刷量)
+    count += this.spawnOutdoorGuns(world);
   }
 
   // 地面武器按概率在 1~2m 内配一盒匹配弹药(返回生成数)
-  private pairAmmo(kind: LootKind, x: number, y: number, z: number, chance: number): number {
+  // sampleTerrain: 野外配对时弹药按自身落点地形取高(坡地不埋不浮)
+  private pairAmmo(world: World, kind: LootKind, x: number, y: number, z: number, chance: number, sampleTerrain = false): number {
     if (!isWeaponKind(kind) || kind === 'knife') return 0;
     if (Math.random() >= chance) return 0;
     const a = Math.random() * Math.PI * 2;
     const d = 0.8 + Math.random() * 1.2;
-    const it = this.spawn(AMMO_LOOT_KIND[WEAPONS[kind].ammo], x + Math.cos(a) * d, y, z + Math.sin(a) * d);
+    const ax = x + Math.cos(a) * d;
+    const az = z + Math.sin(a) * d;
+    const it = this.spawn(AMMO_LOOT_KIND[WEAPONS[kind].ammo], ax, sampleTerrain ? world.getHeight(ax, az) : y, az);
     return it ? 1 : 0;
+  }
+
+  // 野外枪支稀有度: 手枪/冲锋枪常见, 步枪少见, 狙击稀有
+  private rollOutdoorGun(): LootKind {
+    const r = Math.random();
+    if (r < 0.32) return 'pistol';
+    if (r < 0.62) return 'smg';
+    if (r < 0.88) return 'rifle';
+    return 'sniper';
+  }
+
+  // 野外锚点候选: 村边/桥两端/搁浅渔船/岩石草垛旁/树丛/山顶
+  private outdoorAnchors(world: World): { x: number; z: number }[] {
+    const pts: { x: number; z: number }[] = [];
+    // 村边(地块外 5~12m)
+    for (const p of world.buildings.plots) {
+      for (let k = 0; k < 2; k++) {
+        const side = (Math.random() * 4) | 0;
+        const m = rand(5, 12);
+        if (side === 0) pts.push({ x: p.minX - m, z: rand(p.minZ, p.maxZ) });
+        else if (side === 1) pts.push({ x: p.maxX + m, z: rand(p.minZ, p.maxZ) });
+        else if (side === 2) pts.push({ x: rand(p.minX, p.maxX), z: p.minZ - m });
+        else pts.push({ x: rand(p.minX, p.maxX), z: p.maxZ + m });
+      }
+    }
+    // 桥两端(双桥 x=-50 / 170)
+    for (const bx of [-50, 170]) {
+      const rz = riverZAt(bx);
+      pts.push({ x: bx + rand(-2.5, 2.5), z: rz - rand(15.5, 19) });
+      pts.push({ x: bx + rand(-2.5, 2.5), z: rz + rand(15.5, 19) });
+    }
+    // 搁浅渔船旁
+    for (const b of world.boatPts) {
+      pts.push({ x: b.x + rand(-3, 3), z: b.z + rand(-3, 3) });
+    }
+    // 岩石/草垛旁(岩柱碰撞体, 半径外 1~2.5m)
+    const rocks = world.cyls.filter((c) => c.tag === 'rock');
+    for (let k = 0; k < 8 && rocks.length > 0; k++) {
+      const c = rocks[(Math.random() * rocks.length) | 0] as (typeof rocks)[number];
+      const a = Math.random() * Math.PI * 2;
+      pts.push({ x: c.x + Math.cos(a) * (c.r + rand(1, 2.5)), z: c.z + Math.sin(a) * (c.r + rand(1, 2.5)) });
+    }
+    // 树丛(12m 内 ≥3 棵树)
+    let clusters = 0;
+    for (let t = 0; t < 80 && clusters < 6; t++) {
+      const x = rand(-320, 320);
+      const z = rand(-320, 320);
+      let n = 0;
+      for (const c of world.cyls) {
+        if (c.tag !== 'tree') continue;
+        const dx = x - c.x;
+        const dz = z - c.z;
+        if (dx * dx + dz * dz < 144) {
+          n++;
+          if (n >= 3) break;
+        }
+      }
+      if (n >= 3) {
+        pts.push({ x, z });
+        clusters++;
+      }
+    }
+    // 山顶(高于四周 8m 邻点)
+    let hills = 0;
+    for (let t = 0; t < 80 && hills < 4; t++) {
+      const x = rand(-300, 300);
+      const z = rand(-300, 300);
+      const h = world.getHeight(x, z);
+      if (h < 7.5) continue;
+      if (world.getHeight(x + 8, z) > h || world.getHeight(x - 8, z) > h ||
+        world.getHeight(x, z + 8) > h || world.getHeight(x, z - 8) > h) continue;
+      pts.push({ x, z });
+      hills++;
+    }
+    return pts;
+  }
+
+  // 野外武器生成: ~16 把枪(50% 配一盒匹配弹药) + 10 个独立弹药包
+  private spawnOutdoorGuns(world: World): number {
+    const anchors = this.outdoorAnchors(world);
+    // 洗牌
+    for (let i = anchors.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const t = anchors[i] as { x: number; z: number };
+      anchors[i] = anchors[j] as { x: number; z: number };
+      anchors[j] = t;
+    }
+    const used: { x: number; z: number }[] = [];
+    // 锚点可用性: 不在水里/房里/碰撞体上, 与已放点及既有战利品保持距离
+    const anchorOk = (a: { x: number; z: number }, gap: number): boolean => {
+      if (!world.pointFree(a.x, a.z, 0.5, WATER_Y + 0.3, 14)) return false;
+      if (world.inPlot(a.x, a.z, 1.5)) return false;
+      for (const u of used) {
+        const dx = a.x - u.x;
+        const dz = a.z - u.z;
+        if (dx * dx + dz * dz < gap * gap) return false;
+      }
+      for (const it of this.items) {
+        if (!it.active) continue;
+        const dx = a.x - it.group.position.x;
+        const dz = a.z - it.group.position.z;
+        if (dx * dx + dz * dz < 4) return false;
+      }
+      return true;
+    };
+    let spawned = 0;
+    let guns = 0;
+    for (const a of anchors) {
+      if (guns >= 16) break;
+      if (!anchorOk(a, 6)) continue;
+      const kind = this.rollOutdoorGun();
+      const y = world.getHeight(a.x, a.z);
+      const it = this.spawn(kind, a.x, y, a.z);
+      if (!it) break;
+      it.outdoor = true;
+      used.push(a);
+      guns++;
+      spawned++;
+      spawned += this.pairAmmo(world, kind, a.x, y, a.z, 0.5, true);
+    }
+    let packs = 0;
+    for (const a of anchors) {
+      if (packs >= 10) break;
+      if (!anchorOk(a, 2)) continue;
+      const kind = this.rollAmmo();
+      const y = world.getHeight(a.x, a.z);
+      const it = this.spawn(kind, a.x, y, a.z);
+      if (!it) break;
+      it.outdoor = true;
+      used.push(a);
+      packs++;
+      spawned++;
+    }
+    return spawned;
   }
 
   // 弹药包按类型子掷: 步枪弹/冲锋枪弹偏多
@@ -262,7 +402,7 @@ export class LootManager {
     let item = this.items.find((i) => !i.active);
     if (!item) {
       if (this.items.length >= LOOT_CAP) return null;
-      item = { kind, group: buildLootMesh(kind), active: false, baseY: 0, phase: 0, mag: -1, ammo: 0 };
+      item = { kind, group: buildLootMesh(kind), active: false, baseY: 0, phase: 0, mag: -1, ammo: 0, outdoor: false };
       this.items.push(item);
       this.root.add(item.group);
     } else {
@@ -289,6 +429,7 @@ export class LootManager {
       item.ammo = Math.max(0, ammo);
     }
     item.active = true;
+    item.outdoor = false;
     item.baseY = groundY + 1.0;
     item.phase = Math.random() * Math.PI * 2;
     item.group.position.set(x, item.baseY, z);
