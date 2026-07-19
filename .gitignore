@@ -29,3 +29,6 @@ test-results
 *.njsproj
 *.sln
 *.sw?
+
+# Review screenshots
+shots/

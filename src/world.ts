@@ -277,17 +277,24 @@ export class World {
     const trunkMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.2, 0.34, 3.4, 6),
       new THREE.MeshLambertMaterial({ color: 0x6b4a2e }),
-      treeCap,
+      treeCap * 2, // 两段收分树干
     );
     const canopyMat = new THREE.MeshLambertMaterial({ color: 0x3f7a33 });
-    const canopyMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(1.7, 4.4, 7), canopyMat, treeCap);
+    const canopyMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(1.7, 4.4, 7), canopyMat, treeCap * 2);
     const broadMat = new THREE.MeshLambertMaterial({ color: 0x568c3f });
-    const broadMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.9, 1), broadMat, treeCap);
+    const broadMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.9, 1), broadMat, treeCap * 3);
+    // 枝丫残桩(小斜枝)
+    const branchMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.09, 0.85, 0.09),
+      new THREE.MeshLambertMaterial({ color: 0x5e4026 }),
+      treeCap * 2,
+    );
     this.addSway(canopyMat, 0.09, -2.0, 2.5);
     this.addSway(broadMat, 0.09, -1.5, 2.0);
     trunkMesh.castShadow = true;
     canopyMesh.castShadow = true;
     broadMesh.castShadow = true;
+    branchMesh.castShadow = true;
     const placedPts: number[] = [];
     const canopyC = new THREE.Color();
     let pineCount = 0;
@@ -306,34 +313,70 @@ export class World {
       const s = 0.8 + rng() * 0.55;
       q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
       if (rng() < 0.6) {
-        // 松树: 锥形树冠
+        // 松树: 双段树干 + 双层锥冠
         vPos.set(x, h + 1.7 * s, z);
         vScale.set(s, s, s);
         m4.compose(vPos, q0, vScale);
-        trunkMesh.setMatrixAt(treeCount, m4);
-        vPos.set(x, h + (3.4 + 2.0) * s, z);
+        trunkMesh.setMatrixAt(treeCount * 2, m4);
+        // 上段细干(伸入树冠)
+        vPos.set(x, h + 3.9 * s, z);
+        vScale.set(s * 0.58, s * 0.62, s * 0.58);
         m4.compose(vPos, q0, vScale);
-        canopyMesh.setMatrixAt(pineCount, m4);
+        trunkMesh.setMatrixAt(treeCount * 2 + 1, m4);
+        // 主冠 + 顶冠
+        vPos.set(x, h + (3.4 + 2.0) * s, z);
+        vScale.set(s, s, s);
+        m4.compose(vPos, q0, vScale);
+        canopyMesh.setMatrixAt(pineCount * 2, m4);
         const g = 0.75 + rng() * 0.5;
         canopyC.setRGB(0.22 * g, 0.42 * g, 0.18 * g);
-        canopyMesh.setColorAt(pineCount, canopyC);
+        canopyMesh.setColorAt(pineCount * 2, canopyC);
+        vPos.set(x, h + (3.4 + 2.0 + 2.3) * s, z);
+        vScale.set(s * 0.58, s * 0.58, s * 0.58);
+        m4.compose(vPos, q0, vScale);
+        canopyMesh.setMatrixAt(pineCount * 2 + 1, m4);
+        canopyMesh.setColorAt(pineCount * 2 + 1, canopyC);
         pineCount++;
       } else {
-        // 阔叶: 树干压矮, 扁球形树冠
+        // 阔叶: 双段树干 + 三团错落树冠
         const st = s * 0.75;
         vPos.set(x, h + 1.7 * st, z);
         vScale.set(s, st, s);
         m4.compose(vPos, q0, vScale);
-        trunkMesh.setMatrixAt(treeCount, m4);
+        trunkMesh.setMatrixAt(treeCount * 2, m4);
+        vPos.set(x, h + 3.9 * st, z);
+        vScale.set(s * 0.6, st * 0.55, s * 0.6);
+        m4.compose(vPos, q0, vScale);
+        trunkMesh.setMatrixAt(treeCount * 2 + 1, m4);
         const cs = s * 1.15;
+        const g = 0.7 + rng() * 0.55;
+        canopyC.setRGB(0.3 * g, 0.5 * g, 0.2 * g);
         vPos.set(x, h + 3.4 * st + 1.15 * cs, z);
         vScale.set(cs, cs * 0.8, cs);
         m4.compose(vPos, q0, vScale);
-        broadMesh.setMatrixAt(broadCount, m4);
-        const g = 0.7 + rng() * 0.55;
-        canopyC.setRGB(0.3 * g, 0.5 * g, 0.2 * g);
-        broadMesh.setColorAt(broadCount, canopyC);
+        broadMesh.setMatrixAt(broadCount * 3, m4);
+        broadMesh.setColorAt(broadCount * 3, canopyC);
+        // 两团偏移小冠
+        vPos.set(x + cs * 0.85, h + 3.4 * st + 1.05 * cs, z + cs * 0.3);
+        vScale.set(cs * 0.68, cs * 0.55, cs * 0.68);
+        m4.compose(vPos, q0, vScale);
+        broadMesh.setMatrixAt(broadCount * 3 + 1, m4);
+        broadMesh.setColorAt(broadCount * 3 + 1, canopyC);
+        vPos.set(x - cs * 0.6, h + 3.4 * st + 1.25 * cs, z - cs * 0.5);
+        vScale.set(cs * 0.55, cs * 0.45, cs * 0.55);
+        m4.compose(vPos, q0, vScale);
+        broadMesh.setMatrixAt(broadCount * 3 + 2, m4);
+        broadMesh.setColorAt(broadCount * 3 + 2, canopyC);
         broadCount++;
+      }
+      // 枝丫残桩 ×2(中下段斜出)
+      for (let bi = 0; bi < 2; bi++) {
+        const ba = rng() * Math.PI * 2;
+        q0.setFromEuler(new THREE.Euler(0.5 + rng() * 0.4, ba, 0));
+        vPos.set(x + Math.sin(ba) * 0.3 * s, h + (1.9 + bi * 0.9) * s, z + Math.cos(ba) * 0.3 * s);
+        vScale.set(s, s, s);
+        m4.compose(vPos, q0, vScale);
+        branchMesh.setMatrixAt(treeCount * 2 + bi, m4);
       }
       treeCount++;
       this.addCollider({ kind: 'cyl', x, z, r: 0.42 * s, y0: h - 0.5, y1: h + 3.4 * s, tag: 'tree' });
@@ -346,31 +389,36 @@ export class World {
     for (let t = 0; t < 4000 && treeCount < treeCap; t++) {
       tryTree((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
-    trunkMesh.count = treeCount;
-    canopyMesh.count = pineCount;
-    broadMesh.count = broadCount;
+    trunkMesh.count = treeCount * 2;
+    canopyMesh.count = pineCount * 2;
+    broadMesh.count = broadCount * 3;
+    branchMesh.count = treeCount * 2;
     trunkMesh.instanceMatrix.needsUpdate = true;
     canopyMesh.instanceMatrix.needsUpdate = true;
     broadMesh.instanceMatrix.needsUpdate = true;
+    branchMesh.instanceMatrix.needsUpdate = true;
     if (canopyMesh.instanceColor) canopyMesh.instanceColor.needsUpdate = true;
     if (broadMesh.instanceColor) broadMesh.instanceColor.needsUpdate = true;
     trunkMesh.computeBoundingSphere();
     canopyMesh.computeBoundingSphere();
     broadMesh.computeBoundingSphere();
+    branchMesh.computeBoundingSphere();
     scene.add(trunkMesh);
     scene.add(canopyMesh);
     scene.add(broadMesh);
+    scene.add(branchMesh);
 
-    // ---- 岩石(西部山地加密) ----
+    // ---- 岩石(西部山地加密; 两种棱角变体, 平直着色) ----
     const rockCap = 200; // 全图 120 + 山地加密 80
-    const rockMesh = new THREE.InstancedMesh(
-      new THREE.IcosahedronGeometry(1, 0),
-      new THREE.MeshLambertMaterial({ color: 0x8f8f8b }),
-      rockCap,
-    );
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x8f8f8b, flatShading: true });
+    const rockMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), rockMat, rockCap);
+    const rockMesh2 = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, rockCap);
     rockMesh.castShadow = true;
     rockMesh.receiveShadow = true;
+    rockMesh2.castShadow = true;
+    rockMesh2.receiveShadow = true;
     let rockCount = 0;
+    let rockCount2 = 0;
     const tryRock = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.3 || h > 15) return false;
@@ -381,25 +429,37 @@ export class World {
       vScale.set(s * (0.8 + rng() * 0.5), sy, s * (0.8 + rng() * 0.5));
       q0.setFromEuler(new THREE.Euler(rng() * 0.4, rng() * Math.PI * 2, rng() * 0.4));
       m4.compose(vPos, q0, vScale);
-      rockMesh.setMatrixAt(rockCount, m4);
       const g = 0.82 + rng() * 0.3;
       canopyC.setRGB(0.56 * g, 0.56 * g, 0.55 * g);
-      rockMesh.setColorAt(rockCount, canopyC);
-      rockCount++;
+      if ((rockCount + rockCount2) % 2 === 0) {
+        rockMesh.setMatrixAt(rockCount, m4);
+        rockMesh.setColorAt(rockCount, canopyC);
+        rockCount++;
+      } else {
+        rockMesh2.setMatrixAt(rockCount2, m4);
+        rockMesh2.setColorAt(rockCount2, canopyC);
+        rockCount2++;
+      }
       this.addCollider({ kind: 'cyl', x, z, r: s * 0.92, y0: h - 1, y1: h + sy * 0.95, tag: 'rock' });
       return true;
     };
     // 山地加密岩
-    for (let t = 0; t < 900 && rockCount < 80; t++) {
+    for (let t = 0; t < 900 && rockCount + rockCount2 < 80; t++) {
       tryRock(-220 + (rng() * 2 - 1) * 120, 20 + (rng() * 2 - 1) * 120);
     }
-    for (let t = 0; t < 2000 && rockCount < rockCap; t++) {
+    for (let t = 0; t < 2000 && rockCount + rockCount2 < rockCap; t++) {
       tryRock((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
     rockMesh.count = rockCount;
+    rockMesh2.count = rockCount2;
     rockMesh.instanceMatrix.needsUpdate = true;
+    rockMesh2.instanceMatrix.needsUpdate = true;
     if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
+    if (rockMesh2.instanceColor) rockMesh2.instanceColor.needsUpdate = true;
+    rockMesh.computeBoundingSphere();
+    rockMesh2.computeBoundingSphere();
     scene.add(rockMesh);
+    scene.add(rockMesh2);
 
     // ---- 灌木丛(无碰撞体: 子弹/移动均可穿过, 供隐蔽判定; 密林加密) ----
     const bushCap = 420; // 全图 300 + 密林加密 120
@@ -552,14 +612,20 @@ export class World {
     cropMesh.computeBoundingSphere();
     scene.add(cropMesh);
 
-    // ---- 干草捆(农场掩体, 圆柱碰撞) ----
+    // ---- 干草捆(农场掩体, 圆柱碰撞) + 捆扎带 ----
     const baleMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(1.05, 1.05, 1.5, 10),
       new THREE.MeshLambertMaterial({ color: 0xc2a54e }),
       14,
     );
+    const strapMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(2.26, 0.16, 2.26),
+      new THREE.MeshLambertMaterial({ color: 0x7a6434 }),
+      28,
+    );
     baleMesh.castShadow = true;
     baleMesh.receiveShadow = true;
+    strapMesh.castShadow = true;
     let baleCount = 0;
     for (let t = 0; t < 300 && baleCount < 12; t++) {
       const x = -40 + (rng() * 2 - 1) * 85;
@@ -567,23 +633,35 @@ export class World {
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.5) continue;
       if (this.inPlot(x, z, 1.5)) continue;
+      const ba = rng() * Math.PI;
       vPos.set(x, h + 1.02, z);
       vScale.set(1, 1, 1);
-      q0.setFromEuler(new THREE.Euler(Math.PI / 2, 0, rng() * Math.PI));
+      q0.setFromEuler(new THREE.Euler(Math.PI / 2, 0, ba));
       m4.compose(vPos, q0, vScale);
       baleMesh.setMatrixAt(baleCount, m4);
+      // 两道捆扎带(沿卧捆轴向 ±0.45)
+      const axX = -Math.sin(ba);
+      const axZ = Math.cos(ba);
+      for (let si = 0; si < 2; si++) {
+        vPos.set(x + axX * (si === 0 ? -0.45 : 0.45), h + 1.02, z + axZ * (si === 0 ? -0.45 : 0.45));
+        m4.compose(vPos, q0, vScale);
+        strapMesh.setMatrixAt(baleCount * 2 + si, m4);
+      }
       baleCount++;
       this.addCollider({ kind: 'cyl', x, z, r: 1.05, y0: h - 0.2, y1: h + 1.4, tag: 'rock' });
     }
     baleMesh.count = baleCount;
+    strapMesh.count = baleCount * 2;
     baleMesh.instanceMatrix.needsUpdate = true;
+    strapMesh.instanceMatrix.needsUpdate = true;
     scene.add(baleMesh);
+    scene.add(strapMesh);
 
-    // ---- 渔村小船(搁浅, 装饰+圆碰撞) ----
+    // ---- 渔村小船(搁浅, 装饰+圆碰撞; 船体+翘头+舱包+座椅+桅杆) ----
     const boatMesh = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshLambertMaterial({ color: 0x7a5c38 }),
-      9,
+      18,
     );
     boatMesh.castShadow = true;
     let boatCount = 0;
@@ -595,25 +673,46 @@ export class World {
       if (this.inPlot(x, z, 2)) continue;
       const rotY = rng() * Math.PI * 2;
       q0.setFromAxisAngle(upY, rotY);
-      // 船体(拉长) + 翘头
+      const fx = Math.sin(rotY);
+      const fz = Math.cos(rotY);
+      const bi = boatCount * 6;
+      // 船体(拉长) + 翘头 + 舱包
       vPos.set(x, h + 0.3, z);
       vScale.set(3.2, 0.62, 1.15);
       m4.compose(vPos, q0, vScale);
-      boatMesh.setMatrixAt(boatCount * 3, m4);
-      vPos.set(x + Math.sin(rotY) * 1.8, h + 0.48, z + Math.cos(rotY) * 1.8);
+      boatMesh.setMatrixAt(bi, m4);
+      boatMesh.setColorAt(bi, canopyC.setRGB(0.48, 0.36, 0.22));
+      vPos.set(x + fx * 1.8, h + 0.48, z + fz * 1.8);
       vScale.set(0.8, 0.5, 0.9);
       m4.compose(vPos, q0, vScale);
-      boatMesh.setMatrixAt(boatCount * 3 + 1, m4);
+      boatMesh.setMatrixAt(bi + 1, m4);
+      boatMesh.setColorAt(bi + 1, canopyC.setRGB(0.45, 0.33, 0.2));
       vPos.set(x, h + 0.62, z);
       vScale.set(0.5, 0.35, 0.6);
       m4.compose(vPos, q0, vScale);
-      boatMesh.setMatrixAt(boatCount * 3 + 2, m4);
+      boatMesh.setMatrixAt(bi + 2, m4);
+      boatMesh.setColorAt(bi + 2, canopyC.setRGB(0.4, 0.3, 0.18));
+      // 横坐板 ×2(沿船向错开)
+      for (let si = 0; si < 2; si++) {
+        vPos.set(x + fx * (si === 0 ? -0.7 : 0.4), h + 0.52, z + fz * (si === 0 ? -0.7 : 0.4));
+        vScale.set(0.85, 0.08, 0.28);
+        m4.compose(vPos, q0, vScale);
+        boatMesh.setMatrixAt(bi + 3 + si, m4);
+        boatMesh.setColorAt(bi + 3 + si, canopyC.setRGB(0.55, 0.42, 0.26));
+      }
+      // 小桅杆
+      vPos.set(x + fx * 1.1, h + 1.15, z + fz * 1.1);
+      vScale.set(0.09, 1.5, 0.09);
+      m4.compose(vPos, q0, vScale);
+      boatMesh.setMatrixAt(bi + 5, m4);
+      boatMesh.setColorAt(bi + 5, canopyC.setRGB(0.35, 0.26, 0.16));
       boatCount++;
       this.addCollider({ kind: 'cyl', x, z, r: 1.7, y0: h - 0.3, y1: h + 0.9, tag: 'rock' });
       this.boatPts.push({ x, z });
     }
-    boatMesh.count = boatCount * 3;
+    boatMesh.count = boatCount * 6;
     boatMesh.instanceMatrix.needsUpdate = true;
+    if (boatMesh.instanceColor) boatMesh.instanceColor.needsUpdate = true;
     scene.add(boatMesh);
 
     // ---- 双桥(木板面+护栏+桥墩, 可走平台) ----
@@ -666,6 +765,19 @@ export class World {
     // 侧护栏(矮碰撞)
     box('wall', bx - 2.12, deckY, z0, bx - 1.92, deckY + 0.85, z1);
     box('wall', bx + 1.92, deckY, z0, bx + 2.12, deckY + 0.85, z1);
+    // 装饰: 板面条纹(深色板缝) + 底托侧梁(无碰撞)
+    const woodDark = new THREE.MeshLambertMaterial({ color: 0x6a4e2e });
+    for (let z = z0 + 0.7; z < z1 - 0.5; z += 1.15) {
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.84, 0.02, 0.07), woodDark);
+      stripe.position.set(bx, deckY + 0.012, z);
+      scene.add(stripe);
+    }
+    const beamL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.3, z1 - z0), woodDark);
+    beamL.position.set(bx - 2.02, deckY - 0.4, (z0 + z1) / 2);
+    scene.add(beamL);
+    const beamR = beamL.clone();
+    beamR.position.x = bx + 2.02;
+    scene.add(beamR);
     // 桥墩(入水立柱)
     for (const pz of [z0 + 4.5, z1 - 4.5]) {
       for (const px of [bx - 1.5, bx + 1.5]) {

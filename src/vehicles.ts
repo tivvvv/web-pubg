@@ -98,9 +98,16 @@ export class Vehicle {
       const body = this.mat(bodyC);
       const dark = this.mat(0x2e2e2e);
       const frame = this.mat(0x3a3f35);
-      const add = (geo: THREE.BoxGeometry, m: THREE.MeshLambertMaterial, x: number, y: number, z: number): THREE.Mesh => {
+      const glass = this.mat(0x9fc4d8);
+      glass.transparent = true;
+      glass.opacity = 0.4;
+      const lampF = this.mat(0xfff0b8);
+      const lampR = this.mat(0xc23a2e);
+      const hub = this.mat(0x8a8f96);
+      const add = (geo: THREE.BoxGeometry, m: THREE.MeshLambertMaterial, x: number, y: number, z: number, rx = 0): THREE.Mesh => {
         const mesh = new THREE.Mesh(geo, m);
         mesh.position.set(x, y, z);
+        mesh.rotation.x = rx;
         mesh.castShadow = true;
         g.add(mesh);
         return mesh;
@@ -113,17 +120,47 @@ export class Vehicle {
       }
       add(new THREE.BoxGeometry(1.55, 0.09, 1.7), body, 0, 1.78, -0.1);
       add(new THREE.BoxGeometry(1.4, 0.5, 0.08), frame, 0, 1.25, -0.85);
-      // 座椅暗示
-      add(new THREE.BoxGeometry(1.2, 0.4, 0.9), dark, 0, 0.98, -0.1);
-      // 轮(前可转向)
-      const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 10);
+      // 挡风玻璃(框在立柱上, 玻璃微透)
+      add(new THREE.BoxGeometry(1.36, 0.52, 0.05), glass, 0, 1.34, 0.56, -0.12);
+      // 前脸: 格栅/大灯/前杠; 尾部: 尾灯/后杠/备胎
+      add(new THREE.BoxGeometry(0.95, 0.2, 0.06), dark, 0, 0.6, 1.58);
+      add(new THREE.BoxGeometry(0.2, 0.12, 0.06), lampF, -0.55, 0.74, 1.57);
+      add(new THREE.BoxGeometry(0.2, 0.12, 0.06), lampF, 0.55, 0.74, 1.57);
+      add(new THREE.BoxGeometry(1.55, 0.12, 0.1), dark, 0, 0.4, 1.62);
+      add(new THREE.BoxGeometry(0.16, 0.1, 0.05), lampR, -0.6, 0.66, -1.56);
+      add(new THREE.BoxGeometry(0.16, 0.1, 0.05), lampR, 0.6, 0.66, -1.56);
+      add(new THREE.BoxGeometry(1.5, 0.12, 0.1), dark, 0, 0.4, -1.62);
+      const spare = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.18, 10), dark);
+      spare.rotation.z = Math.PI / 2;
+      spare.position.set(0, 1.05, -1.66);
+      spare.castShadow = true;
+      g.add(spare);
+      // 后视镜 ×2
+      add(new THREE.BoxGeometry(0.06, 0.12, 0.14), dark, -0.82, 1.48, 0.52);
+      add(new THREE.BoxGeometry(0.06, 0.12, 0.14), dark, 0.82, 1.48, 0.52);
+      // 座舱: 双前座/后排/方向盘
+      add(new THREE.BoxGeometry(0.5, 0.42, 0.45), dark, -0.42, 0.98, 0.1);
+      add(new THREE.BoxGeometry(0.5, 0.42, 0.45), dark, 0.42, 0.98, 0.1);
+      add(new THREE.BoxGeometry(1.25, 0.4, 0.4), dark, 0, 0.98, -0.72);
+      const wheel0 = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.05, 10), dark);
+      wheel0.position.set(-0.5, 1.18, 0.42);
+      wheel0.rotation.x = -0.9;
+      wheel0.castShadow = true;
+      g.add(wheel0);
+      add(new THREE.BoxGeometry(0.06, 0.2, 0.06), dark, -0.5, 1.06, 0.46);
+      // 轮(前可转向): 轮胎 + 侧壁圈 + 轮毂盖
+      const sidewallGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.24, 10);
+      const hubGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.27, 8);
       for (const [wx, wz, front] of [[-0.82, 1.0, 1], [0.82, 1.0, 1], [-0.82, -1.0, 0], [0.82, -1.0, 0]] as const) {
         const w = new THREE.Group();
         w.position.set(wx, 0.34, wz);
-        const tire = new THREE.Mesh(wheelGeo, dark);
+        const tire = new THREE.Mesh(sidewallGeo, dark);
         tire.rotation.z = Math.PI / 2;
         tire.castShadow = true;
         w.add(tire);
+        const cap = new THREE.Mesh(hubGeo, hub);
+        cap.rotation.z = Math.PI / 2;
+        w.add(cap);
         g.add(w);
         this.wheels.push(w);
         if (front) this.steerWheels.push(w);
@@ -132,10 +169,13 @@ export class Vehicle {
       const bodyC = MOTO_COLORS[Math.floor(Math.random() * MOTO_COLORS.length)] as number;
       const body = this.mat(bodyC);
       const dark = this.mat(0x222222);
-      const add = (geo: THREE.BoxGeometry, m: THREE.MeshLambertMaterial, x: number, y: number, z: number, rx = 0): THREE.Mesh => {
+      const chrome = this.mat(0x9aa2ab);
+      const lampF = this.mat(0xfff0b8);
+      const add = (geo: THREE.BoxGeometry, m: THREE.MeshLambertMaterial, x: number, y: number, z: number, rx = 0, rz = 0): THREE.Mesh => {
         const mesh = new THREE.Mesh(geo, m);
         mesh.position.set(x, y, z);
         mesh.rotation.x = rx;
+        mesh.rotation.z = rz;
         mesh.castShadow = true;
         g.add(mesh);
         return mesh;
@@ -147,7 +187,21 @@ export class Vehicle {
       add(new THREE.BoxGeometry(0.55, 0.06, 0.08), dark, 0, 0.95, 0.82);
       add(new THREE.BoxGeometry(0.07, 0.4, 0.07), dark, -0.2, 0.78, 0.8);
       add(new THREE.BoxGeometry(0.07, 0.4, 0.07), dark, 0.2, 0.78, 0.8);
+      // 挡泥板(前后) + 大灯 + 排气管 + 握把胶 + 边撑
+      add(new THREE.BoxGeometry(0.2, 0.05, 0.5), body, 0, 0.74, 0.85, 0.15);
+      add(new THREE.BoxGeometry(0.2, 0.05, 0.45), body, 0, 0.7, -0.72, -0.2);
+      add(new THREE.BoxGeometry(0.14, 0.12, 0.1), lampF, 0, 0.88, 0.92);
+      const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.75, 8), chrome);
+      exhaust.rotation.x = Math.PI / 2 - 0.06;
+      exhaust.position.set(-0.14, 0.4, -0.3);
+      exhaust.castShadow = true;
+      g.add(exhaust);
+      add(new THREE.BoxGeometry(0.09, 0.07, 0.14), dark, -0.31, 0.95, 0.82);
+      add(new THREE.BoxGeometry(0.09, 0.07, 0.14), dark, 0.31, 0.95, 0.82);
+      add(new THREE.BoxGeometry(0.04, 0.34, 0.05), dark, -0.16, 0.22, -0.15, 0, 0.35);
+      // 轮: 轮胎 + 轮毂盖
       const wheelGeo = new THREE.CylinderGeometry(0.33, 0.33, 0.14, 10);
+      const hubGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.15, 8);
       for (const [wz, front] of [[0.85, 1], [-0.7, 0]] as const) {
         const w = new THREE.Group();
         w.position.set(0, 0.33, wz);
@@ -155,6 +209,9 @@ export class Vehicle {
         tire.rotation.z = Math.PI / 2;
         tire.castShadow = true;
         w.add(tire);
+        const cap = new THREE.Mesh(hubGeo, chrome);
+        cap.rotation.z = Math.PI / 2;
+        w.add(cap);
         g.add(w);
         this.wheels.push(w);
         if (front) this.steerWheels.push(w);

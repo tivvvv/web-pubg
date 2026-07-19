@@ -41,7 +41,8 @@ const DOOR_C = 0x7a5c38;
 const PANE_C = 0xbfe0ea;
 const TRIM_C = 0xefe6d0;  // 统一装饰: 窗框/门框/檐口
 const FRAME_C = 0x5f5245; // 深色框边
-const SKIRT_C = 0x8a8578; // 墙基裙
+const SHUTTER_C = 0x6a5a48; // 百叶窗板
+const SKIRT_C = 0x6f6a5e; // 墙基裙(加深, 接地点缀)
 const CRATE_C = 0x9a7f56;
 
 const WT = 0.26;            // 外墙厚
@@ -136,6 +137,15 @@ export class Buildings {
   private postGeoAlongZ = new THREE.BoxGeometry(WT + 0.06, DOOR_H, 0.09);
   private doorMat = new THREE.MeshLambertMaterial({ color: DOOR_C });
   private postMat = new THREE.MeshLambertMaterial({ color: 0x5e4629 });
+  private doorTrimMat = new THREE.MeshLambertMaterial({ color: 0x4a3524 }); // 门板拼缝
+  private knobMat = new THREE.MeshLambertMaterial({ color: 0xb8a06a });     // 门把手
+  // 门扇细节共享几何(拼缝/把手板/把手珠, 按墙走向两套)
+  private trimGeoX = new THREE.BoxGeometry(0.05, DOOR_H * 0.88, 0.02);
+  private trimGeoZ = new THREE.BoxGeometry(0.02, DOOR_H * 0.88, 0.05);
+  private handleGeoX = new THREE.BoxGeometry(0.1, 0.05, 0.05);
+  private handleGeoZ = new THREE.BoxGeometry(0.05, 0.05, 0.1);
+  private plateGeoX = new THREE.BoxGeometry(0.09, 0.16, 0.02);
+  private plateGeoZ = new THREE.BoxGeometry(0.02, 0.16, 0.09);
   private paneMat = new THREE.MeshLambertMaterial({
     color: PANE_C, transparent: true, opacity: 0.55, depthWrite: false,
   });
@@ -347,12 +357,14 @@ export class Buildings {
     box('wall', x0, y, z0, x1, y + h, z1, RAIL_C);
   }
 
-  // 阶梯坡屋顶(3 级: 檐口→中段→脊, ridge 沿 x 走向)
+  // 阶梯坡屋顶(3 级: 檐口→中段→脊, ridge 沿 x 走向) + 屋脊压条
   private gableRoof(box: BoxFn, ix0: number, iz0: number, ix1: number, iz1: number, yBase: number, c: number): void {
     const dz = iz1 - iz0;
     box('roof', ix0 - 0.18, yBase, iz0 - 0.18, ix1 + 0.18, yBase + 0.2, iz1 + 0.18, c);
     box('roof', ix0 - 0.1, yBase + 0.2, iz0 + dz * 0.16, ix1 + 0.1, yBase + 0.42, iz1 - dz * 0.16, c);
     box('roof', ix0 - 0.02, yBase + 0.42, iz0 + dz * 0.34, ix1 + 0.02, yBase + 0.64, iz1 - dz * 0.34, c);
+    const zm = (iz0 + iz1) / 2;
+    box('roof', ix0 - 0.06, yBase + 0.64, zm - 0.16, ix1 + 0.06, yBase + 0.76, zm + 0.16, FRAME_C, { collider: false });
   }
 
   // 墙基裙(一周, 纯装饰)
@@ -403,6 +415,25 @@ export class Buildings {
     const mesh = new THREE.Mesh(axis === 'x' ? this.doorGeoAlongX : this.doorGeoAlongZ, this.doorMat);
     mesh.position.set(axis === 'x' ? DOOR_W / 2 : 0, DOOR_H / 2, axis === 'x' ? 0 : DOOR_W / 2);
     mesh.castShadow = true;
+    // 门板细节(挂在门扇网格下, 破坏隐藏/铰链旋转自动跟随): 竖拼缝 ×2 + 把手
+    {
+      const trimGeo = axis === 'x' ? this.trimGeoX : this.trimGeoZ;
+      const handleGeo = axis === 'x' ? this.handleGeoX : this.handleGeoZ;
+      const plateGeo = axis === 'x' ? this.plateGeoX : this.plateGeoZ;
+      for (const off of [-DOOR_W / 6, DOOR_W / 6]) {
+        const seam = new THREE.Mesh(trimGeo, this.doorTrimMat);
+        seam.position.set(axis === 'x' ? off : 0.056, -0.05, axis === 'x' ? 0.056 : off);
+        mesh.add(seam);
+      }
+      // 把手在远离铰链侧(局部坐标铰链在 -DOOR_W/2 侧)
+      const hx = DOOR_W / 2 - 0.18;
+      const plate = new THREE.Mesh(plateGeo, this.doorTrimMat);
+      plate.position.set(axis === 'x' ? hx : 0.056, -0.12, axis === 'x' ? 0.056 : hx);
+      mesh.add(plate);
+      const knob = new THREE.Mesh(handleGeo, this.knobMat);
+      knob.position.set(axis === 'x' ? hx : 0.08, -0.12, axis === 'x' ? 0.08 : hx);
+      mesh.add(knob);
+    }
     pivot.add(mesh);
     // 铰链柱: 门被炸毁后仍留在原地
     const post = new THREE.Mesh(axis === 'x' ? this.postGeoAlongX : this.postGeoAlongZ, this.postMat);
@@ -438,6 +469,22 @@ export class Buildings {
       box('wall', fixed - ft, y0, a1 - 0.03, fixed + ft, y1, a1 + 0.03, FRAME_C, { collider: false });
     }
     const t = 0.06;
+    // 窗台挑檐 + 部分窗户百叶板(纯装饰, 位置确定性抽样)
+    const st = 0.16;
+    const withShutters = Math.floor(Math.abs(a0 * 7 + fixed * 3)) % 3 === 0;
+    if (axis === 'x') {
+      box('wall', a0 - 0.12, y0 - 0.08, fixed - st, a1 + 0.12, y0, fixed + st, TRIM_C, { collider: false });
+      if (withShutters) {
+        box('wall', a0 - 0.34, y0, fixed - 0.04, a0 - 0.06, y1, fixed + 0.04, SHUTTER_C, { collider: false });
+        box('wall', a1 + 0.06, y0, fixed - 0.04, a1 + 0.34, y1, fixed + 0.04, SHUTTER_C, { collider: false });
+      }
+    } else {
+      box('wall', fixed - st, y0 - 0.08, a0 - 0.12, fixed + st, y0, a1 + 0.12, TRIM_C, { collider: false });
+      if (withShutters) {
+        box('wall', fixed - 0.04, y0, a0 - 0.34, fixed + 0.04, y1, a0 - 0.06, SHUTTER_C, { collider: false });
+        box('wall', fixed - 0.04, y0, a1 + 0.06, fixed + 0.04, y1, a1 + 0.34, SHUTTER_C, { collider: false });
+      }
+    }
     const c: AabbCollider = axis === 'x'
       ? { kind: 'aabb', minX: a0, minY: y0, minZ: fixed - t / 2, maxX: a1, maxY: y1, maxZ: fixed + t / 2, tag: 'window' }
       : { kind: 'aabb', minX: fixed - t / 2, minY: y0, minZ: a0, maxX: fixed + t / 2, maxY: y1, maxZ: a1, tag: 'window' };
@@ -475,6 +522,12 @@ export class Buildings {
     this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, wt1, [win(iz0 + d * 0.3)], p.wall, WT, 1);
     this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, wt1, [win(iz0 + d * 0.62)], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
+    // 转角壁柱(部分房屋, 纯装饰)
+    if (idx % 2 === 0) {
+      for (const [cx, cz] of [[ix0, iz0], [ix1, iz0], [ix0, iz1], [ix1, iz1]] as const) {
+        box('wall', cx - 0.09, buried, cz - 0.09, cx + 0.09, wt1, cz + 0.09, TRIM_C, { collider: false });
+      }
+    }
     // 门阶(可站立小平台)
     box('floor', doorA0 - 0.15, f1 - 0.14, iz0 - 0.75, doorA0 + DOOR_W + 0.15, f1 - 0.02, iz0, TRIM_C, { collider: false, platform: true });
     this.lootSpots.push(
@@ -764,14 +817,31 @@ export class Buildings {
     box('floor', blX0, f1, iz1 - 2.4, blX1, f1 + 0.9, iz1 - 1.3, 0x8f8a80, { collider: false, platform: true });
     box('floor', blX0, f1, iz1 - 3.5, blX1, f1 + 1.35, iz1 - 2.4, 0x8f8a80, { collider: false, platform: true });
 
-    // 散装箱体(场内掩体)
+    // 散装箱体(场内掩体) + 箱体箍带
     const rng = mulberry32(777);
     for (let i = 0; i < 8; i++) {
       const s = 0.8 + rng() * 0.5;
       const cx = ix0 + 3 + rng() * (w - 6);
       const cz = iz0 + 3 + rng() * (d * 0.55);
       box('wall', cx, f1, cz, cx + s, f1 + s, cz + s, CRATE_C);
+      box('wall', cx - 0.02, f1 + s - 0.07, cz + s * 0.3, cx + s + 0.02, f1 + s + 0.02, cz + s * 0.7, 0x6a5a42, { collider: false });
     }
+    // 大厅顶部横梁(沿短向, 5 根)
+    for (let i = 0; i < 5; i++) {
+      const bx = ix0 + w * (0.14 + i * 0.18);
+      box('wall', bx - 0.18, wallTop - 0.7, iz0 + 0.3, bx + 0.18, wallTop - 0.3, iz1 - 0.3, 0x5a4a38, { collider: false });
+    }
+    // 墙面色幅(南北墙点缀) + 入口门牌
+    const BANNERS = [0xa03a30, 0x3a6ea5, 0xc2a54e];
+    for (let i = 0; i < 3; i++) {
+      const bx = ix0 + w * (0.25 + i * 0.25);
+      const c = BANNERS[i] as number;
+      box('wall', bx - 0.8, f1 + 3.2, iz0 + GWT / 2, bx + 0.8, f1 + 6.2, iz0 + GWT / 2 + 0.06, c, { collider: false });
+      box('wall', bx - 0.8, f1 + 3.2, iz1 - GWT / 2 - 0.06, bx + 0.8, f1 + 6.2, iz1 - GWT / 2, c, { collider: false });
+    }
+    // 入口门牌(北门雨棚上方)
+    box('wall', doorA0 - 0.6, f1 + 3.7, iz0 - 0.3, doorA0 + DOOR_W * 2 + 0.6, f1 + 4.4, iz0 + GWT / 2, 0xd8cba8, { collider: false });
+    box('wall', doorA0 - 0.45, f1 + 3.85, iz0 - 0.34, doorA0 + DOOR_W * 2 + 0.45, f1 + 4.25, iz0 + GWT / 2 + 0.04, 0x8a4a3a, { collider: false });
 
     // loot: 大厅 4 普通 + 看台/中区 4 高级
     this.lootSpots.push(

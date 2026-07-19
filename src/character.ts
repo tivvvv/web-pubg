@@ -38,11 +38,29 @@ const GEO = {
   shin: new THREE.BoxGeometry(0.145, 0.38, 0.145),
   boot: new THREE.BoxGeometry(0.16, 0.12, 0.26),
 };
+// 细节件共享几何(面部/领口/护具/鞋底等, 一次创建全局复用)
+const GEO_D = {
+  neck: new THREE.BoxGeometry(0.14, 0.08, 0.14),
+  visor: new THREE.BoxGeometry(0.22, 0.055, 0.02),
+  collar: new THREE.BoxGeometry(0.36, 0.06, 0.26),
+  shoulder: new THREE.BoxGeometry(0.15, 0.06, 0.17),
+  strap: new THREE.BoxGeometry(0.07, 0.5, 0.02),
+  belt: new THREE.BoxGeometry(0.42, 0.06, 0.28),
+  buckle: new THREE.BoxGeometry(0.08, 0.05, 0.02),
+  cuff: new THREE.BoxGeometry(0.125, 0.055, 0.125),
+  kneePad: new THREE.BoxGeometry(0.16, 0.11, 0.05),
+  sole: new THREE.BoxGeometry(0.17, 0.035, 0.28),
+  elbowPad: new THREE.BoxGeometry(0.13, 0.09, 0.045),
+};
 
 const MAT = {
   skin: new THREE.MeshLambertMaterial({ color: 0xd9a066 }),
   pants: new THREE.MeshLambertMaterial({ color: 0x3d4436 }),
   boot: new THREE.MeshLambertMaterial({ color: 0x2c2620 }),
+  dark: new THREE.MeshLambertMaterial({ color: 0x23282e }), // 面罩/护具/手套
+  strap: new THREE.MeshLambertMaterial({ color: 0x2f2a22 }), // 胸挂/腰带
+  glove: new THREE.MeshLambertMaterial({ color: 0x3a342c }),
+  sole: new THREE.MeshLambertMaterial({ color: 0x1b1712 }),
 };
 
 // 裤装配色(bot 按索引错开, 远距可读)
@@ -73,10 +91,36 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   const waist = new THREE.Mesh(GEO.waist, pants);
   waist.position.set(0, 0.79, 0);
   inner.add(waist);
+  // ---- 细节: 颈部/领口/肩垫/胸挂带/腰带扣 ----
+  const neck = new THREE.Mesh(GEO_D.neck, MAT.skin);
+  neck.position.set(0, 1.38, 0);
+  inner.add(neck);
+  const collar = new THREE.Mesh(GEO_D.collar, shirt);
+  collar.position.set(0, 1.33, 0);
+  inner.add(collar);
+  for (const side of [-1, 1] as const) {
+    const pad = new THREE.Mesh(GEO_D.shoulder, shirt);
+    pad.position.set(0.25 * side, 1.365, 0);
+    pad.castShadow = true;
+    inner.add(pad);
+  }
+  const strap = new THREE.Mesh(GEO_D.strap, MAT.strap);
+  strap.position.set(0.09, 1.05, 0.15);
+  inner.add(strap);
+  const belt = new THREE.Mesh(GEO_D.belt, MAT.strap);
+  belt.position.set(0, 0.88, 0);
+  inner.add(belt);
+  const buckle = new THREE.Mesh(GEO_D.buckle, MAT.dark);
+  buckle.position.set(0, 0.88, 0.15);
+  inner.add(buckle);
 
   const head = new THREE.Mesh(GEO.head, MAT.skin);
   head.position.set(0, 1.53, 0);
   head.castShadow = true;
+  // 面部面罩条(跟随头部; FPP 隐藏头部时一并隐藏)
+  const visor = new THREE.Mesh(GEO_D.visor, MAT.dark);
+  visor.position.set(0, 0.03, 0.155);
+  head.add(visor);
   inner.add(head);
 
   // 手臂: 肩部枢轴 → 上臂 → 肘部枢轴 → 前臂 + 手(肘/手暗示)
@@ -94,7 +138,14 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     fore.position.set(0, -0.14, 0);
     fore.castShadow = true;
     elbow.add(fore);
-    const hand = new THREE.Mesh(GEO.hand, MAT.skin);
+    // 袖口(裤色撞色) + 肘垫
+    const cuff = new THREE.Mesh(GEO_D.cuff, pants);
+    cuff.position.set(0, -0.27, 0);
+    elbow.add(cuff);
+    const epad = new THREE.Mesh(GEO_D.elbowPad, MAT.dark);
+    epad.position.set(0, -0.1, -0.075);
+    elbow.add(epad);
+    const hand = new THREE.Mesh(GEO.hand, MAT.glove);
     hand.position.set(0, -0.32, 0);
     elbow.add(hand);
     arm.add(elbow);
@@ -124,9 +175,17 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     shin.position.set(0, -0.19, 0);
     shin.castShadow = true;
     knee.add(shin);
+    // 护膝
+    const kpad = new THREE.Mesh(GEO_D.kneePad, MAT.dark);
+    kpad.position.set(0, -0.04, 0.09);
+    knee.add(kpad);
     const boot = new THREE.Mesh(GEO.boot, MAT.boot);
     boot.position.set(0, -0.42, 0.03);
     knee.add(boot);
+    // 鞋底(深色伪 AO 接地感)
+    const sole = new THREE.Mesh(GEO_D.sole, MAT.sole);
+    sole.position.set(0, -0.075, 0.01);
+    boot.add(sole);
     leg.add(knee);
     return leg;
   };
