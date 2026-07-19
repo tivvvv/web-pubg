@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// backpack.ts — 背包装备: 三级定义、负重容量/重量计算、地面与人物背部模型
+// backpack.ts - 背包装备: 三级定义, 负重容量/重量计算, 地面与人物背部模型
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import type { AmmoType, LootKind } from './types';
@@ -9,7 +9,7 @@ export type PackLevel = 1 | 2 | 3;
 
 export interface PackDef {
   level: PackLevel;
-  name: string;   // 一级背包 …
+  name: string;   // 一级背包...
   bonus: number;  // 额外负重
   color: number;  // 模型配色(按等级)
 }

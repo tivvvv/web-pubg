@@ -1066,7 +1066,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
 }
 
 // 草丛几何体: 5 叶片丛(圆盘内散布), 根深暗/尖亮(顶点色围绕 1.0, 与 instanceColor 相乘)
-// 法线统一朝上 —— 让叶片接受与地形一致的光照, 避免逆光黑刺
+// 法线统一朝上 -- 让叶片接受与地形一致的光照, 避免逆光黑刺
 function makeGrassGeo(): THREE.BufferGeometry {
   const pos: number[] = [];
   const col: number[] = [];

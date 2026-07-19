@@ -34,7 +34,7 @@ export class PlayerController {
   private hv = new THREE.Vector2(); // 空降水平速度
   private stepAcc = 0;
   private swimAcc = 0;      // 游泳划水距离累计
-  private swimToastT = 0;   // 「游泳中无法攻击」提示节流
+  private swimToastT = 0;   // '游泳中无法攻击'提示节流
   private throwHold = false; // 正在按住左键蓄力瞄准
   private holdT = 0;         // 蓄力时长
   spreadRad = 0.004;

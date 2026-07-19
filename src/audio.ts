@@ -148,7 +148,7 @@ export class AudioSys {
     this.blip(440, 430, 0.07, 0.12, 'sine');
   }
 
-  // 近战挥击(风声): 噪声经带通高频→低频快速下扫, 软起音 —— 与枪声的短促爆音区分
+  // 近战挥击(风声): 噪声经带通高频→低频快速下扫, 软起音 -- 与枪声的短促爆音区分
   melee(dist: number, pan: number): void {
     if (!this.ctx || !this.noiseBuf) return;
     const dst = this.out(pan);

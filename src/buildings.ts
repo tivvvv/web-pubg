@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// buildings.ts — 数据驱动的建筑原型系统: 平房/双层/露台房/三层楼/谷仓/小卖部/大体育馆
+// buildings.ts - 数据驱动的建筑原型系统: 平房/双层/露台房/三层楼/谷仓/小卖部/大体育馆
 // 组件化构建(墙段开洞/楼梯/护栏/楼板/屋顶), 可破坏门窗/平台/loot 点全部复用同一套
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -150,7 +150,7 @@ export class Buildings {
     color: PANE_C, transparent: true, opacity: 0.55, depthWrite: false,
   });
 
-  // ── 区域规划（确定性种子; 城区/竞技场/农场/密林/山地/渔村定点）──────────────
+  // ── 区域规划 (确定性种子; 城区/竞技场/农场/密林/山地/渔村定点) ──────────────
   plan(world: World): void {
     const rng = mulberry32(20240);
     const taken: { minX: number; minZ: number; maxX: number; maxZ: number }[] = [];
@@ -172,7 +172,7 @@ export class Buildings {
       // 河道禁建(桥位另算)
       const rd = Math.abs(cz - riverZAt(cx));
       if (rd < 15 + d / 2) return null;
-      // 平整高度：内区五角均值
+      // 平整高度: 内区五角均值
       const ix0 = cx - w / 2, ix1 = cx + w / 2, iz0 = cz - d / 2, iz1 = cz + d / 2;
       const hs = [
         world.getHeight(cx, cz),
@@ -198,7 +198,7 @@ export class Buildings {
       return false;
     };
 
-    // 中央城区 (-60,-20, r~90): 行列式 12 栋 — 三层×2 露台×3 小店×2 其余民居
+    // 中央城区 (-60,-20, r~90): 行列式 12 栋 - 三层×2 露台×3 小店×2 其余民居
     const townArchs: ArchId[] = [
       'apartment', 'apartment', 'terrace', 'terrace', 'terrace',
       'shop', 'shop', 'cottage2', 'cottage2', 'cottage1', 'cottage1', 'cottage2',
@@ -302,7 +302,7 @@ export class Buildings {
     scene.add(this.root);
   }
 
-  // 每局重开时恢复门窗：窗全恢复；门 30% 概率预破坏
+  // 每局重开时恢复门窗: 窗全恢复; 门 30% 概率预破坏
   reset(): void {
     for (const d of this.destructibles) {
       d.reset(d.kind === 'window' ? true : Math.random() >= 0.3);
@@ -311,7 +311,7 @@ export class Buildings {
 
   // ═══════════════ 组件构建器(全原型复用) ═══════════════
 
-  // 沿轴放一面带洞口的墙：整高段 + 窗台段 + 过梁段，洞口挂门/窗可破坏物
+  // 沿轴放一面带洞口的墙: 整高段 + 窗台段 + 过梁段, 洞口挂门/窗可破坏物
   // interior: 室内方向符号(+1/-1, 垂直于墙指向屋内), 决定门向内开的方向
   private wallRun(
     world: World, box: BoxFn,
@@ -327,7 +327,7 @@ export class Buildings {
     let cur = a0;
     for (const op of sorted) {
       addBoxAt(cur, op.a0, y0, y1);                 // 洞口左侧整高段
-      if (!op.door) addBoxAt(op.a0, op.a1, y0, op.y0); // 窗台段（门洞直通地板）
+      if (!op.door) addBoxAt(op.a0, op.a1, y0, op.y0); // 窗台段 (门洞直通地板)
       addBoxAt(op.a0, op.a1, op.y1, y1);            // 过梁段
       cur = op.a1;
     }

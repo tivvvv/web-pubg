@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// armor.ts — 护具系统: 头盔/防弹衣三级定义、地面/人物模型、loot 类型映射
+// armor.ts - 护具系统: 头盔/防弹衣三级定义, 地面/人物模型, loot 类型映射
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import type { ArmorLootId, LootKind } from './types';
@@ -10,7 +10,7 @@ export type ArmorLevel = 1 | 2 | 3;
 export interface ArmorDef {
   kind: ArmorKind;
   level: ArmorLevel;
-  name: string;        // 一级头盔 / 三级防弹衣 …
+  name: string;        // 一级头盔 / 三级防弹衣...
   reduce: number;      // 对应部位减伤比例
   maxDurability: number;
   color: number;       // 模型与 HUD 配色(按等级)

@@ -394,7 +394,7 @@ export class BotController {
       }
     }
 
-    // 扔雷: 持步枪/冲锋枪、目标在 8-30m 且几乎静止超过 2.5s, 扔出唯一一颗手雷
+    // 扔雷: 持步枪/冲锋枪, 目标在 8-30m 且几乎静止超过 2.5s, 扔出唯一一颗手雷
     const gunId = c.heldGun()?.def.id;
     if (!this.fragUsed && c.throwables.frag > 0 && this.losOk &&
       (gunId === 'rifle' || gunId === 'smg') && dist >= 8 && dist <= 30) {

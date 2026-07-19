@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// teammate.ts — 队友 AI: 跟随/交战/乘车/跳伞; 与 enemy BotController 共享战斗原语
+// teammate.ts - 队友 AI: 跟随/交战/乘车/跳伞; 与 enemy BotController 共享战斗原语
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { Character, moveChar } from './character';

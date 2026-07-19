@@ -117,7 +117,7 @@ export class Hud {
     this.hpFill.style.backgroundColor = `hsl(${hue}, 75%, 45%)`;
   }
 
-  // 「游泳中」状态标
+  // '游泳中'状态标
   setSwimming(on: boolean): void {
     this.swimTag.classList.toggle('show', on);
   }

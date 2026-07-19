@@ -1721,7 +1721,7 @@ export class Game {
     } else {
       this.hud.setAltitude(-1, 0);
     }
-    this.hud.setSwimming(c.swimming); // 「游泳中」状态标
+    this.hud.setSwimming(c.swimming); // '游泳中'状态标
     // 小队面板(玩家高亮, 变化才刷新)
     this.hud.setSquad([
       { name: '你', hp: c.hp, alive: c.alive, isPlayer: true },
