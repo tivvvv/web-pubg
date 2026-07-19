@@ -61,6 +61,7 @@ function makeMarkerTexture(): THREE.Texture {
 
 import { ARMORS, armorFromLoot, armorLootKind, isArmorKind, type ArmorKind, type ArmorLevel } from './armor';
 import { AirdropManager, type Crate } from './airdrop';
+import { KnockSys } from './knock';
 import { AudioSys } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
 import { BotController, BOT_NAMES } from './bot';
@@ -94,6 +95,7 @@ export class Game {
   readonly zone: Zone;
   readonly loot: LootManager;
   readonly airdrop: AirdropManager;
+  readonly knock: KnockSys;
   readonly grenades: GrenadeManager;
   readonly vehicles: VehicleManager;
   readonly hud: Hud;
@@ -107,6 +109,7 @@ export class Game {
   promptDoor: Destructible | null = null; // 当前可开/关的门提示(优先于武器当看得更正)
   promptVehicle: Vehicle | null = null;   // 当前可驾驶载具提示
   promptCrate: Crate | null = null;       // 当前可开启的空投提示
+  promptAlly: Character | null = null;    // 当前可救援的倒地队友提示
   backpackOpen = false;
   viewFpp = false;                     // 第一人称(V 切换, 会话内跨对局记忆)
   healT = -1;                            // >0 = 恢复品读条中(剩余秒)
@@ -126,6 +129,9 @@ export class Game {
   private player: PlayerController | null = null;
   bots: BotController[] = [];
   private mates: TeammateController[] = [];
+  get squadMates(): readonly TeammateController[] {
+    return this.mates;
+  }
   private squadTags: THREE.Sprite[] = [];
   private state: 'menu' | 'playing' | 'paused' | 'over' = 'menu';
   private lastT = performance.now();
@@ -154,6 +160,7 @@ export class Game {
   private tmpRight = new THREE.Vector3();
   private blobs: THREE.InstancedMesh;
   private lootMarker: THREE.Sprite;
+  private knockMarks: THREE.Sprite[] = [];
   private doorFrame: THREE.Group;
   private doorFrameEdgeMat: THREE.LineBasicMaterial;
   private doorFrameGlowMat: THREE.MeshBasicMaterial;
@@ -192,6 +199,17 @@ export class Game {
     this.lootMarker.scale.set(0.42, 0.42, 1);
     this.lootMarker.visible = false;
     this.scene.add(this.lootMarker);
+    // 倒地队友标记(橙色菱形, 80m 内脉动)
+    this.knockMarks = [];
+    for (let i = 0; i < 3; i++) {
+      const sp = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: makeMarkerTexture(), color: 0xff7a3c, transparent: true, depthWrite: false }),
+      );
+      sp.scale.set(0.5, 0.5, 1);
+      sp.visible = false;
+      this.scene.add(sp);
+      this.knockMarks.push(sp);
+    }
     this.doorFrame = new THREE.Group();
     // 干净描边(无对角线): 12 条盒棱线 + 一层柔和附加底光, 都不是线框三角面
     const doorEdge = new THREE.LineSegments(
@@ -215,6 +233,7 @@ export class Game {
     this.zone = new Zone(this.scene);
     this.loot = new LootManager(this.scene);
     this.airdrop = new AirdropManager(this, this.scene);
+    this.knock = new KnockSys(this);
     this.grenades = new GrenadeManager(this.scene);
     this.vehicles = new VehicleManager(this.scene);
     this.audio = new AudioSys();
@@ -443,6 +462,7 @@ export class Game {
   private startHeal(c: Character, id: HealId): void {
     if (!c.alive || this.healT > 0) return;
     if (c.isPlayer && this.player?.descent) return; // 跳伞中禁用恢复品
+    if (c.isPlayer && c.knocked) return; // 倒地不能用恢复品
     if (c.isPlayer && c.swimming) {
       this.hud.toast('游泳中无法恢复');
       return;
@@ -672,6 +692,8 @@ export class Game {
     this.promptItem = null;
     this.promptDoor = null;
     this.promptCrate = null;
+    this.promptAlly = null;
+    this.hud.setKnocked(false);
     this.backpackOpen = false;
     this.hudSlotsKey = '';
 
@@ -776,6 +798,15 @@ export class Game {
       const dp = Math.hypot(c.pos.x - player.char.pos.x, c.pos.z - player.char.pos.z);
       tag.visible = c.alive && dp < 60;
       tag.position.set(c.pos.x, c.pos.y + 2.05, c.pos.z);
+      // 倒地队友橙色标记(80m 内脉动)
+      const km = this.knockMarks[i];
+      if (km) {
+        km.visible = c.alive && c.knocked && dp < 80;
+        if (km.visible) {
+          km.position.set(c.pos.x, c.pos.y + 2.3 + Math.sin(this.now * 5) * 0.08, c.pos.z);
+          km.material.opacity = 0.75 + Math.sin(this.now * 6) * 0.25;
+        }
+      }
     }
     // 3 毒圈(跳伞后才计时) + 运输机离场
     if (this.zoneArmed) {
@@ -804,6 +835,7 @@ export class Game {
     }
     this.updateZoneDamage(dt);
     this.airdrop.update(dt); // 空投排程/飞机/落箱/烟柱
+    this.knock.update(dt); // 击倒流血/救援读条
     // 4 角色间软碰撞
     this.separateChars();
     // 5 模型/特效/拾取物/包扎
@@ -1308,8 +1340,9 @@ export class Game {
         if (armor.durability <= 0) this.breakArmor(victim, head ? 'helmet' : 'vest');
       }
     }
-    victim.hp -= dmg;
     victim.lastAttackerId = attacker?.id ?? 0;
+    victim.lastHitX = attacker ? attacker.pos.x : 0;
+    victim.lastHitZ = attacker ? attacker.pos.z : 0;
     if (victim.isPlayer && dmg > 0) this.cancelHeal('受伤打断恢复'); // 新增: 受伤取消读条
     if (victim.isPlayer && attacker) {
       const ang = Math.atan2(attacker.pos.x - victim.pos.x, attacker.pos.z - victim.pos.z);
@@ -1317,7 +1350,30 @@ export class Game {
       this.hud.damageFrom(-rel);
       this.audio.hit(false);
     }
-    if (victim.hp <= 0) this.kill(victim, attacker, head, via);
+    // 救援者受伤中断读条
+    this.knock.onDamaged(victim);
+    // 击倒中再受伤: 直接扣击倒血, 归零真死
+    if (victim.knocked) {
+      victim.knockHp -= dmg;
+      if (victim.knockHp <= 0) this.kill(victim, attacker, head, via);
+      return;
+    }
+    victim.hp -= dmg;
+    if (victim.hp <= 0) {
+      // 小队成员转击倒(玩家在无队友存活时直接真死)
+      const soloDeath = victim.isPlayer && !this.mates.some((m) => m.char.alive);
+      if (victim.team === 'squad' && !soloDeath) {
+        this.knock.knockDown(victim, attacker, head);
+      } else {
+        this.kill(victim, attacker, head, via);
+      }
+    }
+  }
+
+  // 流血致死(击倒血归零): 记最近攻击者
+  bleedOutKill(c: Character): void {
+    const att = this.chars.find((x) => x.id === c.lastAttackerId) ?? null;
+    this.kill(c, att, false);
   }
 
   // 护甲耐久归零: 碎裂音效(附近可闻) + 玩家提示, 槽位清空
@@ -1450,6 +1506,7 @@ export class Game {
       placement: this.playerPlacement,
     };
     this.hud.setDeath(stats);
+    this.hud.setKnocked(false);
     this.hud.showScreen('death');
     this.hud.setCrosshair(0, false);
     this.hud.setScope(false);
@@ -1484,6 +1541,13 @@ export class Game {
     if (crate) {
       this.airdrop.open(crate);
       this.promptCrate = null;
+      this.hud.setPickupPrompt(null);
+      return;
+    }
+    const ally = this.promptAlly;
+    if (ally) {
+      this.knock.startRevive(player.char, ally);
+      this.promptAlly = null;
       this.hud.setPickupPrompt(null);
       return;
     }
@@ -1708,10 +1772,21 @@ export class Game {
       this.hud.setAltitude(-1, 0);
     }
     this.hud.setSwimming(c.swimming); // '游泳中'状态标
-    // 小队面板(玩家高亮, 变化才刷新)
+    // 击倒/救援状态(玩家视角)
+    this.hud.setKnocked(c.knocked);
+    if (c.knocked) {
+      this.hud.setKnockBleed(Math.max(0, c.knockHp / 30));
+      const rescuer = this.chars.find((x) => x.id === c.rescuerId && x.reviveTarget === c);
+      this.hud.setKnockSub(rescuer
+        ? `${rescuer.name} 救援中 ${Math.round((rescuer.reviveT / 8) * 100)}%`
+        : '按 WASD 缓慢爬行, 等待队友救援');
+    } else if (c.reviveTarget) {
+      this.hud.setHealCast(c.reviveT / 8); // 玩家救援读条(复用读条 UI)
+    }
+    // 小队面板(玩家高亮, 倒地橙色, 变化才刷新)
     this.hud.setSquad([
-      { name: '你', hp: c.hp, alive: c.alive, isPlayer: true },
-      ...this.mates.map((m) => ({ name: m.char.name, hp: m.char.hp, alive: m.char.alive, isPlayer: false })),
+      { name: '你', hp: c.hp, alive: c.alive, isPlayer: true, knocked: c.knocked },
+      ...this.mates.map((m) => ({ name: m.char.name, hp: m.char.hp, alive: m.char.alive, isPlayer: false, knocked: m.char.knocked })),
     ]);
     // 载具仪表(驾驶中显示)
     if (player.driving) {

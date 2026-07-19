@@ -102,7 +102,7 @@ export class PlayerController {
     }
 
     const gun = c.heldGun();
-    this.aiming = input.rmb && !this.reloading && gun !== null && !c.swimming;
+    this.aiming = input.rmb && !this.reloading && gun !== null && !c.swimming && !c.knocked;
 
     // ---- 移动 ----
     const fwdX = Math.sin(this.yaw);
@@ -127,10 +127,11 @@ export class PlayerController {
       wz /= wlen;
       const forwardish = (wx * fwdX + wz * fwdZ) > 0.3;
       let speed = 4.3;
-      if (c.swimming) speed = 2.2; // 游泳低速, 无冲刺
+      if (c.knocked) speed = 0.6; // 倒地爬行(仅移动, 无其他动作)
+      else if (c.swimming) speed = 2.2; // 游泳低速, 无冲刺
       else if (this.aiming) speed = 2.7;
       else if (sprint && forwardish && c.stance === 'stand') speed = 6.6;
-      if (!c.swimming) {
+      if (!c.swimming && !c.knocked) {
         speed *= c.stance === 'crouch' ? 0.5 : c.stance === 'prone' ? 0.25 : 1; // 蹲 50% / 趴 25% 爬行
         const groundH = game.world.getHeight(c.pos.x, c.pos.z);
         if (c.pos.y < WATER_Y + 0.15 && groundH < WATER_Y) speed *= 0.55; // 涉水
@@ -146,7 +147,7 @@ export class PlayerController {
         }
       }
     }
-    if (input.keys.has('Space') && c.grounded && !c.swimming && c.vaultCd <= 0) {
+    if (input.keys.has('Space') && c.grounded && !c.swimming && !c.knocked && c.vaultCd <= 0) {
       // 先尝试翻越: 站/蹲朝可翻越障碍(趴下/恢复读条中不可翻越)
       let vaulted = false;
       if (c.stance !== 'prone' && wlen > 0.001 && game.healT <= 0) {
@@ -218,6 +219,9 @@ export class PlayerController {
     }
     if (c.swimming) {
       this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
+    } else if (c.knocked) {
+      // 倒地不能攻击/投掷/近战
+      this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
     } else if (c.curSlot === 3) {
       // 近战: 按住连挥, 冷却在 meleeAttack 内判定
       if (input.lmb && game.meleeAttack(c)) acted = true;
@@ -282,11 +286,21 @@ export class PlayerController {
     game.promptDoor = null;
     game.promptVehicle = null;
     game.promptCrate = null;
+    game.promptAlly = null;
     // 两者同时在场: 看得更正的优先
     if (door && (!item || door.dot >= itemDot)) {
       game.promptDoor = door.d;
       game.hud.setPickupPrompt(door.d.open ? '按 F 关门' : '按 F 开门');
       return;
+    }
+    // 救援候选: 2.2m 内倒地队友(自己非倒地)
+    if (!c.knocked) {
+      const ally = game.knock.nearestKnocked(c.pos.x, c.pos.z, 2.2);
+      if (ally) {
+        game.promptAlly = ally;
+        game.hud.setPickupPrompt('按 F 救援');
+        return;
+      }
     }
     // 空投候选: 2.8m 内落地未开的空投
     const crate = game.airdrop.nearestClosedCrate(c.pos.x, c.pos.y, c.pos.z, 2.8);
@@ -459,7 +473,7 @@ export class PlayerController {
 
   // 上车(F 近驾驶座)
   enterVehicle(v: Vehicle, game: Game): void {
-    if (this.driving || this.descent) return;
+    if (this.driving || this.descent || this.char.knocked) return;
     this.driving = v;
     v.driver = this.char;
     const c = this.char;

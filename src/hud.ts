@@ -56,6 +56,9 @@ export class Hud {
   private drinkBuff = el('drink-buff');
   private drinkBuffFill = el('drink-buff-fill');
   private swimTag = el('swim-tag');
+  private knockBanner = el('knock-banner');
+  private knockBleedFill = el('knock-bleed-fill');
+  private knockSub = el('knock-sub');
   private backpack = el('backpack');
   private bpContent = el('bp-content');
 
@@ -206,19 +209,32 @@ export class Hud {
 
   // 小队面板(玩家高亮, 变化才写 DOM)
   private squadKey = '';
-  setSquad(rows: { name: string; hp: number; alive: boolean; isPlayer: boolean }[]): void {
-    const key = rows.map((r) => `${Math.ceil(r.hp)}${r.alive ? 1 : 0}`).join('|');
+  setSquad(rows: { name: string; hp: number; alive: boolean; isPlayer: boolean; knocked?: boolean }[]): void {
+    const key = rows.map((r) => `${Math.ceil(r.hp)}${r.alive ? 1 : 0}${r.knocked ? 1 : 0}`).join('|');
     if (key === this.squadKey) return;
     this.squadKey = key;
     this.squadPanel.innerHTML = rows
       .map(
         (r) =>
-          `<div class="sq-row${r.isPlayer ? ' me' : ''}${r.alive ? '' : ' dead'}">` +
+          `<div class="sq-row${r.isPlayer ? ' me' : ''}${r.alive ? '' : ' dead'}${r.knocked ? ' knocked' : ''}">` +
           `<span class="sq-name">${r.name}</span>` +
           `<div class="sq-bar"><div class="sq-fill" style="width:${Math.max(0, Math.min(100, r.hp))}%"></div></div>` +
           `</div>`,
       )
       .join('');
+  }
+
+  // 击倒横幅(玩家): 显隐 + 流血条 + 副标题
+  setKnocked(on: boolean): void {
+    this.knockBanner.classList.toggle('show', on);
+  }
+
+  setKnockBleed(frac: number): void {
+    this.knockBleedFill.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+  }
+
+  setKnockSub(text: string): void {
+    this.knockSub.textContent = text;
   }
 
   // 载具仪表(速度 km/h + 车况条; kmh<0 隐藏)

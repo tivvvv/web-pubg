@@ -131,6 +131,60 @@ export class TeammateController {
       return;
     }
 
+    // ---- 倒地: 缓慢爬离伤害来源(圈外优先爬向圈心) ----
+    if (c.knocked) {
+      let mx = 0;
+      let mz = 0;
+      if (c.lastHitX !== 0 || c.lastHitZ !== 0) {
+        const dx = c.pos.x - c.lastHitX;
+        const dz = c.pos.z - c.lastHitZ;
+        const d = Math.hypot(dx, dz) || 1;
+        if (d < 14) {
+          mx = dx / d;
+          mz = dz / d;
+        }
+      }
+      if (game.zone.isOutside(c.pos.x, c.pos.z)) {
+        const dx = game.zone.center.x - c.pos.x;
+        const dz = game.zone.center.y - c.pos.z;
+        const d = Math.hypot(dx, dz) || 1;
+        mx = dx / d;
+        mz = dz / d;
+      }
+      if (mx !== 0 || mz !== 0) moveChar(c, mx * 0.6, mz * 0.6, dt, game.world);
+      return;
+    }
+
+    // ---- 救援友军(优先玩家, 25m 内有敌先战斗; 第二队友自然掩护) ----
+    {
+      let ally: Character | null = null;
+      const pc = game.playerCtl?.char;
+      if (pc?.knocked) ally = pc;
+      if (!ally) ally = game.knock.nearestKnocked(c.pos.x, c.pos.z, 999, c);
+      if (ally && (ally.rescuerId === 0 || ally.rescuerId === c.id)) {
+        let enemyNear = false;
+        for (const o of game.chars) {
+          if (!o.alive || o.team !== 'enemy') continue;
+          if (Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z) < 25) {
+            enemyNear = true;
+            break;
+          }
+        }
+        if (!enemyNear) {
+          const dx = ally.pos.x - c.pos.x;
+          const dz = ally.pos.z - c.pos.z;
+          const d = Math.hypot(dx, dz) || 1;
+          if (d > 2.0) {
+            c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 5 * dt);
+            moveChar(c, (dx / d) * 5.4, (dz / d) * 5.4, dt, game.world);
+          } else if (!c.reviveTarget) {
+            game.knock.startRevive(c, ally);
+          }
+          return;
+        }
+      }
+    }
+
     // ---- 换弹/治疗 ----
     const gun = c.heldGun();
     if (this.reloadT > 0) {
@@ -144,7 +198,7 @@ export class TeammateController {
       this.reloadT = gun.def.reloadTime;
     }
     this.healCd -= dt;
-    if (this.healCd <= 0 && !this.target) {
+    if (this.healCd <= 0 && !this.target && !c.knocked) {
       if (c.hp < 60) {
         if (c.heals.medkit > 0 && c.hp < 35) {
           c.heals.medkit--;

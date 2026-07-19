@@ -265,6 +265,16 @@ export class Character {
   swimAcc = 0;           // 划水距离累计(划水声/小水花节流)
   vault: VaultState | null = null; // 翻越中(脚本位移, 输入锁定)
   vaultCd = 0;           // 翻越/跳跃冷却(落地 0.4s)
+  // ---- 击倒/救援(DBNO, 仅小队) ----
+  knocked = false;       // 击倒状态(流血倒计时, 可被扶起)
+  knockHp = 0;           // 击倒血(上限 30)
+  knockCount = 0;        // 本局被击倒次数(流血加速: 60/40/25s)
+  bleedTime = 60;        // 本次击倒流血总时长
+  reviveT = 0;           // 我正在执行的救援读条(秒, 8s 完成)
+  reviveTarget: Character | null = null;
+  rescuerId = 0;         // 正在救我的人的角色 id(0=无人)
+  lastHitX = 0;          // 最近伤害来源位置(倒地爬离用)
+  lastHitZ = 0;
   private swimF = 0;     // 游泳姿态混合 0..1(平滑进出)
   canopyGroup: THREE.Group | null = null;   // 降落伞模型(开伞挂载, 落地卸载)
   private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
