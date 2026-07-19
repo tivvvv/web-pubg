@@ -20,22 +20,10 @@ export function randInt(lo: number, hi: number): number {
   return (lo + Math.random() * (hi - lo + 1)) | 0;
 }
 
-export function pick<T>(arr: readonly T[]): T {
-  return arr[(Math.random() * arr.length) | 0] as T;
-}
-
 export function dist2D(ax: number, az: number, bx: number, bz: number): number {
   const dx = ax - bx;
   const dz = az - bz;
   return Math.sqrt(dx * dx + dz * dz);
-}
-
-// 角度插值(处理环绕)
-export function angleLerp(a: number, b: number, t: number): number {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return a + d * t;
 }
 
 // 朝目标角度旋转, 限制最大转角

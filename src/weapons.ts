@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import type { Character, HitTestResult } from './character';
 import type {
-  AmmoType, GunState, LootKind, MeleeDef, MeleeId, SurfaceKind, ThrowableId, WeaponDef, WeaponId,
+  AmmoType, LootKind, MeleeDef, MeleeId, SurfaceKind, ThrowableId, WeaponDef, WeaponId,
 } from './types';
 import type { World, StaticHit } from './world';
 
@@ -61,11 +61,6 @@ export function ammoTypeFromLoot(kind: LootKind): AmmoType | null {
 export const AMMO_CLASS_COLOR: Record<AmmoType, number> = {
   rifle: 0xff7a29, smg: 0x37e0d8, sniper: 0xc05cff, pistol: 0xffd24d,
 };
-
-export function makeWeapon(id: WeaponId, mag?: number): GunState {
-  const def = WEAPONS[id];
-  return { def, mag: mag ?? def.magSize };
-}
 
 export interface ShotResult {
   hit: boolean;
