@@ -64,11 +64,19 @@ export function armorLootKind(kind: ArmorKind, level: ArmorLevel): LootKind {
 const GEO = {
   dome: new THREE.SphereGeometry(0.21, 12, 7, 0, Math.PI * 2, 0, Math.PI / 2),
   brim: new THREE.CylinderGeometry(0.24, 0.255, 0.032, 12),
+  brimWide: new THREE.CylinderGeometry(0.265, 0.28, 0.028, 12),
+  earSide: new THREE.BoxGeometry(0.05, 0.14, 0.16),
+  chinStrap: new THREE.BoxGeometry(0.05, 0.12, 0.02),
   visor: new THREE.BoxGeometry(0.22, 0.075, 0.03),
+  visorFrame: new THREE.BoxGeometry(0.24, 0.1, 0.015),
   plate: new THREE.BoxGeometry(0.4, 0.44, 0.09),
   strap: new THREE.BoxGeometry(0.11, 0.09, 0.36),
+  sideStrap: new THREE.BoxGeometry(0.05, 0.12, 0.32),
+  groinGuard: new THREE.BoxGeometry(0.34, 0.16, 0.07),
+  shoulderGuard: new THREE.BoxGeometry(0.16, 0.06, 0.2),
 };
 const VISOR_MAT = new THREE.MeshLambertMaterial({ color: 0x10141b });
+const STRAP_DARK = new THREE.MeshLambertMaterial({ color: 0x2a2d33 });
 const levelMats = new Map<number, THREE.MeshLambertMaterial>();
 function armorMat(level: ArmorLevel): THREE.MeshLambertMaterial {
   const color = LEVEL_COLOR[level];
@@ -80,24 +88,43 @@ function armorMat(level: ArmorLevel): THREE.MeshLambertMaterial {
   return m;
 }
 
-// 头盔: 半球盔体 + 帽檐; L3 正面加面甲
+// 头盔: L1 轻便半盔; L2 全战斗盔(宽檐+护耳+下颌带); L3 重型 + 面甲框/面甲
 export function buildHelmetModel(level: ArmorLevel): THREE.Group {
   const g = new THREE.Group();
   const mat = armorMat(level);
   const dome = new THREE.Mesh(GEO.dome, mat);
   dome.scale.set(1, 0.82, 1);
   g.add(dome);
-  const brim = new THREE.Mesh(GEO.brim, mat);
-  g.add(brim);
-  if (level === 3) {
-    const visor = new THREE.Mesh(GEO.visor, VISOR_MAT);
-    visor.position.set(0, 0.01, 0.2);
-    g.add(visor);
+  if (level === 1) {
+    // 轻便锅盔: 盔体 + 窄檐
+    const brim = new THREE.Mesh(GEO.brim, mat);
+    g.add(brim);
+  } else {
+    // L2/L3 战斗盔: 加厚盔体 + 宽檐 + 护耳 + 下颌带
+    const brim = new THREE.Mesh(GEO.brimWide, mat);
+    g.add(brim);
+    for (const sx of [-0.19, 0.19]) {
+      const ear = new THREE.Mesh(GEO.earSide, mat);
+      ear.position.set(sx, -0.05, 0.02);
+      g.add(ear);
+    }
+    const chin = new THREE.Mesh(GEO.chinStrap, STRAP_DARK);
+    chin.position.set(0, -0.12, 0.14);
+    g.add(chin);
+    if (level === 3) {
+      // 面甲框 + 深色面甲
+      const frame = new THREE.Mesh(GEO.visorFrame, mat);
+      frame.position.set(0, 0.02, 0.205);
+      g.add(frame);
+      const visor = new THREE.Mesh(GEO.visor, VISOR_MAT);
+      visor.position.set(0, 0.01, 0.21);
+      g.add(visor);
+    }
   }
   return g;
 }
 
-// 防弹衣: 前后护板 + 肩带
+// 防弹衣: 前后护板 + 肩带 + 侧围带; L3 加护裆/护肩(更壮)
 export function buildVestModel(level: ArmorLevel): THREE.Group {
   const g = new THREE.Group();
   const mat = armorMat(level);
@@ -111,6 +138,27 @@ export function buildVestModel(level: ArmorLevel): THREE.Group {
     const strap = new THREE.Mesh(GEO.strap, mat);
     strap.position.set(sx, 0.26, 0);
     g.add(strap);
+  }
+  // 侧围带(连接前后板)
+  for (const sx of [-0.21, 0.21]) {
+    const side = new THREE.Mesh(GEO.sideStrap, STRAP_DARK);
+    side.position.set(sx, -0.1, 0);
+    g.add(side);
+  }
+  if (level >= 2) {
+    // L2+: 侧板加厚感(前后板略扩)
+    front.scale.set(1.06, 1.05, 1);
+    back.scale.set(1.06, 1.05, 1);
+  }
+  if (level === 3) {
+    const groin = new THREE.Mesh(GEO.groinGuard, mat);
+    groin.position.set(0, -0.29, 0.14);
+    g.add(groin);
+    for (const sx of [-0.17, 0.17]) {
+      const sg = new THREE.Mesh(GEO.shoulderGuard, mat);
+      sg.position.set(sx, 0.31, 0.02);
+      g.add(sg);
+    }
   }
   return g;
 }

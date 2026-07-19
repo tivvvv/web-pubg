@@ -72,8 +72,12 @@ const GEO = {
   body: new THREE.BoxGeometry(0.34, 0.42, 0.18),
   flap: new THREE.BoxGeometry(0.36, 0.14, 0.2),
   pocket: new THREE.BoxGeometry(0.2, 0.16, 0.06),
+  sidePocket: new THREE.BoxGeometry(0.06, 0.14, 0.12),
   strap: new THREE.BoxGeometry(0.05, 0.34, 0.03),
+  buckle: new THREE.BoxGeometry(0.05, 0.04, 0.02),
+  handle: new THREE.BoxGeometry(0.14, 0.035, 0.04),
 };
+const buckleMat = new THREE.MeshLambertMaterial({ color: 0x3a3f45 });
 const packMats = new Map<number, THREE.MeshLambertMaterial>();
 function packMat(level: PackLevel): THREE.MeshLambertMaterial {
   const color = PACKS[level].color;
@@ -85,7 +89,7 @@ function packMat(level: PackLevel): THREE.MeshLambertMaterial {
   return m;
 }
 
-// 背包: 主体 + 翻盖 + 外袋(背面) + 双背带(贴背侧)
+// 背包: 主体 + 翻盖(双扣) + 顶提手 + 外袋(背面) + 侧袋 ×2 + 双背带(贴背侧); 体型随等级增大
 export function buildPackModel(level: PackLevel): THREE.Group {
   const g = new THREE.Group();
   const mat = packMat(level);
@@ -93,13 +97,32 @@ export function buildPackModel(level: PackLevel): THREE.Group {
   const flap = new THREE.Mesh(GEO.flap, mat);
   flap.position.set(0, 0.24, 0);
   g.add(flap);
+  // 翻盖扣具 ×2
+  for (const sx of [-0.1, 0.1]) {
+    const buckle = new THREE.Mesh(GEO.buckle, buckleMat);
+    buckle.position.set(sx, 0.19, 0.1);
+    g.add(buckle);
+  }
+  // 顶提手
+  const handle = new THREE.Mesh(GEO.handle, buckleMat);
+  handle.position.set(0, 0.33, -0.02);
+  g.add(handle);
   const pocket = new THREE.Mesh(GEO.pocket, mat);
   pocket.position.set(0, -0.08, -0.11);
   g.add(pocket);
+  // 侧袋 ×2
+  for (const sx of [-0.2, 0.2]) {
+    const sp = new THREE.Mesh(GEO.sidePocket, mat);
+    sp.position.set(sx, -0.1, 0.02);
+    g.add(sp);
+  }
   for (const sx of [-0.1, 0.1]) {
     const strap = new THREE.Mesh(GEO.strap, mat);
     strap.position.set(sx, 0, 0.105);
     g.add(strap);
   }
+  // 等级体型递进(锚点不变, 绕原点缩放)
+  const s = [0, 0.85, 1.0, 1.18][level];
+  g.scale.setScalar(s);
   return g;
 }

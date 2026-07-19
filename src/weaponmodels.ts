@@ -202,26 +202,47 @@ function buildKnife(): WeaponModel {
   return { group: g, muzzle: muzzleAt(g, 0, 0, 0.45), mag: null };
 }
 
-// ── 手雷: 墨绿球体 + 银色压柄 + 顶部引信 ──
+// ── 手雷: 微扁球体 + 菠萝刻槽 + 银色压柄 + 引信座 + 拉环 ──
 function buildFrag(): WeaponModel {
   const g = new THREE.Group();
   const body = new THREE.Mesh(SPH, MAT_FG);
-  body.scale.set(0.05, 0.055, 0.05);
+  body.scale.set(0.052, 0.06, 0.052);
   body.castShadow = true;
   g.add(body);
-  cz(g, MAT_DK, 0.015, 0.03, 0, 0.06, 0);                 // 引信座
-  b(g, MAT_LT, 0.012, 0.02, 0.075, 0.045, 0.045, 0, 0.45); // 压柄
-  cx(g, MAT_LT, 0.012, 0.035, -0.025, 0.07, 0);           // 拉环柄
+  // 菠萝刻槽(暗色细环: 2 横 1 竖)
+  const grooveMat = new THREE.MeshLambertMaterial({ color: 0x2a3d2c });
+  const mkGroove = (y: number, rz: number): THREE.Mesh => {
+    const m = new THREE.Mesh(CYL, grooveMat);
+    m.scale.set(0.054, 0.006, 0.054);
+    m.position.y = y;
+    m.rotation.z = rz;
+    g.add(m);
+    return m;
+  };
+  mkGroove(0.022, 0);
+  mkGroove(-0.02, 0);
+  const vGroove = new THREE.Mesh(CYL, grooveMat);
+  vGroove.scale.set(0.054, 0.006, 0.054);
+  vGroove.rotation.x = Math.PI / 2;
+  g.add(vGroove);
+  cz(g, MAT_DK, 0.015, 0.03, 0, 0.066, 0);                 // 引信座
+  b(g, MAT_LT, 0.012, 0.02, 0.075, 0.045, 0.048, 0, 0.45); // 压柄
+  // 拉环(细方环)
+  b(g, MAT_LT, 0.006, 0.03, 0.006, -0.032, 0.075, 0);
+  b(g, MAT_LT, 0.006, 0.03, 0.006, -0.012, 0.075, 0);
+  b(g, MAT_LT, 0.026, 0.006, 0.006, -0.022, 0.09, 0);
   return { group: g, muzzle: muzzleAt(g, 0, 0.1, 0), mag: null };
 }
 
-// ── 烟雾弹: 浅灰罐体 + 红色识别带 + 顶盖 ──
+// ── 烟雾弹: 加大罐体 + 红色识别带 + 顶盖 + 保险销 + 压柄 ──
 function buildSmoke(): WeaponModel {
   const g = new THREE.Group();
-  cz(g, MAT_LT, 0.045, 0.12, 0, 0, 0);        // 罐体
-  cz(g, MAT_BD, 0.047, 0.03, 0, 0.02, 0);     // 色带
-  cz(g, MAT_DK, 0.02, 0.02, 0, 0.07, 0);      // 顶盖
-  cx(g, MAT_DK, 0.01, 0.03, -0.02, 0.075, 0); // 保险销
+  cz(g, MAT_LT, 0.06, 0.16, 0, 0, 0);         // 加大罐体
+  cz(g, MAT_BD, 0.062, 0.045, 0, 0.03, 0);    // 色带
+  cz(g, MAT_DK, 0.024, 0.025, 0, 0.085, 0);   // 顶盖
+  b(g, MAT_DK, 0.014, 0.02, 0.06, 0.052, 0.075, 0, 0.4); // 压柄
+  cx(g, MAT_DK, 0.012, 0.035, -0.026, 0.092, 0); // 保险销
+  b(g, MAT_DK, 0.006, 0.02, 0.006, -0.036, 0.1, 0); // 销环
   return { group: g, muzzle: muzzleAt(g, 0, 0.1, 0), mag: null };
 }
 

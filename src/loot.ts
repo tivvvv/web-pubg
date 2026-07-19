@@ -25,11 +25,20 @@ const LOOT_CAP = 240; // 室内配对 + 野外补齐 + 野外武器/弹药 + 空
 const GEO = {
   ammo: new THREE.BoxGeometry(0.26, 0.18, 0.2),
   ammoBand: new THREE.BoxGeometry(0.28, 0.07, 0.22),
+  ammoLid: new THREE.BoxGeometry(0.29, 0.03, 0.23),
+  latch: new THREE.BoxGeometry(0.05, 0.045, 0.025),
+  stripe: new THREE.BoxGeometry(0.22, 0.014, 0.03),
   medBody: new THREE.BoxGeometry(0.34, 0.12, 0.26),
+  medLid: new THREE.BoxGeometry(0.35, 0.045, 0.27),
+  medHandle: new THREE.BoxGeometry(0.12, 0.03, 0.04),
   crossV: new THREE.BoxGeometry(0.06, 0.03, 0.18),
   crossH: new THREE.BoxGeometry(0.18, 0.03, 0.06),
   bandageRoll: new THREE.CylinderGeometry(0.09, 0.09, 0.22, 10),
+  bandageTail: new THREE.BoxGeometry(0.02, 0.008, 0.16),
   drinkCan: new THREE.CylinderGeometry(0.07, 0.07, 0.2, 10),
+  drinkLid: new THREE.CylinderGeometry(0.065, 0.065, 0.012, 10),
+  drinkBand: new THREE.CylinderGeometry(0.073, 0.073, 0.1, 10),
+  pullTab: new THREE.BoxGeometry(0.03, 0.008, 0.05),
   ring: new THREE.TorusGeometry(0.42, 0.025, 6, 24),
 };
 const MAT = {
@@ -38,6 +47,9 @@ const MAT = {
   cross: new THREE.MeshBasicMaterial({ color: 0xe33e3e }),
   bandage: new THREE.MeshBasicMaterial({ color: 0xf5f0e2 }),
   drink: new THREE.MeshBasicMaterial({ color: 0x3fc98e }),
+  silver: new THREE.MeshBasicMaterial({ color: 0xb9c1c9 }),
+  dark: new THREE.MeshBasicMaterial({ color: 0x3a3a34 }),
+  label: new THREE.MeshBasicMaterial({ color: 0x35cfff }),
 };
 // 弹药色带材质(按枪种配色, 与武器光环同色)
 const BAND_MAT = new Map<AmmoType, THREE.MeshBasicMaterial>();
@@ -115,26 +127,66 @@ function buildLootMesh(kind: LootKind): THREE.Group {
       holder.add(pm);
     }
   } else if (kind === 'bandage') {
-    // 绷带卷(放倒的白色小卷)
+    // 绷带卷(放倒的白色小卷) + 红十字绑带 + 散开的卷尾
     const m = new THREE.Mesh(GEO.bandageRoll, MAT.bandage);
     m.rotation.z = Math.PI / 2;
     holder.add(m);
+    const strap = new THREE.Mesh(GEO.stripe, MAT.cross);
+    strap.scale.set(0.5, 1, 3.2);
+    strap.position.y = 0.002;
+    holder.add(strap);
+    const tail = new THREE.Mesh(GEO.bandageTail, MAT.bandage);
+    tail.position.set(0.1, -0.075, 0.1);
+    tail.rotation.y = 0.5;
+    holder.add(tail);
   } else if (kind === 'drink') {
-    // 饮料小罐
+    // 饮料罐: 罐体 + 亮标签带 + 顶盖 + 拉环
     holder.add(new THREE.Mesh(GEO.drinkCan, MAT.drink));
+    const band = new THREE.Mesh(GEO.drinkBand, MAT.label);
+    band.position.y = -0.02;
+    holder.add(band);
+    const lid = new THREE.Mesh(GEO.drinkLid, MAT.silver);
+    lid.position.y = 0.103;
+    holder.add(lid);
+    const tab = new THREE.Mesh(GEO.pullTab, MAT.dark);
+    tab.position.set(0, 0.112, 0.015);
+    holder.add(tab);
   } else if (kind === 'ammoRifle' || kind === 'ammoSmg' || kind === 'ammoSniper' || kind === 'ammoPistol' || kind === 'ammoShotgun') {
-    // 分类弹药盒: 深灰盒体 + 枪种色带
+    // 分类弹药盒: 深灰盒体 + 枪种色带 + 盖 + 锁扣 + 口径识别条
     const t = kind === 'ammoRifle' ? 'rifle' : kind === 'ammoSmg' ? 'smg' : kind === 'ammoSniper' ? 'sniper' : kind === 'ammoShotgun' ? 'shotgun' : 'pistol';
     holder.add(new THREE.Mesh(GEO.ammo, MAT.ammoBody));
     holder.add(new THREE.Mesh(GEO.ammoBand, bandMat(t)));
+    const lid = new THREE.Mesh(GEO.ammoLid, MAT.dark);
+    lid.position.y = 0.105;
+    holder.add(lid);
+    const stripe = new THREE.Mesh(GEO.stripe, bandMat(t));
+    stripe.position.y = 0.122;
+    holder.add(stripe);
+    const latch = new THREE.Mesh(GEO.latch, MAT.silver);
+    latch.position.set(0, 0.02, 0.115);
+    holder.add(latch);
   } else {
+    // 医疗箱: 白盒 + 盖缝 + 顶部红十字 + 提手 + 前锁扣
     holder.add(new THREE.Mesh(GEO.medBody, MAT.medkit));
+    const lid = new THREE.Mesh(GEO.medLid, MAT.medkit);
+    lid.position.y = 0.06;
+    holder.add(lid);
+    const seam = new THREE.Mesh(GEO.medLid, MAT.dark);
+    seam.scale.set(1.01, 0.2, 1.01);
+    seam.position.y = 0.038;
+    holder.add(seam);
     const cv = new THREE.Mesh(GEO.crossV, MAT.cross);
-    cv.position.y = 0.075;
+    cv.position.y = 0.085;
     holder.add(cv);
     const ch = new THREE.Mesh(GEO.crossH, MAT.cross);
-    ch.position.y = 0.075;
+    ch.position.y = 0.085;
     holder.add(ch);
+    const handle = new THREE.Mesh(GEO.medHandle, MAT.dark);
+    handle.position.set(0, 0.1, -0.06);
+    holder.add(handle);
+    const latch = new THREE.Mesh(GEO.latch, MAT.silver);
+    latch.position.set(0, 0.01, 0.135);
+    holder.add(latch);
   }
   const ring = new THREE.Mesh(GEO.ring, RING_MAT[kind]);
   ring.rotation.x = Math.PI / 2;
