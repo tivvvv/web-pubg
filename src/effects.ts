@@ -322,6 +322,11 @@ export class Effects {
     this.burst(p, 14, 0.85, 0.93, 1.0, 3.6);
   }
 
+  // 划水小水花
+  splashSmall(p: THREE.Vector3): void {
+    this.burst(p, 5, 0.75, 0.88, 1.0, 1.8);
+  }
+
   // 岩石命中: 灰白碎屑 + 火星
   impactRock(p: THREE.Vector3): void {
     this.burst(p, 6, 0.72, 0.72, 0.7, 3.2);

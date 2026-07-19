@@ -435,6 +435,10 @@ export class Game {
   private startHeal(c: Character, id: HealId): void {
     if (!c.alive || this.healT > 0) return;
     if (c.isPlayer && this.player?.descent) return; // 跳伞中禁用恢复品
+    if (c.isPlayer && c.swimming) {
+      this.hud.toast('游泳中无法恢复');
+      return;
+    }
     const def = HEALS[id];
     if (c.heals[id] <= 0 || c.hp >= def.cap - 0.5) return;
     this.healT = def.cast;
@@ -835,6 +839,43 @@ export class Game {
         b.pos.x += dx * push;
         b.pos.z += dz * push;
       }
+    }
+  }
+
+  // ---- 游泳状态机(玩家/bot/队友共用, 各控制器每帧调用一次) ----
+  // 入水: 水深(水面-地形) >1.1 且脚下无可站立浅台(桥面/岩石不算);
+  // 出水: 水深 <0.9 或脚下出现 ≥水面-0.9 的站立面(河岸/浅滩/桥面)
+  updateSwim(c: Character): void {
+    if (!c.alive) {
+      c.swimming = false;
+      c.swimDip = 0;
+      return;
+    }
+    const x = c.pos.x;
+    const z = c.pos.z;
+    const depth = WATER_Y - this.world.getHeight(x, z);
+    if (!c.swimming) {
+      if (depth > 1.1 && c.pos.y < WATER_Y + 0.3) {
+        const standH = this.world.groundHeight(x, z, c.pos.y + 0.3);
+        if (standH < WATER_Y - 1.0) {
+          const plunge = !c.grounded || c.vy < -2; // 高处落水: 下潜+大水花
+          c.swimming = true;
+          c.swimT = 0;
+          c.swimAcc = 0;
+          c.swimDip = plunge ? 0.4 : 0;
+          this.tmpA.set(x, WATER_Y + 0.06, z);
+          this.effects.splash(this.tmpA);
+          if (plunge) this.effects.splash(this.tmpA);
+          if (c.isPlayer) this.audio.splashIn();
+          else this.soundAt(c.pos, (d, p) => this.audio.splashAt(d, p));
+          if (c.isPlayer && this.healT > 0) this.cancelHeal('入水打断恢复');
+        }
+      }
+    } else if (depth < 0.9 || this.world.groundHeight(x, z, c.pos.y + 0.3) > WATER_Y - 0.9) {
+      c.swimming = false;
+      c.swimDip = 0;
+      if (c.isPlayer) this.audio.splashOut();
+      else this.soundAt(c.pos, (d, p) => this.audio.splashAt(d, p));
     }
   }
 
@@ -1622,6 +1663,7 @@ export class Game {
     } else {
       this.hud.setAltitude(-1, 0);
     }
+    this.hud.setSwimming(c.swimming); // 「游泳中」状态标
     // 小队面板(玩家高亮, 变化才刷新)
     this.hud.setSquad([
       { name: '你', hp: c.hp, alive: c.alive, isPlayer: true },

@@ -33,6 +33,8 @@ export class PlayerController {
   private fov = BASE_FOV;
   private hv = new THREE.Vector2(); // 空降水平速度
   private stepAcc = 0;
+  private swimAcc = 0;      // 游泳划水距离累计
+  private swimToastT = 0;   // 「游泳中无法攻击」提示节流
   private throwHold = false; // 正在按住左键蓄力瞄准
   private holdT = 0;         // 蓄力时长
   spreadRad = 0.004;
@@ -44,6 +46,7 @@ export class PlayerController {
   private lookAt = new THREE.Vector3();
   private throwDir = new THREE.Vector3();
   private throwOrigin = new THREE.Vector3();
+  private tmpSwim = new THREE.Vector3();
 
   constructor(shirtColor: number) {
     this.char = new Character('你', true, shirtColor);
@@ -87,7 +90,7 @@ export class PlayerController {
     }
 
     const gun = c.heldGun();
-    this.aiming = input.rmb && !this.reloading && gun !== null;
+    this.aiming = input.rmb && !this.reloading && gun !== null && !c.swimming;
 
     // ---- 移动 ----
     const fwdX = Math.sin(this.yaw);
@@ -112,15 +115,18 @@ export class PlayerController {
       wz /= wlen;
       const forwardish = (wx * fwdX + wz * fwdZ) > 0.3;
       let speed = 4.3;
-      if (this.aiming) speed = 2.7;
+      if (c.swimming) speed = 2.2; // 游泳低速, 无冲刺
+      else if (this.aiming) speed = 2.7;
       else if (sprint && forwardish && c.stance === 'stand') speed = 6.6;
-      speed *= c.stance === 'crouch' ? 0.5 : c.stance === 'prone' ? 0.25 : 1; // 蹲 50% / 趴 25% 爬行
-      const groundH = game.world.getHeight(c.pos.x, c.pos.z);
-      if (c.pos.y < WATER_Y + 0.15 && groundH < WATER_Y) speed *= 0.55; // 涉水
+      if (!c.swimming) {
+        speed *= c.stance === 'crouch' ? 0.5 : c.stance === 'prone' ? 0.25 : 1; // 蹲 50% / 趴 25% 爬行
+        const groundH = game.world.getHeight(c.pos.x, c.pos.z);
+        if (c.pos.y < WATER_Y + 0.15 && groundH < WATER_Y) speed *= 0.55; // 涉水
+      }
       vx = wx * speed;
       vz = wz * speed;
       // 脚步声(趴下显著变轻)
-      if (c.grounded) {
+      if (c.grounded && !c.swimming) {
         this.stepAcc += speed * dt;
         if (this.stepAcc > 2.7) {
           this.stepAcc = 0;
@@ -128,15 +134,27 @@ export class PlayerController {
         }
       }
     }
-    if (input.keys.has('Space') && c.grounded) {
+    if (input.keys.has('Space') && c.grounded && !c.swimming) {
       if (c.stance !== 'stand') c.setStance('stand'); // 起身再跳
       c.vy = 7.4;
       c.grounded = false;
       jumped = true;
     }
     const wasAir = !c.grounded;
-    c.applyMove(vx, vz, dt, game.world);
-    if (wasAir && c.grounded) game.audio.jumpLand();
+    if (c.swimming) {
+      c.applySwim(vx, vz, dt, game.world);
+      // 划水声 + 小水花(按划水距离节流)
+      this.swimAcc += c.speed2d * dt;
+      if (this.swimAcc > 1.7) {
+        this.swimAcc = 0;
+        game.audio.swimStroke();
+        game.effects.splashSmall(this.tmpSwim.set(c.pos.x, WATER_Y + 0.04, c.pos.z));
+      }
+    } else {
+      c.applyMove(vx, vz, dt, game.world);
+      if (wasAir && c.grounded) game.audio.jumpLand();
+    }
+    game.updateSwim(c);
     c.yaw = this.yaw;
     // ADS: 枪械随视线俯仰(平滑); 换弹进度供模型下沉/弹匣脱落动画
     c.aimPitch = lerp(c.aimPitch, this.aiming ? this.pitch : 0, Math.min(1, dt * 12));
@@ -161,7 +179,21 @@ export class PlayerController {
       this.throwHold = false;
       game.grenades.hidePreview();
     }
-    if (c.curSlot === 3) {
+    // 游泳中禁止攻击/投掷(节流提示)
+    this.swimToastT -= dt;
+    if (c.swimming) {
+      if (this.throwHold) {
+        this.throwHold = false;
+        game.grenades.hidePreview();
+      }
+      if ((input.lmb || pressedEdge) && this.swimToastT <= 0) {
+        this.swimToastT = 1.2;
+        game.hud.toast('游泳中无法攻击');
+      }
+    }
+    if (c.swimming) {
+      this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
+    } else if (c.curSlot === 3) {
       // 近战: 按住连挥, 冷却在 meleeAttack 内判定
       if (input.lmb && game.meleeAttack(c)) acted = true;
       this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
@@ -622,6 +654,11 @@ export class PlayerController {
       // 不钻地
       const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.28;
       if (this.camera.position.y < minY) this.camera.position.y = minY;
+      // 不没入水面(游泳时第三人称保持在水上)
+      if (this.camera.position.y < WATER_Y + 0.16 &&
+        game.world.getHeight(this.camera.position.x, this.camera.position.z) < WATER_Y) {
+        this.camera.position.y = WATER_Y + 0.16;
+      }
       // 爆炸震动
       if (game.shakeAmp > 0.002) {
         this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;

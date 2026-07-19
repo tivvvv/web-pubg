@@ -1,6 +1,6 @@
 // Bot AI: 游走/拾取 ↔ 交战 状态机; 赤手空拳开局, 优先找枪, 近身用近战
 import * as THREE from 'three';
-import { Character } from './character';
+import { Character, moveChar } from './character';
 import type { AmmoType, WeaponId } from './types';
 import { WEAPONS } from './weapons';
 import { WATER_Y } from './world';
@@ -11,6 +11,8 @@ import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import type { Game } from './game';
 
 const ENGAGE_DIST = 92;
+// 游泳找岸的 4 个采样方向
+const SWIM_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 
 export class BotController {
   readonly char: Character;
@@ -75,6 +77,12 @@ export class BotController {
     }
     // 闪避驶来载具(便宜版: 侧向急躲)
     if (this.dodgeVehicle(dt, game)) return;
+    // 游泳状态: 深水中只朝岸游, 不索敌/开火/拾取
+    game.updateSwim(c);
+    if (c.swimming) {
+      this.swimToBank(dt, game);
+      return;
+    }
     this.fireTimer -= dt;
 
     // 换弹(仅枪械, 消耗对应类型弹药)
@@ -146,6 +154,42 @@ export class BotController {
     }
   }
 
+  // 游泳中: 朝目标岸(渡河)或最近岸(地形上坡方向)游, 不打斗
+  private swimToBank(dt: number, game: Game): void {
+    const c = this.char;
+    let tx: number;
+    let tz: number;
+    if (this.hasMoveTarget) {
+      tx = this.moveTarget.x;
+      tz = this.moveTarget.z;
+    } else {
+      // 最近岸 ≈ 地形上坡方向: 4 向 7m 采样取最高
+      let bestH = -Infinity;
+      let bx = 1;
+      let bz = 0;
+      for (const [sx, sz] of SWIM_DIRS) {
+        const h = game.world.getHeight(c.pos.x + sx * 7, c.pos.z + sz * 7);
+        if (h > bestH) {
+          bestH = h;
+          bx = sx;
+          bz = sz;
+        }
+      }
+      tx = c.pos.x + bx * 12;
+      tz = c.pos.z + bz * 12;
+    }
+    const dx = tx - c.pos.x;
+    const dz = tz - c.pos.z;
+    const d = Math.hypot(dx, dz) || 1;
+    c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 3.2 * dt);
+    moveChar(c, (dx / d) * 2.2, (dz / d) * 2.2, dt, game.world);
+    c.swimAcc += c.speed2d * dt;
+    if (c.swimAcc > 1.7) {
+      c.swimAcc = 0;
+      game.soundAt(c.pos, (dd, p) => game.audio.swimStrokeAt(dd, p));
+    }
+  }
+
   // 是否想要这件护具: 空槽或更高等级
   private wantsArmor(kind: import('./types').LootKind): boolean {
     const info = armorFromLoot(kind);
@@ -173,7 +217,7 @@ export class BotController {
     const dz = c.pos.z - this.fragOut.z;
     const d = Math.hypot(dx, dz) || 1;
     c.yaw = Math.atan2(dx / d, dz / d);
-    c.applyMove((dx / d) * 6.2, (dz / d) * 6.2, dt, game.world);
+    moveChar(c, (dx / d) * 6.2, (dz / d) * 6.2, dt, game.world);
     return true;
   }
 
@@ -230,7 +274,7 @@ export class BotController {
       const hz = Math.cos(v.yaw) * sign;
       if ((dx * hx + dz * hz) / (d || 1) < 0.55) continue; // 不朝我来
       const side = dx * hz - dz * hx > 0 ? 1 : -1;
-      c.applyMove(hz * side * 4.8, -hx * side * 4.8, dt, game.world);
+      moveChar(c, hz * side * 4.8, -hx * side * 4.8, dt, game.world);
       return true;
     }
     return false;
@@ -391,7 +435,7 @@ export class BotController {
     }
     // 姿态速度系数(蹲射的 bot 移动减半)
     const stanceMul = c.stance === 'crouch' ? 0.5 : 1;
-    c.applyMove(vx * stanceMul, vz * stanceMul, dt, game.world);
+    moveChar(c, vx * stanceMul, vz * stanceMul, dt, game.world);
 
     // 攻击
     if (this.reactT > 0) {
@@ -575,7 +619,7 @@ export class BotController {
       vz = (dz / d) * speed;
       c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 3.4 * dt);
     }
-    c.applyMove(vx, vz, dt, game.world);
+    moveChar(c, vx, vz, dt, game.world);
   }
 
   private pickWanderPoint(game: Game): void {

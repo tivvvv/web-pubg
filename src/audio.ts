@@ -282,6 +282,35 @@ export class AudioSys {
     this.noiseBurst(0.1 * vol, 0, 240, 0.8, 0.045);
   }
 
+  // 入水扑通(玩家)
+  splashIn(): void {
+    this.noiseBurst(0.5, 0, 520, 0.8, 0.28);
+    this.thump(0.32, 0, 280, 60, 0.22);
+  }
+
+  // 出水涉水(玩家)
+  splashOut(): void {
+    this.noiseBurst(0.24, 0, 720, 0.9, 0.18);
+  }
+
+  // 他人入水(距离/方位衰减)
+  splashAt(dist: number, pan: number): void {
+    const att = clamp(1.25 / (1 + dist * 0.03), 0.02, 1);
+    this.noiseBurst(0.42 * att, pan, 560, 0.8, 0.24);
+    this.thump(0.26 * att, pan, 240, 70, 0.18);
+  }
+
+  // 划水(玩家, 每 ~1.7m 一次)
+  swimStroke(): void {
+    this.noiseBurst(0.13, 0, 480, 0.7, 0.15);
+  }
+
+  // 他人划水(距离/方位衰减)
+  swimStrokeAt(dist: number, pan: number): void {
+    const att = clamp(1.1 / (1 + dist * 0.035), 0.015, 1);
+    this.noiseBurst(0.2 * att, pan, 480, 0.7, 0.17);
+  }
+
   jumpLand(): void {
     this.noiseBurst(0.16, 0, 180, 0.8, 0.07);
   }

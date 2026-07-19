@@ -2,7 +2,7 @@
 // teammate.ts — 队友 AI: 跟随/交战/乘车/跳伞; 与 enemy BotController 共享战斗原语
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { Character } from './character';
+import { Character, moveChar } from './character';
 import type { Game } from './game';
 import type { PlayerController } from './player';
 import { isWeaponKind } from './loot';
@@ -95,7 +95,7 @@ export class TeammateController {
         const d = Math.hypot(this.tgt.x - c.pos.x, this.tgt.z - c.pos.z);
         if (d > 2.0) {
           c.yaw = Math.atan2(this.tgt.x - c.pos.x, this.tgt.z - c.pos.z);
-          c.applyMove(Math.sin(c.yaw) * 5.4, Math.cos(c.yaw) * 5.4, dt, game.world);
+          moveChar(c, Math.sin(c.yaw) * 5.4, Math.cos(c.yaw) * 5.4, dt, game.world);
         } else {
           this.riding = pv;
           this.seatIdx = seat;
@@ -104,6 +104,25 @@ export class TeammateController {
         }
         return;
       }
+    }
+
+    // ---- 游泳: 跟随玩家渡河, 不交战不拾取 ----
+    game.updateSwim(c);
+    if (c.swimming) {
+      // 直接朝玩家位置游(跟随偏移点可能落在水里, 会原地踩水)
+      const p = player.char.pos;
+      const dx = p.x - c.pos.x;
+      const dz = p.z - c.pos.z;
+      const d = Math.hypot(dx, dz) || 1;
+      c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 4 * dt);
+      moveChar(c, (dx / d) * 2.2, (dz / d) * 2.2, dt, game.world);
+      c.swimAcc += c.speed2d * dt;
+      if (c.swimAcc > 1.7) {
+        c.swimAcc = 0;
+        game.soundAt(c.pos, (dd, p2) => game.audio.swimStrokeAt(dd, p2));
+      }
+      this.fireTimer -= dt;
+      return;
     }
 
     // ---- 换弹/治疗 ----
@@ -261,7 +280,7 @@ export class TeammateController {
     const mx = -nz * this.strafeDir * 0.7 + nx * radial;
     const mz = nx * this.strafeDir * 0.7 + nz * radial;
     const ml = Math.hypot(mx, mz) || 1;
-    c.applyMove((mx / ml) * 3.2, (mz / ml) * 3.2, dt, game.world);
+    moveChar(c, (mx / ml) * 3.2, (mz / ml) * 3.2, dt, game.world);
     // 开火
     if (this.reactT > 0) {
       this.reactT -= dt;
@@ -326,9 +345,9 @@ export class TeammateController {
     if (d > 2.2) {
       const sp = pd > 14 || player.char.speed2d > 5 ? 6.6 : 4.3;
       c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 5 * dt);
-      c.applyMove((dx / d) * Math.min(sp, d * 1.5), (dz / d) * Math.min(sp, d * 1.5), dt, game.world);
+      moveChar(c, (dx / d) * Math.min(sp, d * 1.5), (dz / d) * Math.min(sp, d * 1.5), dt, game.world);
     } else {
-      c.applyMove(0, 0, dt, game.world);
+      moveChar(c, 0, 0, dt, game.world);
       c.yaw = turnToward(c.yaw, player.yaw, 2.5 * dt);
     }
   }
@@ -342,7 +361,7 @@ export class TeammateController {
     const d = Math.hypot(item.group.position.x - c.pos.x, item.group.position.z - c.pos.z);
     if (d > 1.6) {
       c.yaw = Math.atan2(item.group.position.x - c.pos.x, item.group.position.z - c.pos.z);
-      c.applyMove(Math.sin(c.yaw) * 4.6, Math.cos(c.yaw) * 4.6, dt, game.world);
+      moveChar(c, Math.sin(c.yaw) * 4.6, Math.cos(c.yaw) * 4.6, dt, game.world);
       return true;
     }
     if (isWeaponKind(k)) {

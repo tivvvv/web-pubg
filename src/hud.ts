@@ -55,6 +55,7 @@ export class Hud {
   private healCountsEl = el('heal-counts');
   private drinkBuff = el('drink-buff');
   private drinkBuffFill = el('drink-buff-fill');
+  private swimTag = el('swim-tag');
   private backpack = el('backpack');
   private bpContent = el('bp-content');
 
@@ -114,6 +115,11 @@ export class Hud {
     this.hpText.textContent = String(Math.ceil(pct));
     const hue = (pct / 100) * 115; // 绿→红
     this.hpFill.style.backgroundColor = `hsl(${hue}, 75%, 45%)`;
+  }
+
+  // 「游泳中」状态标
+  setSwimming(on: boolean): void {
+    this.swimTag.classList.toggle('show', on);
   }
 
   // 护具栏: 等级配色耐久条, 空槽置灰

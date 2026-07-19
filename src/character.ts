@@ -7,6 +7,7 @@ import { buildHelmetModel, buildVestModel } from './armor';
 import { buildPackModel, type PackLevel } from './backpack';
 import { buildWeaponModel, type WeaponModel, type WeaponModelId } from './weaponmodels';
 import type { World } from './world';
+import { WATER_Y } from './world';
 import { clamp } from './utils';
 
 export type Stance = 'stand' | 'crouch' | 'prone';
@@ -186,6 +187,11 @@ export class Character {
   stanceF = 0;         // 姿态插值 0站→1蹲→2趴(平滑过渡)
   groundH = 0;         // 脚下地面高(供贴地阴影)
   airPose: 'fall' | 'canopy' | 'sit' | null = null; // 空降姿势/驾驶坐姿(驾驶时收枪)
+  swimming = false;      // 深水游泳中(由 Game.updateSwim 维护)
+  swimT = 0;             // 游泳累计时间(浮沉/划臂相位)
+  swimDip = 0;           // 高处落水下潜剩余秒(0.4s 俯冲后浮起)
+  swimAcc = 0;           // 划水距离累计(划水声/小水花节流)
+  private swimF = 0;     // 游泳姿态混合 0..1(平滑进出)
   canopyGroup: THREE.Group | null = null;   // 降落伞模型(开伞挂载, 落地卸载)
   private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
   lastAttackerId = 0;
@@ -280,14 +286,16 @@ export class Character {
     }
   }
 
-  // 当前眼高(站1.62/蹲1.1/趴0.35, 随 stanceF 平滑)
+  // 当前眼高(站1.62/蹲1.1/趴0.35, 随 stanceF 平滑; 游泳时贴水面)
   eyeHeight(): number {
+    if (this.swimming) return 0.95; // pos.y ≈ 水面-0.78 → 眼位露出水面 ~0.17
     const f = this.stanceF;
     return f <= 1 ? 1.62 - 0.52 * f : 1.1 - 0.75 * (f - 1);
   }
 
-  // 胸部命中/瞄准参考高(站1.15/蹲0.72/趴0.3)
+  // 胸部命中/瞄准参考高(站1.15/蹲0.72/趴0.3; 游泳时在水面)
   chestHeight(): number {
+    if (this.swimming) return 0.6;
     const f = this.stanceF;
     return f <= 1 ? 1.15 - 0.43 * f : 0.72 - 0.42 * (f - 1);
   }
@@ -352,6 +360,26 @@ export class Character {
     }
   }
 
+  // 游泳位移: 水平限速由调用方保证; Y 锁定水面浮沉, 高处落水先下潜再浮起
+  applySwim(vx: number, vz: number, dt: number, world: World): void {
+    this.pos.x += vx * dt;
+    this.pos.z += vz * dt;
+    world.resolveCollision(this.pos, this.radius);
+    this.swimT += dt;
+    const bob = Math.sin(this.swimT * 2.3) * 0.045;
+    let targetY = WATER_Y - 0.78 + bob;
+    if (this.swimDip > 0) {
+      this.swimDip = Math.max(0, this.swimDip - dt);
+      const p = 1 - this.swimDip / 0.4; // 0→1
+      targetY -= Math.sin(p * Math.PI) * 0.55; // 下潜再弹回
+    }
+    this.pos.y += (targetY - this.pos.y) * Math.min(1, dt * 5);
+    this.vy = 0;
+    this.grounded = false;
+    this.groundH = WATER_Y - 0.03; // 贴水面的阴影
+    this.speed2d = Math.sqrt(vx * vx + vz * vz);
+  }
+
   // 通用位移: 水平速度 + 重力 + 地面/碰撞
   applyMove(vx: number, vz: number, dt: number, world: World): void {
     this.pos.x += vx * dt;
@@ -385,8 +413,8 @@ export class Character {
     const p = this.parts;
     // 持械模型切换(仅在栏位/武器变化时克隆)
     const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
-    const wantId: WeaponModelId | null = this.airPose
-      ? null // 空降收枪
+    const wantId: WeaponModelId | null = this.airPose || this.swimming
+      ? null // 空降/游泳收枪
       : gun
         ? gun.def.id
         : this.curSlot === 3 && this.melee.def.id === 'knife' ? 'knife'
@@ -450,6 +478,25 @@ export class Character {
         p.legL.rotation.set(-1.35, 0, 0.08);
         p.legR.rotation.set(-1.3, 0, -0.08);
       }
+      return;
+    }
+    // 游泳姿势: 水平俯身贴水面 + 交替划臂打水(swimF 平滑进出)
+    this.swimF = clamp(this.swimF + (this.swimming ? 1 : -1) * dt * 3.2, 0, 1);
+    if (this.swimF > 0.001) {
+      const f = this.swimF;
+      const ph = this.swimT * 3.4;
+      const sL = Math.sin(ph);
+      const sR = Math.sin(ph + Math.PI);
+      p.inner.rotation.x = f * (Math.PI / 2 - 0.22); // 接近水平, 头抬出水面
+      p.inner.rotation.y = 0;
+      p.inner.position.y = f * 0.6;
+      p.inner.position.z = 0;
+      p.armL.rotation.set(-1.15 + f * (-0.3 + sL * 0.5), 0, 0.25 + f * 0.1);
+      p.armR.rotation.set(-1.3 + f * (-0.15 + sR * 0.5), 0, -0.1 - f * 0.1);
+      p.armL.position.z = 0;
+      p.armR.position.z = 0;
+      p.legL.rotation.x = f * (0.3 + sR * 0.18);
+      p.legR.rotation.x = f * (0.3 + sL * 0.18);
       return;
     }
     // 姿态混合: fC 蹲权重(0..1), fP 趴权重(0..1)
@@ -523,11 +570,12 @@ export class Character {
     const f = this.stanceF;
     const fC = Math.min(f, 1);
     const fP = Math.max(0, f - 1);
+    const swim = this.swimming;
     const cosY = Math.cos(this.yaw);
     const sinY = Math.sin(this.yaw);
-    // 头部球体: 中心 pos + 高 headY (+ 趴时前移 headFwd), r=0.26
-    const headY = 1.55 - 0.53 * fC - 0.67 * fP;
-    const headFwd = 1.1 * fP;
+    // 头部球体: 中心 pos + 高 headY (+ 趴时前移 headFwd), r=0.26; 游泳时头在水面上
+    const headY = swim ? 1.12 : 1.55 - 0.53 * fC - 0.67 * fP;
+    const headFwd = swim ? 0.5 : 1.1 * fP;
     const hx = this.pos.x + sinY * headFwd - ox;
     const hy = this.pos.y + headY - oy;
     const hz = this.pos.z + cosY * headFwd - oz;
@@ -543,10 +591,11 @@ export class Character {
         }
       }
     }
-    // 身体 OBB: 半尺寸随姿态(高 halfY, 长 halfZ), 趴时前移 bodyFwd
-    const bodyY = 0.78 - 0.26 * fC - 0.22 * fP;
-    const bodyFwd = 0.85 * fP;
-    const bodyHalfZ = 0.22 + 0.63 * fP;
+    // 身体 OBB: 半尺寸随姿态(高 halfY, 长 halfZ), 趴时前移 bodyFwd; 游泳时低平贴水面
+    const bodyY = swim ? 0.72 : 0.78 - 0.26 * fC - 0.22 * fP;
+    const bodyHalfY = swim ? 0.36 : bodyY;
+    const bodyFwd = swim ? 0.3 : 0.85 * fP;
+    const bodyHalfZ = swim ? 0.8 : 0.22 + 0.63 * fP;
     const bcx = this.pos.x + sinY * bodyFwd;
     const bcz = this.pos.z + cosY * bodyFwd;
     const lox0 = ox - bcx;
@@ -574,10 +623,10 @@ export class Character {
     // y
     if (ok) {
       if (Math.abs(dy) < 1e-9) {
-        if (loy < -bodyY || loy > bodyY) ok = false;
+        if (loy < -bodyHalfY || loy > bodyHalfY) ok = false;
       } else {
-        let t1 = (-bodyY - loy) / dy;
-        let t2 = (bodyY - loy) / dy;
+        let t1 = (-bodyHalfY - loy) / dy;
+        let t2 = (bodyHalfY - loy) / dy;
         if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; }
         if (t1 > tmin) tmin = t1;
         if (t2 < tmax) tmax = t2;
@@ -615,3 +664,18 @@ export const BOT_SHIRTS = [
   0xc25e4e, 0x4e7dc2, 0x4ec27d, 0xc2a54e, 0x9a4ec2,
   0x4ec2b2, 0xc27d4e, 0x7dc24e,
 ];
+
+// 共享位移入口: 游泳时限速 2.2m/s 并走水面浮动, 否则常规重力位移
+export function moveChar(c: Character, vx: number, vz: number, dt: number, world: World): void {
+  if (c.swimming) {
+    const l = Math.hypot(vx, vz);
+    if (l > 2.2) {
+      const s = 2.2 / l;
+      vx *= s;
+      vz *= s;
+    }
+    c.applySwim(vx, vz, dt, world);
+  } else {
+    c.applyMove(vx, vz, dt, world);
+  }
+}

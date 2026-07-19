@@ -141,6 +141,23 @@ body {
   transition: width 0.15s;
 }
 
+/* 游泳状态标(血条旁) */
+#swim-tag {
+  display: none;
+  color: #bfe6ff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border: 1px solid rgba(130, 200, 255, 0.55);
+  border-radius: 10px;
+  background: rgba(20, 70, 110, 0.55);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+#swim-tag.show {
+  display: inline-block;
+}
+
 /* 恢复品计数 + 饮料 buff */
 #heals-row {
   display: flex;
