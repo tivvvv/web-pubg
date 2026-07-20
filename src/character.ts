@@ -259,6 +259,8 @@ export class Character {
   stanceF = 0;         // 姿态插值 0站→1蹲→2趴(平滑过渡)
   groundH = 0;         // 脚下地面高(供贴地阴影)
   airPose: 'fall' | 'canopy' | 'sit' | null = null; // 空降姿势/驾驶坐姿(驾驶时收枪)
+  airSteerRight = 0;   // 自由落体左右修正 -1..1
+  airSteerForward = 0; // 自由落体前后修正 -1..1
   swimming = false;      // 深水游泳中(由 Game.updateSwim 维护)
   swimT = 0;             // 游泳累计时间(浮沉/划臂相位)
   swimDip = 0;           // 高处落水下潜剩余秒(0.4s 俯冲后浮起)
@@ -543,7 +545,8 @@ export class Character {
     // 空降姿势覆盖: 自由落体(展开俯冲) / 开伞(悬挂) / 驾驶(坐姿)
     if (this.airPose) {
       if (this.airPose === 'fall') {
-        p.inner.rotation.x = Math.PI / 2 * 0.92; // 面朝下俯冲
+        p.inner.rotation.x = Math.PI / 2 * 0.92 + this.airSteerForward * 0.14; // 前后修正俯仰
+        p.inner.rotation.z = -this.airSteerRight * 0.32; // 左右修正侧倾
         p.inner.position.y = 0.3;
         p.armL.rotation.set(-0.3, 0, 1.15);
         p.armR.rotation.set(-0.3, 0, -1.15);
@@ -551,6 +554,7 @@ export class Character {
         p.legR.rotation.set(-0.18, 0, -0.25);
       } else if (this.airPose === 'canopy') {
         p.inner.rotation.x = 0.12; // 悬挂微后仰
+        p.inner.rotation.z = 0;
         p.inner.position.y = 0;
         p.armL.rotation.set(-2.7, 0, 0.5);
         p.armR.rotation.set(-2.7, 0, -0.5);
@@ -559,6 +563,7 @@ export class Character {
       } else {
         // 驾驶坐姿: 腿前伸, 手扶方向盘
         p.inner.rotation.x = 0.05;
+        p.inner.rotation.z = 0;
         p.inner.position.y = -0.35;
         p.armL.rotation.set(-1.15, 0, 0.35);
         p.armR.rotation.set(-1.15, 0, -0.35);
@@ -567,6 +572,7 @@ export class Character {
       }
       return;
     }
+    p.inner.rotation.z = 0;
     // 翻越姿势: 收腿前倾 + 单手撑沿
     if (this.vault) {
       const k = Math.min(1, this.vault.t / this.vault.dur);

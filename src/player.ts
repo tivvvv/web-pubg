@@ -14,6 +14,11 @@ import type { Game } from './game';
 
 const BASE_FOV = 75;
 const THROW_SPEED = 15; // 满蓄力投掷速度
+const FREEFALL_STEER_SPEED = 12; // 开伞前水平修正限速(m/s)
+const FREEFALL_STEER_RESPONSE = 5; // 自由落体转向响应
+const CANOPY_STEER_SPEED = 12;
+const CANOPY_STEER_RESPONSE = 1.6;
+const AIR_STEER_DRAG = 1.2; // 松开方向键后保留少量惯性
 
 export class PlayerController {
   readonly char: Character;
@@ -416,6 +421,8 @@ export class PlayerController {
     this.hv.set(0, 0);
     this.descent = null;
     c.airPose = null;
+    c.airSteerRight = 0;
+    c.airSteerForward = 0;
     c.stance = 'stand';
     c.stanceF = 0;
     c.removeCanopy();
@@ -433,7 +440,7 @@ export class PlayerController {
       if (this.planeS > 980) this.startFreefall(game); // 航线末端自动跳伞
       return;
     }
-    // 水平操控(WASD 相对视线)
+    // 水平操控: WASD 相对视线
     const fwdX = Math.sin(this.yaw);
     const fwdZ = Math.cos(this.yaw);
     const rightX = -fwdZ;
@@ -445,15 +452,24 @@ export class PlayerController {
     if (input.keys.has('KeyD')) { wx += rightX; wz += rightZ; }
     if (input.keys.has('KeyA')) { wx -= rightX; wz -= rightZ; }
     const wl = Math.hypot(wx, wz);
-    const maxHv = this.descent === 'freefall' ? 18 : 12;
+    const freefall = this.descent === 'freefall';
+    const maxHv = freefall ? FREEFALL_STEER_SPEED : CANOPY_STEER_SPEED;
+    const response = freefall ? FREEFALL_STEER_RESPONSE : CANOPY_STEER_RESPONSE;
     if (wl > 0.001) {
       wx /= wl;
       wz /= wl;
-      this.hv.x = lerp(this.hv.x, wx * maxHv, Math.min(1, dt * 1.6));
-      this.hv.y = lerp(this.hv.y, wz * maxHv, Math.min(1, dt * 1.6));
+      const steer = 1 - Math.exp(-dt * response);
+      this.hv.x = lerp(this.hv.x, wx * maxHv, steer);
+      this.hv.y = lerp(this.hv.y, wz * maxHv, steer);
     } else {
-      this.hv.x *= Math.exp(-0.5 * dt);
-      this.hv.y *= Math.exp(-0.5 * dt);
+      const drag = Math.exp(-AIR_STEER_DRAG * dt);
+      this.hv.x *= drag;
+      this.hv.y *= drag;
+    }
+    c.speed2d = this.hv.length();
+    if (freefall) {
+      c.airSteerRight = clamp((this.hv.x * rightX + this.hv.y * rightZ) / maxHv, -1, 1);
+      c.airSteerForward = clamp((this.hv.x * fwdX + this.hv.y * fwdZ) / maxHv, -1, 1);
     }
     // 垂直逼近终端速度(自由落体 55 / 滑翔 10)
     const vt = this.descent === 'freefall' ? -55 : -10;
@@ -461,6 +477,8 @@ export class PlayerController {
     this.vy += (vt - this.vy) * (1 - Math.exp(-dt * k));
     c.pos.x += this.hv.x * dt;
     c.pos.z += this.hv.y * dt;
+    c.pos.x = clamp(c.pos.x, -WORLD_HALF + 1, WORLD_HALF - 1);
+    c.pos.z = clamp(c.pos.z, -WORLD_HALF + 1, WORLD_HALF - 1);
     c.pos.y += this.vy * dt;
     c.yaw = this.yaw;
     game.audio.windSet(Math.min(1, Math.abs(this.vy) / 55));
@@ -700,6 +718,11 @@ export class PlayerController {
       this.camera.lookAt(this.lookAt);
     } else {
       this.pivot.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.04, c.pos.z);
+      if (this.descent === 'freefall') {
+        // 保留少量相机滞后以呈现水平位移
+        this.pivot.x -= this.hv.x * 0.07;
+        this.pivot.z -= this.hv.y * 0.07;
+      }
 
       const targetDist = this.aiming ? (gun?.def === WEAPONS.sniper ? 1.5 : 1.9) : 3.4;
       const shoulder = this.aiming ? 0.55 : 0.5;
