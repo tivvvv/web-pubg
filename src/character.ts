@@ -12,6 +12,8 @@ import { clamp } from './utils';
 
 export type Stance = 'stand' | 'crouch' | 'prone';
 const STANCE_TARGET: Record<Stance, number> = { stand: 0, crouch: 1, prone: 2 };
+export const SWIM_SPEED = 2.2;
+export const SWIM_SPRINT_SPEED = 3.6;
 
 // 翻越状态(脚本化运动: 起跳点→顶点上弧→落点)
 export interface VaultState {
@@ -454,7 +456,8 @@ export class Character {
     this.pos.x += vx * dt;
     this.pos.z += vz * dt;
     world.resolveCollision(this.pos, this.radius);
-    this.swimT += dt;
+    const speed = Math.hypot(vx, vz);
+    this.swimT += dt * clamp(speed / SWIM_SPEED, 0.65, 1.7);
     const bob = Math.sin(this.swimT * 2.3) * 0.045;
     let targetY = WATER_Y - 0.78 + bob;
     if (this.swimDip > 0) {
@@ -466,7 +469,7 @@ export class Character {
     this.vy = 0;
     this.grounded = false;
     this.groundH = WATER_Y - 0.03; // 贴水面的阴影
-    this.speed2d = Math.sqrt(vx * vx + vz * vz);
+    this.speed2d = speed;
   }
 
   // 通用位移: 水平速度 + 重力 + 地面/碰撞
@@ -774,12 +777,19 @@ export const BOT_SHIRTS = [
   0x4ec2b2, 0xc27d4e, 0x7dc24e,
 ];
 
-// 共享位移入口: 游泳时限速 2.2m/s 并走水面浮动, 否则常规重力位移
-export function moveChar(c: Character, vx: number, vz: number, dt: number, world: World): void {
+// 共享位移入口: 游泳走水面浮动, 否则常规重力位移
+export function moveChar(
+  c: Character,
+  vx: number,
+  vz: number,
+  dt: number,
+  world: World,
+  swimMaxSpeed = SWIM_SPEED,
+): void {
   if (c.swimming) {
     const l = Math.hypot(vx, vz);
-    if (l > 2.2) {
-      const s = 2.2 / l;
+    if (l > swimMaxSpeed) {
+      const s = swimMaxSpeed / l;
       vx *= s;
       vz *= s;
     }

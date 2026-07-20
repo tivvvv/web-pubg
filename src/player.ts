@@ -1,6 +1,6 @@
 // 玩家: 第一/第三人称可切换(V) + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力 + 投掷
 import * as THREE from 'three';
-import { Character } from './character';
+import { Character, SWIM_SPEED, SWIM_SPRINT_SPEED } from './character';
 import type { Input } from './input';
 import { isWeaponKind } from './loot';
 import { ARMORS, armorFromLoot } from './armor';
@@ -134,7 +134,7 @@ export class PlayerController {
       const forwardish = (wx * fwdX + wz * fwdZ) > 0.3;
       let speed = 4.3;
       if (c.knocked) speed = 0.6; // 倒地爬行(仅移动, 无其他动作)
-      else if (c.swimming) speed = 2.2; // 游泳低速, 无冲刺
+      else if (c.swimming) speed = sprint ? SWIM_SPRINT_SPEED : SWIM_SPEED;
       else if (this.aiming) speed = 2.7;
       else if (sprint && forwardish && c.stance === 'stand') speed = 6.6;
       if (!c.swimming && !c.knocked) {

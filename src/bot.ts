@@ -1,9 +1,9 @@
 // Bot AI: 游走/拾取 ↔ 交战 状态机; 赤手空拳开局, 优先找枪, 近身用近战
 import * as THREE from 'three';
-import { Character, moveChar } from './character';
+import { Character, moveChar, SWIM_SPRINT_SPEED } from './character';
 import type { AmmoType, WeaponId } from './types';
 import { WEAPONS } from './weapons';
-import { WATER_Y } from './world';
+import { WATER_Y, WORLD_HALF, type World } from './world';
 import { isWeaponKind } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
 import { isPackKind, packLevelFromLoot } from './backpack';
@@ -13,8 +13,64 @@ import { probeVault, startVault, updateVaultMotion } from './vault';
 import type { Game } from './game';
 
 const ENGAGE_DIST = 92;
-// 游泳找岸的 4 个采样方向
-const SWIM_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+const SWIM_DIRS = Array.from({ length: 16 }, (_, i) => {
+  const a = i / 16 * Math.PI * 2;
+  return [Math.cos(a), Math.sin(a)] as const;
+});
+const SWIM_RADII = [6, 12, 20, 30, 42, 56] as const;
+
+type SwimBankWorld = Pick<World, 'getHeight' | 'pointFree'>;
+
+// 搜索最近可上岸点, 偏向原移动目标所在方向
+export function findSwimBank(
+  out: THREE.Vector2,
+  x: number,
+  z: number,
+  preferX: number,
+  preferZ: number,
+  world: SwimBankWorld,
+): boolean {
+  const pdx = preferX - x;
+  const pdz = preferZ - z;
+  const pl = Math.hypot(pdx, pdz);
+  const pnx = pl > 0.001 ? pdx / pl : 0;
+  const pnz = pl > 0.001 ? pdz / pl : 0;
+  let fallbackX = x;
+  let fallbackZ = z;
+  let fallbackScore = -Infinity;
+
+  for (const radius of SWIM_RADII) {
+    let bankX = x;
+    let bankZ = z;
+    let bankScore = -Infinity;
+    for (const [dx, dz] of SWIM_DIRS) {
+      const tx = clamp(x + dx * radius, -WORLD_HALF + 2, WORLD_HALF - 2);
+      const tz = clamp(z + dz * radius, -WORLD_HALF + 2, WORLD_HALF - 2);
+      const height = world.getHeight(tx, tz);
+      const alignment = dx * pnx + dz * pnz;
+      const score = height + alignment * 0.45;
+      if (score > fallbackScore) {
+        fallbackScore = score;
+        fallbackX = tx;
+        fallbackZ = tz;
+      }
+      if (height < WATER_Y - 0.72 || height > WATER_Y + 1.4) continue;
+      if (!world.pointFree(tx, tz, 0.55, WATER_Y - 0.72, WATER_Y + 1.4)) continue;
+      if (score > bankScore) {
+        bankScore = score;
+        bankX = tx;
+        bankZ = tz;
+      }
+    }
+    if (bankScore > -Infinity) {
+      out.set(bankX, bankZ);
+      return true;
+    }
+  }
+
+  out.set(fallbackX, fallbackZ);
+  return false;
+}
 // bot 降落伞配色(哑光低饱和, 按角色 id 轮换; 队友另用绿色系)
 const BOT_CANOPIES = [0x7a8a6a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a, 0x8a6e62] as const;
 
@@ -38,6 +94,8 @@ export class BotController {
   private vaultProbeT = 0; // 翻越探测节流
   private moveTarget = new THREE.Vector3();
   private hasMoveTarget = false;
+  private swimBank = new THREE.Vector2();
+  private swimRepathT = 0;
   private lastKnown = new THREE.Vector3();
   // 破门: 被门/窗挡路计时
   private blockT = 0;
@@ -96,8 +154,10 @@ export class BotController {
     // 闪避驶来载具(便宜版: 侧向急躲)
     if (this.dodgeVehicle(dt, game)) return;
     // 游泳状态: 深水中只朝岸游, 不索敌/开火/拾取
+    const wasSwimming = c.swimming;
     game.updateSwim(c);
     if (c.swimming) {
+      if (!wasSwimming) this.swimRepathT = 0;
       this.swimToBank(dt, game);
       return;
     }
@@ -178,32 +238,22 @@ export class BotController {
   // 游泳中: 朝目标岸(渡河)或最近岸(地形上坡方向)游, 不打斗
   private swimToBank(dt: number, game: Game): void {
     const c = this.char;
-    let tx: number;
-    let tz: number;
-    if (this.hasMoveTarget) {
-      tx = this.moveTarget.x;
-      tz = this.moveTarget.z;
-    } else {
-      // 最近岸 ≈ 地形上坡方向: 4 向 7m 采样取最高
-      let bestH = -Infinity;
-      let bx = 1;
-      let bz = 0;
-      for (const [sx, sz] of SWIM_DIRS) {
-        const h = game.world.getHeight(c.pos.x + sx * 7, c.pos.z + sz * 7);
-        if (h > bestH) {
-          bestH = h;
-          bx = sx;
-          bz = sz;
-        }
-      }
-      tx = c.pos.x + bx * 12;
-      tz = c.pos.z + bz * 12;
+    this.swimRepathT -= dt;
+    const oldDx = this.swimBank.x - c.pos.x;
+    const oldDz = this.swimBank.y - c.pos.z;
+    if (this.swimRepathT <= 0 || Math.hypot(oldDx, oldDz) < 1.5) {
+      const preferX = this.hasMoveTarget ? this.moveTarget.x : c.pos.x + Math.sin(c.yaw) * 20;
+      const preferZ = this.hasMoveTarget ? this.moveTarget.z : c.pos.z + Math.cos(c.yaw) * 20;
+      findSwimBank(this.swimBank, c.pos.x, c.pos.z, preferX, preferZ, game.world);
+      this.swimRepathT = 0.65;
     }
+    const tx = this.swimBank.x;
+    const tz = this.swimBank.y;
     const dx = tx - c.pos.x;
     const dz = tz - c.pos.z;
     const d = Math.hypot(dx, dz) || 1;
     c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 3.2 * dt);
-    moveChar(c, (dx / d) * 2.2, (dz / d) * 2.2, dt, game.world);
+    moveChar(c, (dx / d) * SWIM_SPRINT_SPEED, (dz / d) * SWIM_SPRINT_SPEED, dt, game.world, SWIM_SPRINT_SPEED);
     c.swimAcc += c.speed2d * dt;
     if (c.swimAcc > 1.7) {
       c.swimAcc = 0;
