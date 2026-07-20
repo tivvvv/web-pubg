@@ -3,8 +3,16 @@ export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'sniper' | 'shotgun';
 export type MeleeId = 'fists' | 'knife';
 export type AmmoType = 'pistol' | 'rifle' | 'smg' | 'sniper' | 'shotgun';
 export type ThrowableId = 'frag' | 'smoke';
+export type AttachmentId = 'reddot' | 'scope2' | 'scope4' | 'extmag' | 'comp' | 'suppressor';
+export type AttSlot = 'sight' | 'mag' | 'muzzle';
+export interface GunAttachments {
+  sight: AttachmentId | null;
+  mag: AttachmentId | null;
+  muzzle: AttachmentId | null;
+}
 export type ArmorLootId = 'helmet1' | 'helmet2' | 'helmet3' | 'vest1' | 'vest2' | 'vest3';
-export type LootKind = WeaponId | 'knife' | 'ammoRifle' | 'ammoSmg' | 'ammoSniper' | 'ammoPistol' | 'ammoShotgun' | 'bandage' | 'medkit' | 'drink' | 'pack1' | 'pack2' | 'pack3' | ThrowableId | ArmorLootId;
+export type AttachLootId = 'attReddot' | 'attScope2' | 'attScope4' | 'attExtmag' | 'attComp' | 'attSuppressor';
+export type LootKind = WeaponId | 'knife' | 'ammoRifle' | 'ammoSmg' | 'ammoSniper' | 'ammoPistol' | 'ammoShotgun' | 'bandage' | 'medkit' | 'drink' | 'pack1' | 'pack2' | 'pack3' | ThrowableId | ArmorLootId | AttachLootId;
 
 // 已装备护具(定义见 armor.ts)
 export interface ArmorState {
@@ -34,6 +42,7 @@ export interface WeaponDef {
 export interface GunState {
   def: WeaponDef;
   mag: number;
+  att: GunAttachments; // 已装配件(瞄具/弹匣/枪口)
 }
 
 export interface MeleeDef {

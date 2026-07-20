@@ -9,6 +9,7 @@ import { WATER_Y, WORLD_HALF } from './world';
 import { VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { clamp, lerp } from './utils';
+import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, recoilFactorOf, sightZoomOf, spreadFactorOf } from './attachments';
 import type { Game } from './game';
 
 const BASE_FOV = 75;
@@ -191,7 +192,7 @@ export class PlayerController {
     if (this.reloading) {
       this.reloadT -= dt;
       if (this.reloadT <= 0 && gun) {
-        const need = gun.def.magSize - gun.mag;
+        const need = magSizeOf(gun) - gun.mag;
         const take = Math.min(need, c.ammo[gun.def.ammo]);
         gun.mag += take;
         c.ammo[gun.def.ammo] -= take;
@@ -238,14 +239,15 @@ export class PlayerController {
           this.startReload(game);
         } else if (game.playerShot()) {
           this.fireTimer = gun.def.fireInterval;
-          this.recoilP += gun.def.recoil * (c.stance === 'crouch' ? 0.85 : c.stance === 'prone' ? 0.65 : 1);
-          this.pitch = clamp(this.pitch + gun.def.recoil * 0.3, -1.25, 1.35);
+          const recoil = gun.def.recoil * recoilFactorOf(gun);
+          this.recoilP += recoil * (c.stance === 'crouch' ? 0.85 : c.stance === 'prone' ? 0.65 : 1);
+          this.pitch = clamp(this.pitch + recoil * 0.3, -1.25, 1.35);
           acted = true;
         }
       }
       // 散布(供射击与准星); 蹲 -20% / 趴 -40%
       const stanceAcc = c.stance === 'crouch' ? 0.8 : c.stance === 'prone' ? 0.6 : 1;
-      const base = (this.aiming ? gun.def.spreadAim : gun.def.spreadHip) * stanceAcc;
+      const base = (this.aiming ? gun.def.spreadAim : gun.def.spreadHip) * stanceAcc * spreadFactorOf(gun);
       const moveF = 1 + (c.speed2d / 6.6) * 0.9 + (c.grounded ? 0 : 0.7);
       this.spreadRad = lerp(this.spreadRad, base * moveF, Math.min(1, dt * 12));
     }
@@ -260,7 +262,7 @@ export class PlayerController {
     this.updatePickupPrompt(game);
     // 弹药/医疗包/投掷物走近自动拾取
     const auto = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
-    if (auto && !isWeaponKind(auto.kind)) {
+    if (auto && !isWeaponKind(auto.kind) && !isAttachKind(auto.kind)) {
       game.applyAutoPickup(c, auto);
     }
 
@@ -270,7 +272,7 @@ export class PlayerController {
   private updatePickupPrompt(game: Game): void {
     const c = this.char;
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
-    // 物品候选: 最近的武器/护具且大致在前方
+    // 物品候选: 最近的武器/护具/背包/配件且大致在前方
     let item = game.loot.nearestFPickup(c.pos.x, c.pos.y, c.pos.z, 2.6);
     let itemDot = -1;
     if (item) {
@@ -328,6 +330,9 @@ export class PlayerController {
       const def = WEAPONS[k];
       const state = item.mag > 0 ? `${item.mag} 发` : item.ammo > 0 ? `无弹, 备弹 ${item.ammo}` : '无弹';
       game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${state}）`);
+    } else if (isAttachKind(k)) {
+      const id = attachFromLoot(k);
+      if (id) game.hud.setPickupPrompt(`按 F 装配 ${ATTACHMENTS[id].name}`);
     } else {
       const info = armorFromLoot(k);
       if (info) game.hud.setPickupPrompt(`按 F 拾取 ${ARMORS[info.kind][info.level].name}`);
@@ -625,7 +630,7 @@ export class PlayerController {
 
   startReload(game: Game): void {
     const gun = this.char.heldGun();
-    if (!gun || this.reloading || gun.mag >= gun.def.magSize || this.char.ammo[gun.def.ammo] <= 0) return;
+    if (!gun || this.reloading || gun.mag >= magSizeOf(gun) || this.char.ammo[gun.def.ammo] <= 0) return;
     this.reloading = true;
     this.reloadT = gun.def.reloadTime;
     if (gun.def.id === 'shotgun') game.audio.reloadShotgun();
@@ -679,7 +684,7 @@ export class PlayerController {
     const c = this.char;
     const dir = this.getViewDir(this.viewDir);
     const gun = c.heldGun();
-    const zoom = this.aiming && gun ? gun.def.zoom : 1;
+    const zoom = this.aiming && gun ? sightZoomOf(gun) : 1;
     const fpp = game.viewFpp;
     c.setFirstPerson(fpp);
 

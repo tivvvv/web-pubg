@@ -7,6 +7,7 @@ import { WATER_Y } from './world';
 import { isWeaponKind } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
 import { isPackKind, packLevelFromLoot } from './backpack';
+import { magSizeOf } from './attachments';
 import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import type { Game } from './game';
@@ -110,7 +111,7 @@ export class BotController {
     if (this.reloadT > 0) {
       this.reloadT -= dt;
       if (this.reloadT <= 0 && gun) {
-        const need = gun.def.magSize - gun.mag;
+        const need = magSizeOf(gun) - gun.mag;
         const take = Math.min(need, c.ammo[gun.def.ammo]);
         gun.mag += take;
         c.ammo[gun.def.ammo] -= take;

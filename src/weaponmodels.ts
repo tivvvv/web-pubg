@@ -3,7 +3,7 @@
 // 约定: 原点 = 握把顶端(右手持握点), 枪管朝 +Z, 上为 +Y; 步枪全长约 0.9m
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import type { ThrowableId, WeaponId } from './types';
+import type { GunAttachments, ThrowableId, WeaponId } from './types';
 
 export type WeaponModelId = WeaponId | 'knife' | ThrowableId;
 
@@ -300,4 +300,60 @@ export function buildWeaponModel(id: WeaponModelId): WeaponModel {
   const muzzle = group.getObjectByName('muzzle') as THREE.Object3D;
   const mag = (group.getObjectByName('mag') as THREE.Object3D | undefined) ?? null;
   return { group, muzzle, mag };
+}
+
+// ── 配件可视化: 在克隆武器模型上挂瞄具/枪口/扩容弹匣(共享几何/材质) ──
+const ATT_GEO = {
+  dotBase: new THREE.BoxGeometry(0.03, 0.035, 0.05),
+  scopeTube: new THREE.CylinderGeometry(0.016, 0.016, 0.09, 8),
+  scopeBell: new THREE.CylinderGeometry(0.024, 0.02, 0.03, 8),
+  scopeBase: new THREE.BoxGeometry(0.014, 0.02, 0.05),
+  suppressor: new THREE.CylinderGeometry(0.02, 0.02, 0.15, 8),
+  comp: new THREE.BoxGeometry(0.034, 0.034, 0.06),
+};
+export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void {
+  // 地面 loot 外面还有 holder 包装层, 实际配件应挂到枪模型根节点上
+  const muzzleNode = group.getObjectByName('muzzle');
+  const weaponGroup = (muzzleNode?.parent as THREE.Group | null) ?? group;
+  // 瞄具(机匣顶部)
+  if (att.sight) {
+    const base = new THREE.Mesh(ATT_GEO.scopeBase, MAT_PO);
+    base.position.set(0, 0.082, 0.02);
+    weaponGroup.add(base);
+    if (att.sight === 'reddot') {
+      const dot = new THREE.Mesh(ATT_GEO.dotBase, MAT_DK);
+      dot.position.set(0, 0.108, 0.02);
+      weaponGroup.add(dot);
+    } else {
+      const tube = new THREE.Mesh(ATT_GEO.scopeTube, MAT_DK);
+      tube.rotation.x = Math.PI / 2;
+      tube.position.set(0, 0.112, 0.02);
+      weaponGroup.add(tube);
+      const bell = new THREE.Mesh(ATT_GEO.scopeBell, MAT_DK);
+      bell.rotation.x = Math.PI / 2;
+      bell.position.set(0, 0.112, 0.068);
+      weaponGroup.add(bell);
+    }
+  }
+  // 枪口(消音器/补偿器, 挂 muzzle 节点后段)
+  if (att.muzzle && muzzleNode) {
+    const muzzleZ = muzzleNode.position.z;
+    if (att.muzzle === 'suppressor') {
+      const sup = new THREE.Mesh(ATT_GEO.suppressor, MAT_DK);
+      sup.rotation.x = Math.PI / 2;
+      sup.position.set(muzzleNode.position.x, muzzleNode.position.y, muzzleZ + 0.068);
+      weaponGroup.add(sup);
+      muzzleNode.position.z = muzzleZ + 0.14;
+    } else {
+      const comp = new THREE.Mesh(ATT_GEO.comp, MAT_LT);
+      comp.position.set(muzzleNode.position.x, muzzleNode.position.y, muzzleZ + 0.026);
+      weaponGroup.add(comp);
+      muzzleNode.position.z = muzzleZ + 0.052;
+    }
+  }
+  // 扩容弹匣(加长弹匣节点)
+  if (att.mag === 'extmag') {
+    const magNode = weaponGroup.getObjectByName('mag');
+    if (magNode) magNode.scale.y *= 1.45;
+  }
 }

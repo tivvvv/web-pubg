@@ -8,6 +8,7 @@ import type { PlayerController } from './player';
 import { isWeaponKind } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
 import { isPackKind } from './backpack';
+import { magSizeOf } from './attachments';
 import { seatWorldAt, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { WEAPONS } from './weapons';
@@ -190,7 +191,7 @@ export class TeammateController {
     if (this.reloadT > 0) {
       this.reloadT -= dt;
       if (this.reloadT <= 0 && gun) {
-        const take = Math.min(gun.def.magSize - gun.mag, c.ammo[gun.def.ammo]);
+        const take = Math.min(magSizeOf(gun) - gun.mag, c.ammo[gun.def.ammo]);
         gun.mag += take;
         c.ammo[gun.def.ammo] -= take;
       }

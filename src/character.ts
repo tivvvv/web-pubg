@@ -1,11 +1,11 @@
 // 低多边形人形角色(玩家与 bot 共用) + 背包物品 + 命中体 + 姿态(站/蹲/趴)
 import * as THREE from 'three';
-import type { AmmoType, ArmorState, GunState, MeleeState, ThrowableId } from './types';
+import type { AmmoType, ArmorState, GunAttachments, GunState, MeleeState, ThrowableId } from './types';
 import type { HealId } from './heals';
 import { MELEE } from './weapons';
 import { buildHelmetModel, buildVestModel } from './armor';
 import { buildPackModel, type PackLevel } from './backpack';
-import { buildWeaponModel, type WeaponModel, type WeaponModelId } from './weaponmodels';
+import { buildWeaponModel, attachWeaponMods, type WeaponModel, type WeaponModelId } from './weaponmodels';
 import type { World } from './world';
 import { WATER_Y } from './world';
 import { clamp } from './utils';
@@ -280,11 +280,12 @@ export class Character {
   private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
   lastAttackerId = 0;
   lastShotT = -100;    // 最近一次开枪时间(小地图红点)
+  lastLoudShotT = -100; // 最近一次未消音开枪时间(敌人小地图暴露)
   kills = 0;
   reload01 = 0;        // 换弹进度 0..1(0=未换弹), 玩家控制器每帧写入
   aimPitch = 0;        // ADS 时枪械俯仰(玩家控制器写入), bot 恒 0
 
-  private heldId: WeaponModelId | null = null;
+  private heldKey = '';               // 已同步的持械外观(模型 id + 配件)
   private armorKey = 0;              // 已同步的护具外观(helmetLvl*100+vestLvl*10+packLvl)
   private helmetMesh: THREE.Group | null = null;
   private vestMesh: THREE.Group | null = null;
@@ -429,17 +430,19 @@ export class Character {
     }
   }
 
-  // 切换手持模型(栏位/武器变化时调用; 克隆原型, 零逐帧分配)
-  private swapHeld(id: WeaponModelId | null): void {
-    if (id === this.heldId) return;
+  // 切换手持模型(栏位/武器/配件变化时调用; 克隆原型, 零逐帧分配)
+  private swapHeld(id: WeaponModelId | null, att: GunAttachments | null): void {
+    const key = id ? `${id}:${att?.sight ?? ''}${att?.mag ?? ''}${att?.muzzle ?? ''}` : '';
+    if (key === this.heldKey) return;
+    this.heldKey = key;
     const p = this.parts;
     if (p.held) {
       p.gun.remove(p.held.group);
       p.held = null;
     }
-    this.heldId = id;
     if (id) {
       p.held = buildWeaponModel(id);
+      if (att) attachWeaponMods(p.held.group, att);
       p.gun.add(p.held.group);
     }
   }
@@ -504,7 +507,7 @@ export class Character {
         : this.curSlot === 3 && this.melee.def.id === 'knife' ? 'knife'
           : this.curSlot === 4 ? this.throwKind
             : null;
-    this.swapHeld(wantId);
+    this.swapHeld(wantId, gun ? gun.att : null);
     // 护具外观(装备/等级变化时重建)
     const aKey = (this.helmet?.level ?? 0) * 100 + (this.vest?.level ?? 0) * 10 + (this.pack?.level ?? 0);
     if (aKey !== this.armorKey) {

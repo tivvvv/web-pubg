@@ -5,7 +5,9 @@ import { rand } from './utils';
 import { AMMO_BOX, AMMO_CLASS_COLOR, AMMO_LOOT_KIND, WEAPONS } from './weapons';
 import { armorFromLoot, buildHelmetModel, buildVestModel, isArmorKind } from './armor';
 import { buildPackModel, isPackKind, packLevelFromLoot } from './backpack';
-import { buildWeaponModel } from './weaponmodels';
+import { attachWeaponMods, buildWeaponModel } from './weaponmodels';
+import { isAttachKind } from './attachments';
+import type { GunAttachments } from './types';
 import { WATER_Y, riverZAt, type World } from './world';
 
 export interface LootItem {
@@ -17,6 +19,7 @@ export interface LootItem {
   mag: number;   // 枪械: 已装弹数(-1 = 非武器)
   ammo: number;  // 枪械: 附带备弹; 弹药包: 剩余弹量; 叠放物: 数量; 护具: 耐久
   outdoor: boolean; // 野外锚点刷新(枪支/独立弹药), 用于统计与调试
+  att: GunAttachments | null; // 枪械已装配件(随枪流转)
 }
 
 const LOOT_CAP = 240; // 室内配对 + 野外补齐 + 野外武器/弹药 + 空投内容物
@@ -39,6 +42,7 @@ const GEO = {
   drinkLid: new THREE.CylinderGeometry(0.065, 0.065, 0.012, 10),
   drinkBand: new THREE.CylinderGeometry(0.073, 0.073, 0.1, 10),
   pullTab: new THREE.BoxGeometry(0.03, 0.008, 0.05),
+  scopeMini: new THREE.CylinderGeometry(0.035, 0.035, 0.12, 8),
   ring: new THREE.TorusGeometry(0.42, 0.025, 6, 24),
 };
 const MAT = {
@@ -91,6 +95,13 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   pack1: new THREE.MeshBasicMaterial({ color: 0xd8b878, transparent: true, opacity: 0.5 }),
   pack2: new THREE.MeshBasicMaterial({ color: 0xd8b878, transparent: true, opacity: 0.5 }),
   pack3: new THREE.MeshBasicMaterial({ color: 0xd8b878, transparent: true, opacity: 0.5 }),
+  // 配件: 瞄具冷色 / 弹匣绿 / 枪口灰
+  attReddot: new THREE.MeshBasicMaterial({ color: 0xff6a5a, transparent: true, opacity: 0.5 }),
+  attScope2: new THREE.MeshBasicMaterial({ color: 0x66b3ff, transparent: true, opacity: 0.5 }),
+  attScope4: new THREE.MeshBasicMaterial({ color: 0xb366ff, transparent: true, opacity: 0.5 }),
+  attExtmag: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
+  attComp: new THREE.MeshBasicMaterial({ color: 0xd0d0d0, transparent: true, opacity: 0.5 }),
+  attSuppressor: new THREE.MeshBasicMaterial({ color: 0x8a8f96, transparent: true, opacity: 0.5 }),
 };
 
 function buildLootMesh(kind: LootKind): THREE.Group {
@@ -125,6 +136,24 @@ function buildLootMesh(kind: LootKind): THREE.Group {
       const pm = buildPackModel(level);
       pm.rotation.set(-0.15, 0, 0.2);
       holder.add(pm);
+    }
+  } else if (isAttachKind(kind)) {
+    // 配件: 瞄具小镜 / 弹匣盒 / 枪口小管
+    if (kind === 'attReddot') {
+      holder.add(new THREE.Mesh(GEO.latch, MAT.dark));
+    } else if (kind === 'attScope2' || kind === 'attScope4') {
+      const tube = new THREE.Mesh(GEO.scopeMini, MAT.dark);
+      tube.rotation.x = Math.PI / 2;
+      holder.add(tube);
+    } else if (kind === 'attExtmag') {
+      const m = new THREE.Mesh(GEO.medHandle, MAT.dark);
+      m.scale.set(0.6, 1.6, 1.2);
+      holder.add(m);
+    } else {
+      const tube = new THREE.Mesh(GEO.scopeMini, kind === 'attSuppressor' ? MAT.dark : MAT.silver);
+      tube.rotation.x = Math.PI / 2;
+      tube.scale.set(0.8, kind === 'attSuppressor' ? 1.6 : 0.9, 0.8);
+      holder.add(tube);
     }
   } else if (kind === 'bandage') {
     // 绷带卷(放倒的白色小卷) + 红十字绑带 + 散开的卷尾
@@ -398,7 +427,7 @@ export class LootManager {
   private rollKind(table: 'wild' | 'indoor' | 'premium'): LootKind {
     const r = Math.random();
     if (table === 'premium') {
-      // 二楼: 偏高级枪, 三级甲只在这里像样地刷
+      // 二楼: 偏高级枪, 三级甲只在这里像样地刷, 配件偏好
       if (r < 0.26) return 'rifle';
       if (r < 0.46) return 'sniper';
       if (r < 0.56) return 'shotgun';
@@ -409,11 +438,17 @@ export class LootManager {
       if (r < 0.8) return 'vest3';
       if (r < 0.83) return 'helmet2';
       if (r < 0.86) return 'vest2';
-      if (r < 0.9) return this.rollAmmo();
-      if (r < 0.93) return 'pack2';
-      if (r < 0.96) return 'pack3'; // 三级背包主要在高级房
-      if (r < 0.98) return 'bandage';
-      if (r < 0.99) return 'drink';
+      if (r < 0.875) return 'attReddot';
+      if (r < 0.885) return 'attScope2';
+      if (r < 0.89) return 'attScope4';
+      if (r < 0.9) return 'attSuppressor';
+      if (r < 0.905) return 'attExtmag';
+      if (r < 0.91) return 'attComp';
+      if (r < 0.95) return this.rollAmmo();
+      if (r < 0.97) return 'pack2';
+      if (r < 0.985) return 'pack3'; // 三级背包主要在高级房
+      if (r < 0.993) return 'bandage';
+      if (r < 0.997) return 'drink';
       return 'medkit'; // 高级房才有像样概率
     }
     if (table === 'indoor') {
@@ -429,11 +464,17 @@ export class LootManager {
       if (r < 0.7) return 'vest1';
       if (r < 0.72) return 'helmet2';
       if (r < 0.74) return 'vest2';
-      if (r < 0.85) return this.rollAmmo();
-      if (r < 0.9) return 'pack1';
-      if (r < 0.92) return 'pack2';
-      if (r < 0.97) return 'bandage';
-      if (r < 0.99) return 'drink';
+      if (r < 0.77) return 'attReddot';
+      if (r < 0.785) return 'attScope2';
+      if (r < 0.79) return 'attScope4';
+      if (r < 0.795) return 'attSuppressor';
+      if (r < 0.815) return 'attExtmag';
+      if (r < 0.83) return 'attComp';
+      if (r < 0.89) return this.rollAmmo();
+      if (r < 0.94) return 'pack1';
+      if (r < 0.96) return 'pack2';
+      if (r < 0.985) return 'bandage';
+      if (r < 0.995) return 'drink';
       return 'medkit';
     }
     if (r < 0.07) return 'rifle';
@@ -448,20 +489,26 @@ export class LootManager {
     if (r < 0.59) return 'vest1';
     if (r < 0.61) return 'helmet2';
     if (r < 0.63) return 'vest2';
-    if (r < 0.8) return this.rollAmmo();
-    if (r < 0.85) return 'pack1';
-    if (r < 0.87) return 'pack2';
-    if (r < 0.94) return 'bandage';
-    if (r < 0.98) return 'drink';
+    if (r < 0.655) return 'attReddot';
+    if (r < 0.665) return 'attScope2';
+    if (r < 0.67) return 'attScope4';
+    if (r < 0.673) return 'attSuppressor';
+    if (r < 0.69) return 'attExtmag';
+    if (r < 0.705) return 'attComp';
+    if (r < 0.82) return this.rollAmmo();
+    if (r < 0.87) return 'pack1';
+    if (r < 0.89) return 'pack2';
+    if (r < 0.95) return 'bandage';
+    if (r < 0.985) return 'drink';
     return 'medkit';
   }
 
-  // mag/ammo 仅对枪械有意义; 默认满弹匣 + 少量备弹
-  spawn(kind: LootKind, x: number, groundY: number, z: number, mag = -1, ammo = 0): LootItem | null {
+  // mag/ammo 仅对枪械有意义; 默认满弹匣 + 少量备弹; att 为枪械自带配件(掉落随枪)
+  spawn(kind: LootKind, x: number, groundY: number, z: number, mag = -1, ammo = 0, att: GunAttachments | null = null): LootItem | null {
     let item = this.items.find((i) => !i.active);
     if (!item) {
       if (this.items.length >= LOOT_CAP) return null;
-      item = { kind, group: buildLootMesh(kind), active: false, baseY: 0, phase: 0, mag: -1, ammo: 0, outdoor: false };
+      item = { kind, group: buildLootMesh(kind), active: false, baseY: 0, phase: 0, mag: -1, ammo: 0, outdoor: false, att: null };
       this.items.push(item);
       this.root.add(item.group);
     } else {
@@ -471,9 +518,12 @@ export class LootManager {
       this.root.add(item.group);
       item.kind = kind;
     }
+    item.att = null; // 复用清配件(仅枪械重新赋值)
     if (kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun') {
       item.mag = Math.max(0, mag); // 地面武器默认空弹匣; 死亡掉落携带剩余弹匣
       item.ammo = Math.max(0, ammo);
+      item.att = att ? { sight: att.sight, mag: att.mag, muzzle: att.muzzle } : null;
+      if (att) attachWeaponMods(item.group, att); // 地面枪模型也带配件
     } else if (kind === 'frag' || kind === 'smoke') {
       item.mag = -1;
       // 投掷物掉落用 ammo 字段携带堆叠数(死亡掉落时为 >1 的 stack)
@@ -542,12 +592,12 @@ export class LootManager {
     return best;
   }
 
-  // 最近的 F 拾取物(武器 + 护具 + 背包), 玩家提示用
+  // 最近的 F 拾取物(武器 + 护具 + 背包 + 配件), 玩家提示用
   nearestFPickup(x: number, y: number, z: number, maxDist: number): LootItem | null {
     let best: LootItem | null = null;
     let bestD = maxDist * maxDist;
     for (const it of this.items) {
-      if (!it.active || (!isWeaponKind(it.kind) && !isArmorKind(it.kind) && !isPackKind(it.kind))) continue;
+      if (!it.active || (!isWeaponKind(it.kind) && !isArmorKind(it.kind) && !isPackKind(it.kind) && !isAttachKind(it.kind))) continue;
       const dx = it.group.position.x - x;
       const dy = it.group.position.y - y - 1;
       const dz = it.group.position.z - z;

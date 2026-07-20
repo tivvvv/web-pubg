@@ -61,6 +61,7 @@ function makeMarkerTexture(): THREE.Texture {
 
 import { ARMORS, armorFromLoot, armorLootKind, isArmorKind, type ArmorKind, type ArmorLevel } from './armor';
 import { AirdropManager, type Crate } from './airdrop';
+import { ATTACHMENTS, ATT_LOOT_KIND, attachmentSummary, attachFromLoot, canAttach, emptyAttachments, isAttachKind, isSuppressed, magSizeOf } from './attachments';
 import { KnockSys } from './knock';
 import { AudioSys } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
@@ -401,7 +402,7 @@ export class Game {
             key: String(i + 1),
             label: SLOT_LABELS[i] as string,
             name: g ? g.def.name : '空',
-            mag: g ? `弹匣 ${g.mag}` : '',
+            mag: g ? `弹匣 ${g.mag}/${magSizeOf(g)}${attachmentSummary(g.att) ? ` · ${attachmentSummary(g.att)}` : ''}` : '',
           };
         }
         return {
@@ -1010,6 +1011,7 @@ export class Game {
     if (!gun || gun.mag <= 0) return false;
     gun.mag--;
     shooter.lastShotT = this.now;
+    if (!isSuppressed(gun)) shooter.lastLoudShotT = this.now;
     shooter.muzzleWorld(this.tmpMuzzle);
     this.effects.muzzleFlash(this.tmpMuzzle, MUZZLE_SCALE[gun.def.id]);
     const pellets = gun.def.pellets ?? 1;
@@ -1399,7 +1401,7 @@ export class Game {
     const gy = this.world.getHeight(gx, gz);
     const held = victim.heldGun();
     if (held) {
-      this.loot.spawn(held.def.id, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5), held.mag, 0);
+      this.loot.spawn(held.def.id, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5), held.mag, 0, held.att);
     } else if (victim.melee.def.id === 'knife') {
       this.loot.spawn('knife', gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
     } else {
@@ -1555,6 +1557,7 @@ export class Game {
     if (!item || !item.active) return;
     if (isArmorKind(item.kind)) this.tryPickupArmor(player.char, item);
     else if (isPackKind(item.kind)) this.tryPickupPack(player.char, item);
+    else if (isAttachKind(item.kind)) this.tryPickupAttachment(player.char, item);
     else this.tryPickupWeapon(player.char, item);
     this.promptItem = null;
     this.hud.setPickupPrompt(null);
@@ -1609,6 +1612,46 @@ export class Game {
     return true;
   }
 
+  // F 拾取配件: 自动装到当前枪; 同槽替换时旧配件落地
+  tryPickupAttachment(c: Character, item: LootItem): boolean {
+    if (!item.active) return false;
+    const id = attachFromLoot(item.kind);
+    if (!id) return false;
+    const gun = c.heldGun();
+    if (!gun) {
+      if (c.isPlayer) this.hud.toast('请先手持一把枪械');
+      return false;
+    }
+    if (!canAttach(gun.def.id, id)) {
+      if (c.isPlayer) this.hud.toast(`${gun.def.name} 无法装配 ${ATTACHMENTS[id].name}`);
+      return false;
+    }
+    const slot = ATTACHMENTS[id].slot;
+    const old = gun.att[slot];
+    if (old === id) {
+      if (c.isPlayer) this.hud.toast(`已装配 ${ATTACHMENTS[id].name}`);
+      return false;
+    }
+    // AI 只填空槽, 避免在相邻掉落物之间反复互换
+    if (!c.isPlayer && old) return false;
+    this.loot.consume(item);
+    if (old) {
+      this.loot.spawn(
+        ATT_LOOT_KIND[old],
+        c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6),
+      );
+    }
+    gun.att[slot] = id;
+    if (c.isPlayer) {
+      this.hud.toast(old
+        ? `装配 ${ATTACHMENTS[id].name}, 换下 ${ATTACHMENTS[old].name}`
+        : `装配 ${ATTACHMENTS[id].name}`);
+      this.audio.pickup();
+      this.refreshBackpack();
+    }
+    return true;
+  }
+
   // 负重满提示(走近拾取每帧触发, 节流 2s)
   private capToastT = -10;
   private toastCapacityFull(): void {
@@ -1628,6 +1671,7 @@ export class Game {
 
   // 弹药/恢复品/投掷物: 走近自动拾取(玩家受负重限制, bot 不受限)
   applyAutoPickup(c: Character, item: LootItem): boolean {
+    if (isAttachKind(item.kind)) return c.isPlayer ? false : this.tryPickupAttachment(c, item);
     if (item.kind === 'frag' || item.kind === 'smoke') {
       const kind: ThrowableId = item.kind;
       const def = THROWABLES[kind];
@@ -1741,9 +1785,14 @@ export class Game {
     // 手枪位被占 → 替换并掉落旧枪
     const old = c.guns[slot];
     if (old) {
-      this.loot.spawn(old.def.id, c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6), old.mag, 0);
+      this.loot.spawn(old.def.id, c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6), old.mag, 0, old.att);
     }
-    c.guns[slot] = { def, mag: item.mag >= 0 ? item.mag : def.magSize };
+    const att = item.att
+      ? { sight: item.att.sight, mag: item.att.mag, muzzle: item.att.muzzle }
+      : emptyAttachments();
+    const gun = { def, mag: 0, att };
+    gun.mag = Math.min(item.mag >= 0 ? item.mag : def.magSize, magSizeOf(gun));
+    c.guns[slot] = gun;
     c.ammo[def.ammo] += Math.max(0, item.ammo);
     c.curSlot = slot;
     this.loot.consume(item);
@@ -1805,7 +1854,7 @@ export class Game {
       this.hud.setWeapon(td.name, `×${c.throwables[c.throwKind]}`, '', '按住左键蓄力');
     } else if (gun) {
       this.hud.setWeapon(
-        gun.def.name,
+        `${gun.def.name}${attachmentSummary(gun.att) ? ` [${attachmentSummary(gun.att)}]` : ''}`,
         player.reloading ? '--' : String(gun.mag),
         noAmmo ? '无弹' : `/ ${c.ammo[gun.def.ammo]}`,
         player.reloading ? '换弹中…' : gun.def.auto ? '全自动' : '半自动',
@@ -1847,7 +1896,7 @@ export class Game {
     const sizeH = this.renderer.domElement.height / this.renderer.getPixelRatio();
     const focal = sizeH / 2 / Math.tan((player.camera.fov * Math.PI) / 360);
     const px = Math.tan(player.spreadRad) * focal;
-    const scoped = this.state === 'playing' && c.alive && player.aiming && gun?.def.id === 'sniper';
+    const scoped = this.state === 'playing' && c.alive && player.aiming && (gun?.def.id === 'sniper' || gun?.att.sight === 'scope4');
     this.hud.setScope(scoped);
     this.hud.setCrosshair(this.state === 'playing' && c.alive ? px + 6 : 0, this.state === 'playing' && c.alive && !scoped);
   }
@@ -1856,7 +1905,7 @@ export class Game {
     const player = this.player as PlayerController;
     let n = 0;
     for (const b of this.bots) {
-      if (b.char.alive && this.now - b.char.lastShotT < 2) {
+      if (b.char.alive && this.now - b.char.lastLoudShotT < 2) {
         const d = this.shotDots[n] as { x: number; z: number };
         d.x = b.char.pos.x;
         d.z = b.char.pos.z;
