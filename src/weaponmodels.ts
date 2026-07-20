@@ -24,12 +24,12 @@ const CYL = new THREE.CylinderGeometry(1, 1, 1, 10);
 const SPH = new THREE.SphereGeometry(1, 12, 10);
 
 // 共享材质: 深金属 / 亮金属 / 聚合物 / 木色家具
-const MAT_DK = new THREE.MeshLambertMaterial({ color: 0x2b2e33 }); // 深金属(机匣/枪管)
-const MAT_LT = new THREE.MeshLambertMaterial({ color: 0xb9c1c9 }); // 亮金属(刃口/导轨/枪口)
-const MAT_PO = new THREE.MeshLambertMaterial({ color: 0x3d4148 }); // 聚合物(护木/枪托/握把)
-const MAT_TN = new THREE.MeshLambertMaterial({ color: 0x9a7a52 }); // 木色/沙色家具
-const MAT_FG = new THREE.MeshLambertMaterial({ color: 0x39543a }); // 手雷墨绿
-const MAT_BD = new THREE.MeshLambertMaterial({ color: 0xc8503c }); // 烟雾弹色带
+const MAT_DK = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.42, metalness: 0.72 }); // 深金属(机匣/枪管)
+const MAT_LT = new THREE.MeshStandardMaterial({ color: 0xb9c1c9, roughness: 0.24, metalness: 0.88 }); // 亮金属(刃口/导轨/枪口)
+const MAT_PO = new THREE.MeshStandardMaterial({ color: 0x3d4148, roughness: 0.84, metalness: 0.03 }); // 聚合物(护木/枪托/握把)
+const MAT_TN = new THREE.MeshStandardMaterial({ color: 0x9a7a52, roughness: 0.82, metalness: 0.02 }); // 木色/沙色家具
+const MAT_FG = new THREE.MeshStandardMaterial({ color: 0x39543a, roughness: 0.68, metalness: 0.18 }); // 手雷墨绿
+const MAT_BD = new THREE.MeshStandardMaterial({ color: 0xc8503c, roughness: 0.62, metalness: 0.12 }); // 烟雾弹色带
 
 function b(
   parent: THREE.Group, mat: THREE.Material,

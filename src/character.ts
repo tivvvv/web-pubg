@@ -68,26 +68,31 @@ const GEO_D = {
   kneePad: new THREE.BoxGeometry(0.16, 0.11, 0.05),
   sole: new THREE.BoxGeometry(0.17, 0.035, 0.28),
   elbowPad: new THREE.BoxGeometry(0.13, 0.09, 0.045),
+  hair: new THREE.BoxGeometry(0.31, 0.07, 0.31),
+  ear: new THREE.BoxGeometry(0.045, 0.1, 0.075),
+  nose: new THREE.BoxGeometry(0.05, 0.065, 0.045),
+  pocket: new THREE.BoxGeometry(0.13, 0.13, 0.025),
+  cargo: new THREE.BoxGeometry(0.035, 0.14, 0.11),
 };
 
 const MAT = {
-  skin: new THREE.MeshLambertMaterial({ color: 0xd9a066 }),
-  pants: new THREE.MeshLambertMaterial({ color: 0x3d4436 }),
-  boot: new THREE.MeshLambertMaterial({ color: 0x2c2620 }),
-  dark: new THREE.MeshLambertMaterial({ color: 0x23282e }), // 面罩/护具/手套
-  strap: new THREE.MeshLambertMaterial({ color: 0x2f2a22 }), // 胸挂/腰带
-  glove: new THREE.MeshLambertMaterial({ color: 0x3a342c }),
-  sole: new THREE.MeshLambertMaterial({ color: 0x1b1712 }),
+  skin: new THREE.MeshStandardMaterial({ color: 0xd9a066, roughness: 0.82 }),
+  boot: new THREE.MeshStandardMaterial({ color: 0x2c2620, roughness: 0.9 }),
+  dark: new THREE.MeshStandardMaterial({ color: 0x23282e, roughness: 0.68, metalness: 0.08 }), // 面罩/护具/手套
+  strap: new THREE.MeshStandardMaterial({ color: 0x2f2a22, roughness: 0.88 }), // 胸挂/腰带
+  glove: new THREE.MeshStandardMaterial({ color: 0x3a342c, roughness: 0.92 }),
+  sole: new THREE.MeshStandardMaterial({ color: 0x1b1712, roughness: 0.96 }),
+  hair: new THREE.MeshStandardMaterial({ color: 0x3a2a20, roughness: 0.9 }),
 };
 
 // 裤装配色(bot 按索引错开, 远距可读)
 const PANTS_COLORS = [0x3d4436, 0x37404a, 0x4a3f33, 0x2f3a2f, 0x46464e];
 
-const shirtCache = new Map<number, THREE.MeshLambertMaterial>();
-function shirtMat(color: number): THREE.MeshLambertMaterial {
+const shirtCache = new Map<number, THREE.MeshStandardMaterial>();
+function shirtMat(color: number): THREE.MeshStandardMaterial {
   let m = shirtCache.get(color);
   if (!m) {
-    m = new THREE.MeshLambertMaterial({ color });
+    m = new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0 });
     shirtCache.set(color, m);
   }
   return m;
@@ -104,6 +109,11 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   torso.position.set(0, 1.05, 0);
   torso.castShadow = true;
   inner.add(torso);
+  for (const side of [-1, 1] as const) {
+    const pocket = new THREE.Mesh(GEO_D.pocket, shirt);
+    pocket.position.set(0.11 * side, -0.02, 0.15);
+    torso.add(pocket);
+  }
   // 腰带/裤腰色块
   const waist = new THREE.Mesh(GEO.waist, pants);
   waist.position.set(0, 0.79, 0);
@@ -138,6 +148,17 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   const visor = new THREE.Mesh(GEO_D.visor, MAT.dark);
   visor.position.set(0, 0.03, 0.155);
   head.add(visor);
+  const hair = new THREE.Mesh(GEO_D.hair, MAT.hair);
+  hair.position.set(0, 0.165, -0.01);
+  head.add(hair);
+  const nose = new THREE.Mesh(GEO_D.nose, MAT.skin);
+  nose.position.set(0, -0.035, 0.17);
+  head.add(nose);
+  for (const side of [-1, 1] as const) {
+    const ear = new THREE.Mesh(GEO_D.ear, MAT.skin);
+    ear.position.set(0.17 * side, -0.01, 0);
+    head.add(ear);
+  }
   inner.add(head);
 
   // 手臂: 肩部枢轴 → 上臂 → 肘部枢轴 → 前臂 + 手(肘/手暗示)
@@ -186,6 +207,9 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     thigh.position.set(0, -0.19, 0);
     thigh.castShadow = true;
     leg.add(thigh);
+    const cargo = new THREE.Mesh(GEO_D.cargo, pants);
+    cargo.position.set(0.09 * side, -0.02, 0.01);
+    thigh.add(cargo);
     const knee = new THREE.Group();
     knee.position.set(0, -0.38, 0);
     const shin = new THREE.Mesh(GEO.shin, pants);
@@ -348,23 +372,38 @@ export class Character {
   attachCanopy(color: number): void {
     this.removeCanopy();
     const g = new THREE.Group();
-    const mat = new THREE.MeshLambertMaterial({ color });
-    const mkPanel = (x: number, rz: number): THREE.Mesh => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.14, 1.5), mat);
-      m.position.set(x, 0, 0);
-      m.rotation.z = rz;
-      return m;
-    };
-    g.add(mkPanel(-1.1, 0.32), mkPanel(0, 0), mkPanel(1.1, -0.32));
-    const lineMat = new THREE.MeshLambertMaterial({ color: 0xcccccc });
-    for (const [lx, lz] of [[-1.5, -0.55], [-1.5, 0.55], [1.5, -0.55], [1.5, 0.55]] as const) {
-      const line = new THREE.Mesh(new THREE.BoxGeometry(0.02, 2.0, 0.02), lineMat);
-      line.position.set(lx * 0.62, -1.0, lz * 0.62);
-      line.rotation.z = lx > 0 ? 0.28 : -0.28;
-      line.rotation.x = lz > 0 ? 0.18 : -0.18;
-      g.add(line);
+    const base = new THREE.Color(color);
+    const panelCount = 9;
+    for (let i = 0; i < panelCount; i++) {
+      const tint = base.clone().multiplyScalar(i % 2 === 0 ? 1.08 : 0.82);
+      const panel = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 4, 3, (i / panelCount) * Math.PI * 2, Math.PI * 2 / panelCount, 0, Math.PI / 2),
+        new THREE.MeshStandardMaterial({ color: tint, roughness: 0.86, side: THREE.DoubleSide }),
+      );
+      panel.scale.set(2.65, 0.74, 1.58);
+      panel.position.y = 0.22;
+      panel.castShadow = true;
+      g.add(panel);
     }
-    g.position.set(0, 2.6, 0);
+    const linePos: number[] = [];
+    for (const [lx, lz] of [[-2.15, -0.82], [-2.15, 0.82], [-0.8, -1.28], [-0.8, 1.28], [0.8, -1.28], [0.8, 1.28], [2.15, -0.82], [2.15, 0.82]] as const) {
+      const harnessX = Math.sign(lx) * 0.3;
+      const harnessZ = Math.sign(lz) * 0.18;
+      linePos.push(lx, 0.2, lz, harnessX, -2.48, harnessZ);
+    }
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
+    g.add(new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ color: 0xe3ddd0, transparent: true, opacity: 0.92 })));
+    // 伞盖后缘黑色导流带, 远距离也能读出伞面轮廓。
+    const trailing = new THREE.Mesh(
+      new THREE.TorusGeometry(1, 0.025, 4, 24, Math.PI),
+      new THREE.MeshBasicMaterial({ color: 0x2d332c }),
+    );
+    trailing.scale.set(2.62, 1.55, 1);
+    trailing.rotation.x = Math.PI / 2;
+    trailing.position.set(0, 0.22, 0);
+    g.add(trailing);
+    g.position.set(0, 2.72, 0);
     this.parts.inner.add(g);
     this.canopyGroup = g;
   }

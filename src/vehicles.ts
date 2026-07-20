@@ -79,7 +79,7 @@ export class Vehicle {
   readonly group = new THREE.Group();
   private wheels: THREE.Object3D[] = [];
   private steerWheels: THREE.Object3D[] = [];
-  private mats: THREE.MeshLambertMaterial[] = [];
+  private mats: THREE.MeshStandardMaterial[] = [];
 
   constructor(kind: VehicleKind, pos: THREE.Vector3, yaw0: number) {
     this.kind = kind;
@@ -104,7 +104,7 @@ export class Vehicle {
       const lampF = this.mat(0xfff0b8);
       const lampR = this.mat(0xc23a2e);
       const hub = this.mat(0x8a8f96);
-      const add = (geo: THREE.BoxGeometry, m: THREE.MeshLambertMaterial, x: number, y: number, z: number, rx = 0): THREE.Mesh => {
+      const add = (geo: THREE.BoxGeometry, m: THREE.MeshStandardMaterial, x: number, y: number, z: number, rx = 0): THREE.Mesh => {
         const mesh = new THREE.Mesh(geo, m);
         mesh.position.set(x, y, z);
         mesh.rotation.x = rx;
@@ -171,7 +171,7 @@ export class Vehicle {
       const dark = this.mat(0x222222);
       const chrome = this.mat(0x9aa2ab);
       const lampF = this.mat(0xfff0b8);
-      const add = (geo: THREE.BoxGeometry, m: THREE.MeshLambertMaterial, x: number, y: number, z: number, rx = 0, rz = 0): THREE.Mesh => {
+      const add = (geo: THREE.BoxGeometry, m: THREE.MeshStandardMaterial, x: number, y: number, z: number, rx = 0, rz = 0): THREE.Mesh => {
         const mesh = new THREE.Mesh(geo, m);
         mesh.position.set(x, y, z);
         mesh.rotation.x = rx;
@@ -219,8 +219,8 @@ export class Vehicle {
     }
   }
 
-  private mat(color: number): THREE.MeshLambertMaterial {
-    const m = new THREE.MeshLambertMaterial({ color });
+  private mat(color: number): THREE.MeshStandardMaterial {
+    const m = new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.16 });
     this.mats.push(m);
     return m;
   }

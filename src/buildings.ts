@@ -135,10 +135,10 @@ export class Buildings {
   private paneGeoAlongZ = new THREE.BoxGeometry(0.06, WIN_H, WIN_W);
   private postGeoAlongX = new THREE.BoxGeometry(0.09, DOOR_H, WT + 0.06);
   private postGeoAlongZ = new THREE.BoxGeometry(WT + 0.06, DOOR_H, 0.09);
-  private doorMat = new THREE.MeshLambertMaterial({ color: DOOR_C });
-  private postMat = new THREE.MeshLambertMaterial({ color: 0x5e4629 });
-  private doorTrimMat = new THREE.MeshLambertMaterial({ color: 0x4a3524 }); // 门板拼缝
-  private knobMat = new THREE.MeshLambertMaterial({ color: 0xb8a06a });     // 门把手
+  private doorMat = new THREE.MeshStandardMaterial({ color: DOOR_C, roughness: 0.88 });
+  private postMat = new THREE.MeshStandardMaterial({ color: 0x5e4629, roughness: 0.94 });
+  private doorTrimMat = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 0.92 }); // 门板拼缝
+  private knobMat = new THREE.MeshStandardMaterial({ color: 0xb8a06a, roughness: 0.35, metalness: 0.45 }); // 门把手
   // 门扇细节共享几何(拼缝/把手板/把手珠, 按墙走向两套)
   private trimGeoX = new THREE.BoxGeometry(0.05, DOOR_H * 0.88, 0.02);
   private trimGeoZ = new THREE.BoxGeometry(0.02, DOOR_H * 0.88, 0.05);
@@ -146,8 +146,8 @@ export class Buildings {
   private handleGeoZ = new THREE.BoxGeometry(0.05, 0.05, 0.1);
   private plateGeoX = new THREE.BoxGeometry(0.09, 0.16, 0.02);
   private plateGeoZ = new THREE.BoxGeometry(0.02, 0.16, 0.09);
-  private paneMat = new THREE.MeshLambertMaterial({
-    color: PANE_C, transparent: true, opacity: 0.55, depthWrite: false,
+  private paneMat = new THREE.MeshStandardMaterial({
+    color: PANE_C, transparent: true, opacity: 0.48, depthWrite: false, roughness: 0.2, metalness: 0.12,
   });
 
   // ── 区域规划 (确定性种子; 城区/竞技场/农场/密林/山地/渔村定点) ──────────────
@@ -279,7 +279,7 @@ export class Buildings {
 
     // 合并实例化为一个 InstancedMesh
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
     const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, insts.length));
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();

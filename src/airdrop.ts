@@ -37,15 +37,12 @@ export interface Crate {
 const CRATE_GEO = new THREE.BoxGeometry(1.3, 1.0, 1.3);
 const LID_GEO = new THREE.BoxGeometry(1.3, 0.16, 1.3);
 const STRAP_GEO = new THREE.BoxGeometry(1.34, 0.12, 0.3);
-const PANEL_GEO = new THREE.BoxGeometry(2.4, 0.18, 1.7);
-const LINE_GEO = new THREE.BoxGeometry(0.03, 2.6, 0.03);
 const MAT = {
-  crate: new THREE.MeshLambertMaterial({ color: 0x5a6b4a }),
-  lid: new THREE.MeshLambertMaterial({ color: 0x4a5a3e }),
-  strap: new THREE.MeshLambertMaterial({ color: 0x2f3327 }),
-  canopyR: new THREE.MeshLambertMaterial({ color: 0xc23a2e }),
-  canopyW: new THREE.MeshLambertMaterial({ color: 0xe8e4da }),
-  line: new THREE.MeshLambertMaterial({ color: 0xcccccc }),
+  crate: new THREE.MeshStandardMaterial({ color: 0x5a6b4a, roughness: 0.9 }),
+  lid: new THREE.MeshStandardMaterial({ color: 0x4a5a3e, roughness: 0.88 }),
+  strap: new THREE.MeshStandardMaterial({ color: 0x2f3327, roughness: 0.74, metalness: 0.15 }),
+  canopyR: new THREE.MeshStandardMaterial({ color: 0xc23a2e, roughness: 0.86, side: THREE.DoubleSide }),
+  canopyW: new THREE.MeshStandardMaterial({ color: 0xe8e4da, roughness: 0.88, side: THREE.DoubleSide }),
   smoke: new THREE.MeshBasicMaterial({
     color: 0xe03a2e, transparent: true, opacity: 0.16, side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
@@ -66,27 +63,25 @@ function buildCrateKit(): Crate {
   lidMesh.castShadow = true;
   lid.add(lidMesh);
   group.add(lid);
-  // 红白伞盖(三片, 比人物伞大一号)
+  // 红白弧形伞盖(分区低模网格, 比人物伞大一号)
   const canopy = new THREE.Group();
-  const mkPanel = (x: number, rz: number, mat: THREE.Material): THREE.Mesh => {
-    const m = new THREE.Mesh(PANEL_GEO, mat);
-    m.position.set(x, 0, 0);
-    m.rotation.z = rz;
-    m.castShadow = true;
-    canopy.add(m);
-    return m;
-  };
-  mkPanel(-2.2, 0.34, MAT.canopyR);
-  mkPanel(0, 0, MAT.canopyW);
-  mkPanel(2.2, -0.34, MAT.canopyR);
-  for (const [lx, lz] of [[-2.9, -0.8], [-2.9, 0.8], [2.9, -0.8], [2.9, 0.8]] as const) {
-    const line = new THREE.Mesh(LINE_GEO, MAT.line);
-    line.position.set(lx * 0.6, -1.4, lz);
-    line.rotation.z = lx > 0 ? 0.45 : -0.45;
-    line.rotation.x = lz > 0 ? 0.2 : -0.2;
-    canopy.add(line);
+  for (let i = 0; i < 10; i++) {
+    const panel = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 4, 3, i * Math.PI / 5, Math.PI / 5, 0, Math.PI / 2),
+      i % 3 === 1 ? MAT.canopyW : MAT.canopyR,
+    );
+    panel.scale.set(3.7, 0.9, 2.15);
+    panel.castShadow = true;
+    canopy.add(panel);
   }
-  canopy.position.set(0, 3.6, 0);
+  const linePos: number[] = [];
+  for (const [lx, lz] of [[-3.1, -1.05], [-3.1, 1.05], [-1.15, -1.75], [-1.15, 1.75], [1.15, -1.75], [1.15, 1.75], [3.1, -1.05], [3.1, 1.05]] as const) {
+    linePos.push(lx, 0, lz, Math.sign(lx) * 0.45, -3.2, Math.sign(lz) * 0.45);
+  }
+  const lineGeo = new THREE.BufferGeometry();
+  lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
+  canopy.add(new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ color: 0xdad8d0 })));
+  canopy.position.set(0, 4.25, 0);
   group.add(canopy);
   group.visible = false;
   return {

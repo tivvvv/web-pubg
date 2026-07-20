@@ -28,6 +28,22 @@ export interface Platform {
   minX: number; minZ: number; maxX: number; maxZ: number; top: number;
 }
 
+export type ScenicKind = 'lookout' | 'windmill' | 'ruins' | 'dock';
+
+export interface ScenicSite {
+  kind: ScenicKind;
+  x: number;
+  z: number;
+  r: number;
+}
+
+export const ROAD_PATHS: readonly (readonly [number, number])[][] = [
+  [[-92, -96], [-66, -72], [-58, -20], [-52, 36], [-50, 66], [-50, 112], [-44, 164], [-40, 246]],
+  [[-142, -26], [-98, -23], [-58, -20], [-8, -18], [42, -12], [98, -18], [152, -31], [212, -48]],
+  [[178, -38], [194, -82], [203, -140], [205, -218]],
+  [[-84, -20], [-136, -7], [-181, 9], [-228, 20]],
+];
+
 export class World {
   readonly colliders: Collider[] = [];
   readonly cyls: Extract<Collider, { kind: 'cyl' }>[] = [];
@@ -44,6 +60,11 @@ export class World {
   private timeU = { value: 0 };   // 共享时间 uniform(水波/植被摇摆)
   private camU = { value: new THREE.Vector3() }; // 共享相机 uniform(草距离消退)
   private elapsed = 0;
+  private scenicSites: ScenicSite[] = [];
+
+  get landmarks(): readonly ScenicSite[] {
+    return this.scenicSites;
+  }
 
   constructor(scene: THREE.Scene) {
     const n1 = new Noise2D(1337);
@@ -133,23 +154,28 @@ export class World {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
-    const terrain = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    const terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.96,
+      metalness: 0,
+    }));
     terrain.receiveShadow = true;
     scene.add(terrain);
 
     // 水面(高光 + 顶点波浪 + 法线微扰)
     const waterMat = new THREE.MeshPhongMaterial({
-      color: 0x2e6f93,
-      specular: 0x99ccee,
-      shininess: 90,
+      color: 0x2c7898,
+      specular: 0xbde8ef,
+      shininess: 110,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.76,
+      depthWrite: false,
     });
     const timeU = this.timeU;
     waterMat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = timeU;
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime;')
+        .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying vec2 vWaterPos;')
         .replace(
           '#include <beginnormal_vertex>',
           `#include <beginnormal_vertex>
@@ -161,21 +187,30 @@ export class World {
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
+  vWaterPos = position.xy;
   // 只向下波动(峰值 ≤ 0): 波峰永不越过水线, 避免在略高于水面的浅滩上"涨"出蓝色假水面
   transformed.z += (sin(position.x * 0.08 + uTime * 1.2) + cos(position.y * 0.06 + uTime * 0.9)) * 0.022 - 0.045;`,
         );
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying vec2 vWaterPos;')
+        .replace(
+          '#include <dithering_fragment>',
+          `float waterBand = sin(vWaterPos.x * 0.11 + uTime * 0.9) * cos(vWaterPos.y * 0.085 - uTime * 0.72);
+  gl_FragColor.rgb += vec3(0.035, 0.075, 0.085) * smoothstep(0.6, 0.98, waterBand);
+  #include <dithering_fragment>`,
+        );
     };
-    waterMat.customProgramCacheKey = () => 'water-bob';
+    waterMat.customProgramCacheKey = () => 'water-bob-band-v2';
     const water = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800, 48, 48), waterMat);
     water.rotation.x = -Math.PI / 2;
     water.position.y = WATER_Y;
     scene.add(water);
 
     // 天空 / 雾 / 光照(雾色与天穹地平线一致; 金色暖阳)
-    scene.fog = new THREE.Fog(0xead9c4, 150, 640);
-    const hemi = new THREE.HemisphereLight(0xd8e6f5, 0x767a55, 0.82);
+    scene.fog = new THREE.Fog(0xd9d9c9, 175, 665);
+    const hemi = new THREE.HemisphereLight(0xddebf8, 0x68704d, 0.92);
     scene.add(hemi);
-    this.sun = new THREE.DirectionalLight(0xffdfb0, 2.35);
+    this.sun = new THREE.DirectionalLight(0xffddb0, 2.5);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.camera.left = -60;
@@ -270,6 +305,8 @@ export class World {
 
     // ---- 房屋村庄(先生成, 树木岩石随后避开) ----
     this.buildings.build(scene, this);
+    this.prepareScenicSites();
+    this.addRoadNetwork(scene);
 
     // ---- 树木(松树 60% + 阔叶 40%, 树干/碰撞体逻辑不变; 北境密林加密) ----
     const treeCap = 470; // 全图 350 + 密林加密 120
@@ -303,7 +340,7 @@ export class World {
     const tryTree = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.8 || h > 13 || this.slopeAt(x, z) > 0.6) return false;
-      if (this.inPlot(x, z, 2.5)) return false;
+      if (this.inPlot(x, z, 2.5) || this.inScenicSite(x, z, 2) || this.nearRoad(x, z, 2.5)) return false;
       for (let i = 0; i < placedPts.length; i += 2) {
         const dx = x - (placedPts[i] as number);
         const dz = z - (placedPts[i + 1] as number);
@@ -422,7 +459,7 @@ export class World {
     const tryRock = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.3 || h > 15) return false;
-      if (this.inPlot(x, z, 2.5)) return false;
+      if (this.inPlot(x, z, 2.5) || this.inScenicSite(x, z, 1.5) || this.nearRoad(x, z, 0.8)) return false;
       const s = 0.7 + rng() * 1.7;
       const sy = s * (0.55 + rng() * 0.4);
       vPos.set(x, h + sy * 0.25, z);
@@ -480,7 +517,7 @@ export class World {
     const tryBush = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.5 || h > 13 || this.slopeAt(x, z) > 0.5) return false;
-      if (this.inPlot(x, z, 2.5)) return false;
+      if (this.inPlot(x, z, 2.5) || this.inScenicSite(x, z, 1.2) || this.nearRoad(x, z, 1.2)) return false;
       for (let i = 0; i < bushPts.length; i += 2) {
         const dx = x - (bushPts[i] as number);
         const dz = z - (bushPts[i + 1] as number);
@@ -531,14 +568,14 @@ export class World {
       const cz = (rng() * 2 - 1) * 330;
       const ch = this.getHeight(cx, cz);
       if (ch < WATER_Y + 0.4 || ch > 12 || this.slopeAt(cx, cz) > 0.55) continue;
-      if (this.inPlot(cx, cz, 1.5)) continue;
+      if (this.inPlot(cx, cz, 1.5) || this.inScenicSite(cx, cz, 0.4) || this.nearRoad(cx, cz, 0.25)) continue;
       const n = 5 + Math.floor(rng() * 5);
       for (let k = 0; k < n && grassCount < grassCap; k++) {
         const x = cx + (rng() * 2 - 1) * 2.6;
         const z = cz + (rng() * 2 - 1) * 2.6;
         const h = this.getHeight(x, z);
         if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.55) continue;
-        if (this.inPlot(x, z, 1.5)) continue;
+        if (this.inPlot(x, z, 1.5) || this.inScenicSite(x, z, 0.4) || this.nearRoad(x, z, 0.25)) continue;
         const s = 0.9 + rng() * 0.6;
         vPos.set(x, h - 0.02, z);
         vScale.set(s, s, s);
@@ -564,7 +601,7 @@ export class World {
       const z = -160 - rng() * 170;
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.55) continue;
-      if (this.inPlot(x, z, 1.5)) continue;
+      if (this.inPlot(x, z, 1.5) || this.inScenicSite(x, z, 0.4) || this.nearRoad(x, z, 0.25)) continue;
       const s = 0.9 + rng() * 0.6;
       vPos.set(x, h - 0.02, z);
       vScale.set(s, s, s);
@@ -715,9 +752,450 @@ export class World {
     if (boatMesh.instanceColor) boatMesh.instanceColor.needsUpdate = true;
     scene.add(boatMesh);
 
+    // ---- 地标与场景道具(观景台/风车/山地遗迹/码头/围栏/电杆/沿岸芦苇) ----
+    this.addScenicLandmarks(scene);
+    this.addEnvironmentProps(scene);
+    this.addShoreDetails(scene);
+
     // ---- 双桥(木板面+护栏+桥墩, 可走平台) ----
     this.addBridge(scene, -50);
     this.addBridge(scene, 170);
+  }
+
+  private prepareScenicSites(): void {
+    const specs: { kind: ScenicKind; x: number; z: number; r: number; shore?: boolean }[] = [
+      { kind: 'lookout', x: 18, z: -118, r: 12 },
+      { kind: 'windmill', x: -108, z: 205, r: 10 },
+      { kind: 'ruins', x: -242, z: 28, r: 13 },
+      { kind: 'dock', x: 222, z: -232, r: 8, shore: true },
+    ];
+    this.scenicSites.length = 0;
+    for (const spec of specs) {
+      let found: ScenicSite | null = null;
+      for (let i = 0; i < 180; i++) {
+        const dist = i === 0 ? 0 : 2.8 * Math.sqrt(i);
+        const a = i * 2.399963;
+        const x = spec.x + Math.cos(a) * dist;
+        const z = spec.z + Math.sin(a) * dist;
+        const h = this.getHeight(x, z);
+        const heightOk = spec.shore
+          ? h > WATER_Y - 0.05 && h < WATER_Y + 1.35
+          : h > WATER_Y + 0.8 && h < (spec.kind === 'ruins' ? 18 : 13.5);
+        if (!heightOk || this.inPlot(x, z, spec.r + 1.5)) continue;
+        if (!spec.shore && this.slopeAt(x, z) > (spec.kind === 'ruins' ? 0.72 : 0.48)) continue;
+        if (this.scenicSites.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + spec.r + 8)) continue;
+        found = { kind: spec.kind, x, z, r: spec.r };
+        break;
+      }
+      if (found) this.scenicSites.push(found);
+    }
+  }
+
+  private inScenicSite(x: number, z: number, margin: number): boolean {
+    for (const s of this.scenicSites) {
+      const r = s.r + margin;
+      const dx = x - s.x;
+      const dz = z - s.z;
+      if (dx * dx + dz * dz < r * r) return true;
+    }
+    return false;
+  }
+
+  private nearRoad(x: number, z: number, margin: number): boolean {
+    const rr = 2.5 + margin;
+    for (const path of ROAD_PATHS) {
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i] as readonly [number, number];
+        const b = path[i + 1] as readonly [number, number];
+        const vx = b[0] - a[0];
+        const vz = b[1] - a[1];
+        const len2 = vx * vx + vz * vz;
+        const t = clamp(((x - a[0]) * vx + (z - a[1]) * vz) / len2, 0, 1);
+        const dx = x - (a[0] + vx * t);
+        const dz = z - (a[1] + vz * t);
+        if (dx * dx + dz * dz < rr * rr) return true;
+      }
+    }
+    return false;
+  }
+
+  private addRoadNetwork(scene: THREE.Scene): void {
+    const makeLayer = (width: number, lift: number, color: number, roughness: number): THREE.Mesh => {
+      const vertices: number[] = [];
+      for (const path of ROAD_PATHS) {
+        for (let i = 0; i < path.length - 1; i++) {
+          const a = path[i] as readonly [number, number];
+          const b = path[i + 1] as readonly [number, number];
+          const dx = b[0] - a[0];
+          const dz = b[1] - a[1];
+          const len = Math.hypot(dx, dz);
+          const steps = Math.max(1, Math.ceil(len / 3.5));
+          const px = (-dz / len) * width * 0.5;
+          const pz = (dx / len) * width * 0.5;
+          for (let s = 0; s < steps; s++) {
+            const t0 = s / steps;
+            const t1 = (s + 1) / steps;
+            const x0 = a[0] + dx * t0;
+            const z0 = a[1] + dz * t0;
+            const x1 = a[0] + dx * t1;
+            const z1 = a[1] + dz * t1;
+            const c0h = this.getHeight(x0, z0);
+            const c1h = this.getHeight(x1, z1);
+            if (c0h < WATER_Y + 0.02 && c1h < WATER_Y + 0.02) continue;
+            const x0l = x0 + px; const z0l = z0 + pz;
+            const x0r = x0 - px; const z0r = z0 - pz;
+            const x1l = x1 + px; const z1l = z1 + pz;
+            const x1r = x1 - px; const z1r = z1 - pz;
+            const y0l = this.getHeight(x0l, z0l) + lift;
+            const y0r = this.getHeight(x0r, z0r) + lift;
+            const y1l = this.getHeight(x1l, z1l) + lift;
+            const y1r = this.getHeight(x1r, z1r) + lift;
+            vertices.push(
+              x0l, y0l, z0l, x0r, y0r, z0r, x1r, y1r, z1r,
+              x0l, y0l, z0l, x1r, y1r, z1r, x1l, y1l, z1l,
+            );
+          }
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geo.computeVertexNormals();
+      const mat = new THREE.MeshStandardMaterial({
+        color,
+        roughness,
+        metalness: 0,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.receiveShadow = true;
+      return mesh;
+    };
+    scene.add(makeLayer(7.2, 0.035, 0x796d56, 1));
+    scene.add(makeLayer(5.1, 0.065, 0xa48d66, 0.98));
+  }
+
+  private addScenicLandmarks(scene: THREE.Scene): void {
+    for (const site of this.scenicSites) {
+      if (site.kind === 'lookout') this.addLookout(scene, site);
+      else if (site.kind === 'windmill') this.addWindmill(scene, site);
+      else if (site.kind === 'ruins') this.addRuins(scene, site);
+      else this.addDock(scene, site);
+    }
+  }
+
+  private addLookout(scene: THREE.Scene, site: ScenicSite): void {
+    const h = this.getHeight(site.x, site.z);
+    const wood = new THREE.MeshStandardMaterial({ color: 0x654a30, roughness: 0.92 });
+    const woodDark = new THREE.MeshStandardMaterial({ color: 0x3d3025, roughness: 0.95 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x526143, roughness: 0.88 });
+    const g = new THREE.Group();
+    g.position.set(site.x, h, site.z);
+    const box = (w: number, hh: number, d: number, x: number, y: number, z: number, mat = wood): THREE.Mesh => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, hh, d), mat);
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      g.add(m);
+      return m;
+    };
+    for (const [x, z] of [[-2.35, -2.35], [2.35, -2.35], [-2.35, 2.35], [2.35, 2.35]] as const) {
+      const leg = box(0.34, 5.6, 0.34, x, 2.8, z, woodDark);
+      leg.rotation.z = x > 0 ? -0.035 : 0.035;
+      this.addCollider({ kind: 'cyl', x: site.x + x, z: site.z + z, r: 0.3, y0: h, y1: h + 5.7, tag: 'rock' });
+    }
+    box(5.8, 0.28, 5.8, 0, 5.55, 0);
+    for (const z of [-2.7, 2.7]) {
+      box(5.8, 0.12, 0.12, 0, 6.4, z, woodDark);
+      for (const x of [-2.7, 0, 2.7]) box(0.12, 0.9, 0.12, x, 6.0, z, woodDark);
+    }
+    for (const x of [-2.7, 2.7]) {
+      box(0.12, 0.12, 5.4, x, 6.4, 0, woodDark);
+      for (const z of [-1.5, 1.5]) box(0.12, 0.9, 0.12, x, 6.0, z, woodDark);
+    }
+    for (const x of [-2.45, 2.45]) box(0.22, 2.6, 0.22, x, 7.0, 0, woodDark);
+    for (const z of [-2.45, 2.45]) box(0.22, 2.6, 0.22, 0, 7.0, z, woodDark);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(4.3, 1.35, 4), roofMat);
+    roof.position.y = 8.42;
+    roof.rotation.y = Math.PI / 4;
+    roof.castShadow = true;
+    g.add(roof);
+    this.addCollider({ kind: 'aabb', minX: site.x - 2.9, minY: h + 5.32, minZ: site.z - 2.9, maxX: site.x + 2.9, maxY: h + 5.6, maxZ: site.z + 2.9, tag: 'floor' });
+    this.platforms.push({ minX: site.x - 2.9, minZ: site.z - 2.9, maxX: site.x + 2.9, maxZ: site.z + 2.9, top: h + 5.6 });
+    for (let i = 0; i < 12; i++) {
+      const top = (i + 1) * 0.45;
+      const z = 6.2 - i * 0.47;
+      box(1.4, 0.18, 0.62, 0, top - 0.09, z);
+      this.platforms.push({
+        minX: site.x - 0.7, minZ: site.z + z - 0.31,
+        maxX: site.x + 0.7, maxZ: site.z + z + 0.31, top: h + top,
+      });
+    }
+    scene.add(g);
+  }
+
+  private addWindmill(scene: THREE.Scene, site: ScenicSite): void {
+    const h = this.getHeight(site.x, site.z);
+    const plaster = new THREE.MeshStandardMaterial({ color: 0xd2c6a3, roughness: 0.95 });
+    const timber = new THREE.MeshStandardMaterial({ color: 0x59402b, roughness: 0.9 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x884a35, roughness: 0.88 });
+    const g = new THREE.Group();
+    g.position.set(site.x, h, site.z);
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.15, 3.05, 6.3, 10), plaster);
+    tower.position.y = 3.15;
+    tower.castShadow = true;
+    tower.receiveShadow = true;
+    g.add(tower);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(2.55, 1.9, 10), roofMat);
+    roof.position.y = 7.05;
+    roof.castShadow = true;
+    g.add(roof);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.05, 1.9, 0.12), timber);
+    door.position.set(0, 1.02, 2.72);
+    g.add(door);
+    const rotor = new THREE.Group();
+    rotor.position.set(0, 5.7, 2.25);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.55, 10), timber);
+    hub.rotation.x = Math.PI / 2;
+    hub.castShadow = true;
+    rotor.add(hub);
+    for (let i = 0; i < 6; i++) {
+      const pivot = new THREE.Group();
+      pivot.rotation.z = (i / 6) * Math.PI * 2;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.34, 3.5, 0.12), timber);
+      blade.position.y = 1.9;
+      blade.castShadow = true;
+      pivot.add(blade);
+      rotor.add(pivot);
+    }
+    rotor.rotation.z = 0.18;
+    g.add(rotor);
+    scene.add(g);
+    this.addCollider({ kind: 'cyl', x: site.x, z: site.z, r: 2.7, y0: h - 0.4, y1: h + 6.5, tag: 'rock' });
+  }
+
+  private addRuins(scene: THREE.Scene, site: ScenicSite): void {
+    const h = this.getHeight(site.x, site.z);
+    const stone = new THREE.MeshStandardMaterial({ color: 0x77766e, roughness: 1, flatShading: true });
+    const stoneDark = new THREE.MeshStandardMaterial({ color: 0x575b56, roughness: 1, flatShading: true });
+    const g = new THREE.Group();
+    const addWall = (x: number, z: number, w: number, hh: number, d: number, mat = stone): void => {
+      const y = this.getHeight(site.x + x, site.z + z);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, hh, d, Math.max(1, Math.floor(w / 2)), 1, 1), mat);
+      mesh.position.set(site.x + x, y + hh * 0.5, site.z + z);
+      mesh.rotation.y = (x * 0.07 + z * 0.11) * 0.03;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+      this.addCollider({
+        kind: 'aabb', minX: mesh.position.x - w * 0.5, minY: y, minZ: mesh.position.z - d * 0.5,
+        maxX: mesh.position.x + w * 0.5, maxY: y + hh, maxZ: mesh.position.z + d * 0.5, tag: 'wall',
+      });
+    };
+    addWall(0, -5, 10, 2.4, 0.8);
+    addWall(-5, 0, 0.8, 4.1, 10, stoneDark);
+    addWall(3.2, 4.6, 4.4, 1.55, 0.8);
+    addWall(5, -2.8, 0.8, 2.9, 4.2);
+    for (const [x, z, s] of [[-2.4, -1.8, 0.8], [1.5, 1.2, 1.1], [4.7, 3.8, 0.65], [-5.2, 5.1, 0.72]] as const) {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), stoneDark);
+      rock.position.set(site.x + x, h + s * 0.45, site.z + z);
+      rock.rotation.set(x * 0.2, z * 0.3, x * 0.1);
+      rock.castShadow = true;
+      g.add(rock);
+    }
+    const ember = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 5), new THREE.MeshBasicMaterial({ color: 0xff7a32 }));
+    ember.scale.set(1.5, 0.5, 1.5);
+    ember.position.set(site.x + 0.7, h + 0.18, site.z + 0.2);
+    g.add(ember);
+    scene.add(g);
+  }
+
+  private addDock(scene: THREE.Scene, site: ScenicSite): void {
+    const h = this.getHeight(site.x, site.z);
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+    let dir: readonly [number, number] = dirs[0];
+    let low = Infinity;
+    for (const d of dirs) {
+      const dh = this.getHeight(site.x + d[0] * 18, site.z + d[1] * 18);
+      if (dh < low) { low = dh; dir = d; }
+    }
+    const wood = new THREE.MeshStandardMaterial({ color: 0x765434, roughness: 0.95 });
+    const edge = new THREE.MeshStandardMaterial({ color: 0x463526, roughness: 1 });
+    const deckY = Math.max(WATER_Y + 0.58, h + 0.08);
+    const alongX = dir[0] !== 0;
+    for (let i = 0; i < 13; i++) {
+      const cx = site.x + dir[0] * (i * 1.4);
+      const cz = site.z + dir[1] * (i * 1.4);
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(alongX ? 1.32 : 3.4, 0.18, alongX ? 3.4 : 1.32), wood);
+      plank.position.set(cx, deckY - 0.09, cz);
+      plank.castShadow = true;
+      plank.receiveShadow = true;
+      scene.add(plank);
+      this.platforms.push({
+        minX: cx - (alongX ? 0.66 : 1.7), minZ: cz - (alongX ? 1.7 : 0.66),
+        maxX: cx + (alongX ? 0.66 : 1.7), maxZ: cz + (alongX ? 1.7 : 0.66), top: deckY,
+      });
+      if (i % 4 === 0) {
+        for (const side of [-1, 1]) {
+          const px = cx + (alongX ? 0 : side * 1.5);
+          const pz = cz + (alongX ? side * 1.5 : 0);
+          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 2.5, 6), edge);
+          post.position.set(px, deckY - 0.7, pz);
+          post.castShadow = true;
+          scene.add(post);
+        }
+      }
+    }
+    const endX = site.x + dir[0] * 17;
+    const endZ = site.z + dir[1] * 17;
+    for (const side of [-1, 1]) {
+      const cx = endX + (alongX ? 0 : side * 1.15);
+      const cz = endZ + (alongX ? side * 1.15 : 0);
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.9), edge);
+      crate.position.set(cx, deckY + 0.4, cz);
+      crate.castShadow = true;
+      scene.add(crate);
+    }
+  }
+
+  private addEnvironmentProps(scene: THREE.Scene): void {
+    const poleGeo = new THREE.CylinderGeometry(0.12, 0.17, 7.2, 7);
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x4c3928, roughness: 0.95 });
+    const poleMesh = new THREE.InstancedMesh(poleGeo, poleMat, 90);
+    const armMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(2.5, 0.14, 0.16), poleMat, 90);
+    const poleGroups: THREE.Vector3[][] = [];
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3(1, 1, 1);
+    let count = 0;
+    for (let pi = 0; pi < Math.min(3, ROAD_PATHS.length); pi++) {
+      const path = ROAD_PATHS[pi] as readonly (readonly [number, number])[];
+      const group: THREE.Vector3[] = [];
+      for (let i = 0; i < path.length - 1 && count < 90; i++) {
+        const a = path[i] as readonly [number, number];
+        const b = path[i + 1] as readonly [number, number];
+        const dx = b[0] - a[0];
+        const dz = b[1] - a[1];
+        const len = Math.hypot(dx, dz);
+        const ox = (-dz / len) * 5.1;
+        const oz = (dx / len) * 5.1;
+        for (let d = i === 0 ? 10 : 24; d < len - 4 && count < 90; d += 29) {
+          const x = a[0] + (dx / len) * d + ox;
+          const z = a[1] + (dz / len) * d + oz;
+          const h = this.getHeight(x, z);
+          if (h < WATER_Y + 0.3 || h > 14 || this.inPlot(x, z, 1.2) || this.inScenicSite(x, z, 0.5)) continue;
+          const p = new THREE.Vector3(x, h + 3.6, z);
+          m.compose(p, q, s);
+          poleMesh.setMatrixAt(count, m);
+          p.y = h + 7.05;
+          m.compose(p, q, s);
+          armMesh.setMatrixAt(count, m);
+          group.push(new THREE.Vector3(x, h + 6.92, z));
+          this.addCollider({ kind: 'cyl', x, z, r: 0.2, y0: h, y1: h + 7.2, tag: 'rock' });
+          count++;
+        }
+      }
+      poleGroups.push(group);
+    }
+    poleMesh.count = count;
+    armMesh.count = count;
+    poleMesh.instanceMatrix.needsUpdate = true;
+    armMesh.instanceMatrix.needsUpdate = true;
+    poleMesh.castShadow = true;
+    armMesh.castShadow = true;
+    scene.add(poleMesh, armMesh);
+    const wires: number[] = [];
+    for (const group of poleGroups) {
+      for (let i = 0; i < group.length - 1; i++) {
+        const a = group[i] as THREE.Vector3;
+        const b = group[i + 1] as THREE.Vector3;
+        if (a.distanceTo(b) > 45) continue;
+        for (const side of [-0.9, 0, 0.9]) {
+          wires.push(a.x + side, a.y, a.z, b.x + side, b.y, b.z);
+        }
+      }
+    }
+    const wireGeo = new THREE.BufferGeometry();
+    wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(wires, 3));
+    scene.add(new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0x302d29, transparent: true, opacity: 0.72 })));
+
+    // 农场外圈木围栏, 用实例化保留大范围细节而不增加 draw call。
+    const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.16, 1.25, 0.16), poleMat, 110);
+    const railMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.12, 0.12), poleMat, 220);
+    const fenceEdges = [
+      [-122, 126, 40, 126], [40, 126, 40, 282], [40, 282, -122, 282], [-122, 282, -122, 126],
+    ] as const;
+    let postCount = 0;
+    let railCount = 0;
+    for (const [x0, z0, x1, z1] of fenceEdges) {
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const len = Math.hypot(dx, dz);
+      const steps = Math.floor(len / 7);
+      for (let i = 0; i <= steps && postCount < 110; i++) {
+        const t = i / steps;
+        const x = x0 + dx * t;
+        const z = z0 + dz * t;
+        const h = this.getHeight(x, z);
+        if (h < WATER_Y + 0.3) continue;
+        m.compose(new THREE.Vector3(x, h + 0.625, z), q, s);
+        postMesh.setMatrixAt(postCount++, m);
+        if (i === steps || railCount + 1 >= 220) continue;
+        const nx = x0 + dx * ((i + 1) / steps);
+        const nz = z0 + dz * ((i + 1) / steps);
+        const nh = this.getHeight(nx, nz);
+        const segLen = Math.hypot(nx - x, nz - z);
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.atan2(nz - z, nx - x));
+        for (const ry of [0.48, 0.94]) {
+          m.compose(new THREE.Vector3((x + nx) * 0.5, (h + nh) * 0.5 + ry, (z + nz) * 0.5), q, new THREE.Vector3(segLen, 1, 1));
+          railMesh.setMatrixAt(railCount++, m);
+        }
+        q.identity();
+      }
+    }
+    postMesh.count = postCount;
+    railMesh.count = railCount;
+    postMesh.instanceMatrix.needsUpdate = true;
+    railMesh.instanceMatrix.needsUpdate = true;
+    postMesh.castShadow = true;
+    railMesh.castShadow = true;
+    scene.add(postMesh, railMesh);
+  }
+
+  private addShoreDetails(scene: THREE.Scene): void {
+    const rng = mulberry32(77119);
+    const stemMat = new THREE.MeshLambertMaterial({ color: 0x738b42 });
+    const headMat = new THREE.MeshLambertMaterial({ color: 0x755b36 });
+    const stems = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.018, 0.026, 0.9, 4), stemMat, 520);
+    const heads = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.07, 0.25, 5), headMat, 520);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const p = new THREE.Vector3();
+    let count = 0;
+    for (let t = 0; t < 12000 && count < 520; t++) {
+      const x = (rng() * 2 - 1) * 340;
+      const z = (rng() * 2 - 1) * 340;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y - 0.16 || h > WATER_Y + 0.36 || this.inPlot(x, z, 1.5) || this.nearRoad(x, z, 0.2)) continue;
+      const scale = 0.75 + rng() * 0.7;
+      q.setFromEuler(new THREE.Euler((rng() - 0.5) * 0.08, rng() * Math.PI * 2, (rng() - 0.5) * 0.08));
+      s.set(scale, scale, scale);
+      p.set(x, h + 0.45 * scale, z);
+      m.compose(p, q, s);
+      stems.setMatrixAt(count, m);
+      p.y = h + 0.98 * scale;
+      m.compose(p, q, s);
+      heads.setMatrixAt(count, m);
+      count++;
+    }
+    stems.count = count;
+    heads.count = count;
+    stems.instanceMatrix.needsUpdate = true;
+    heads.instanceMatrix.needsUpdate = true;
+    stems.castShadow = true;
+    scene.add(stems, heads);
   }
 
   // 单座桥: 桥面(floor 可走) + 两端踏步 + 侧护栏 + 桥墩, ≤20 AABB

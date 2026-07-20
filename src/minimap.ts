@@ -1,5 +1,5 @@
 // 小地图: 地形底色离屏预渲染 + 区域标注(河带/地名) + 圈/玩家/枪声红点
-import { WORLD_HALF, WATER_Y, riverZAt, type World } from './world';
+import { ROAD_PATHS, WORLD_HALF, WATER_Y, riverZAt, type World } from './world';
 import type { Zone } from './zone';
 
 const BASE_RES = 150;
@@ -50,6 +50,22 @@ export class Minimap {
       }
     }
     bctx.putImageData(img, 0, 0);
+    // 道路网与场景中实际布局一致。
+    bctx.strokeStyle = 'rgba(205,181,132,0.88)';
+    bctx.lineWidth = 1.25;
+    bctx.lineJoin = 'round';
+    bctx.lineCap = 'round';
+    for (const path of ROAD_PATHS) {
+      bctx.beginPath();
+      for (let i = 0; i < path.length; i++) {
+        const p = path[i] as readonly [number, number];
+        const px = ((p[0] + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+        const py = ((p[1] + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+        if (i === 0) bctx.moveTo(px, py);
+        else bctx.lineTo(px, py);
+      }
+      bctx.stroke();
+    }
     // 河流带(蓝色, 描河道中心线)
     bctx.strokeStyle = 'rgba(70,130,190,0.85)';
     bctx.lineWidth = 2.2;
@@ -79,6 +95,18 @@ export class Minimap {
       const w = ((p.maxX - p.minX - 4) / (WORLD_HALF * 2)) * BASE_RES;
       const d = ((p.maxZ - p.minZ - 4) / (WORLD_HALF * 2)) * BASE_RES;
       bctx.fillRect(x0, z0, Math.max(1.5, w), Math.max(1.5, d));
+    }
+    // 新地标用高对比小圆点标出, 便于跳伞选点。
+    bctx.fillStyle = 'rgba(244,214,128,0.95)';
+    bctx.strokeStyle = 'rgba(65,55,42,0.95)';
+    bctx.lineWidth = 0.8;
+    for (const p of world.landmarks) {
+      const px = ((p.x + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      const py = ((p.z + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      bctx.beginPath();
+      bctx.arc(px, py, 1.8, 0, Math.PI * 2);
+      bctx.fill();
+      bctx.stroke();
     }
   }
 
