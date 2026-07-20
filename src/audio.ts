@@ -264,6 +264,34 @@ export class AudioSys {
     this.thump(0.9 * att, pan, 85, 24, 0.5);
   }
 
+  // 炮弹下坠: 高频快速下扫, 与子弹和载具声音区分
+  artilleryWhistle(dist: number, pan: number): void {
+    if (!this.ctx) return;
+    const dst = this.out(pan);
+    if (!dst) return;
+    const att = clamp(1.6 / (1 + dist * 0.028), 0.015, 1);
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(1450, t);
+    osc.frequency.exponentialRampToValueAtTime(170, t + 0.78);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.exponentialRampToValueAtTime(0.08 * att, t + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+    osc.connect(gain).connect(dst);
+    osc.start(t);
+    osc.stop(t + 0.82);
+  }
+
+  // 炮击比手雷更厚, 叠加低频冲击与中频泥土爆裂
+  artilleryImpact(dist: number, pan: number): void {
+    const att = clamp(2.8 / (1 + dist * 0.016), 0.02, 1);
+    this.noiseBurst(1.0 * att, pan, 125, 0.3, 0.72);
+    this.noiseBurst(0.55 * att, pan, 620, 0.65, 0.34);
+    this.thump(1.0 * att, pan, 72, 20, 0.62);
+  }
+
   // 烟雾弹起烟嘶嘶声
   hiss(dist: number, pan: number): void {
     const att = clamp(1.2 / (1 + dist * 0.03), 0.02, 1);

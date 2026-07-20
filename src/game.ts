@@ -66,6 +66,7 @@ import { KnockSys } from './knock';
 import { AudioSys } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
 import { BotController, BOT_NAMES } from './bot';
+import { BombardmentSystem } from './bombardment';
 import type { Destructible } from './buildings';
 import { Character, BOT_SHIRTS, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH } from './character';
 import { Effects } from './effects';
@@ -94,6 +95,7 @@ export class Game {
   readonly world: World;
   readonly effects: Effects;
   readonly zone: Zone;
+  readonly bombardment: BombardmentSystem;
   readonly loot: LootManager;
   readonly airdrop: AirdropManager;
   readonly knock: KnockSys;
@@ -233,6 +235,7 @@ export class Game {
     this.scene.add(this.doorFrame);
     this.effects = new Effects(this.scene);
     this.zone = new Zone(this.scene);
+    this.bombardment = new BombardmentSystem(this.scene);
     this.loot = new LootManager(this.scene);
     this.airdrop = new AirdropManager(this, this.scene);
     this.knock = new KnockSys(this);
@@ -687,6 +690,7 @@ export class Game {
     this.vehicles.populate(this.world);
     this.mapVehicles = this.vehicles.list.map(() => ({ x: 0, z: 0, dead: false }));
     this.zone.reset();
+    this.bombardment.reset();
     this.effects.reset();
     this.promptVehicle = null;
     this.audio.engineStop();
@@ -713,6 +717,7 @@ export class Game {
     this.hud.setHP(100);
     this.hud.setCounts(TOTAL, 0);
     this.hud.setZoneTint(false);
+    this.hud.setBombardment(null, false);
     this.hud.showBackpack(false);
     this.hud.setHealCast(-1);
     this.hud.setDrinkBuff(-1);
@@ -855,6 +860,7 @@ export class Game {
     }
     this.updateZoneDamage(dt);
     this.airdrop.update(dt); // 空投排程/飞机/落箱/烟柱
+    this.bombardment.update(dt, this); // 小范围轰炸区预警/落弹/伤害
     this.knock.update(dt); // 击倒流血/救援读条
     // 4 角色间软碰撞
     this.separateChars();
@@ -1479,7 +1485,7 @@ export class Game {
         ? `${ns(attacker)} 用${via}淘汰了 ${ns(victim)}`
         : `${ns(attacker)} 淘汰了 ${ns(victim)}${head ? '（爆头）' : ''}`);
     } else {
-      this.hud.killFeed(`${ns(victim)} 被安全区吞噬`);
+      this.hud.killFeed(via ? `${ns(victim)} 死于${via}` : `${ns(victim)} 被安全区吞噬`);
     }
     if (victim.team === 'squad' && !victim.isPlayer) {
       this.hud.toast(`队友 ${victim.name} 被淘汰`);
@@ -1924,6 +1930,7 @@ export class Game {
       this.hud.setZoneStatus(this.zone.statusText(), this.zone.state === 'shrink');
     }
     this.hud.setZoneTint(outside && c.alive);
+    this.hud.setBombardment(this.bombardment.hudText(), this.bombardment.state === 'active');
 
     // 准星: 弧度→像素; AWM 开镜时换全屏瞄准镜
     const sizeH = this.renderer.domElement.height / this.renderer.getPixelRatio();
@@ -1958,6 +1965,17 @@ export class Game {
       s.x = c.pos.x;
       s.z = c.pos.z;
     }
-    this.minimap.draw(this.zone, player.char.pos.x, player.char.pos.z, player.yaw, this.shotDots, n, this.mapVehicles, this.mapSquad, this.airdrop.icon());
+    this.minimap.draw(
+      this.zone,
+      player.char.pos.x,
+      player.char.pos.z,
+      player.yaw,
+      this.shotDots,
+      n,
+      this.mapVehicles,
+      this.mapSquad,
+      this.airdrop.icon(),
+      this.bombardment.icon(),
+    );
   }
 }

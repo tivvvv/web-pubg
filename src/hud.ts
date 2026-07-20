@@ -38,6 +38,7 @@ export class Hud {
   private aliveEl = el('alive-count');
   private killsEl = el('kill-count');
   private zoneStatus = el('zone-status');
+  private bombardmentStatus = el('bombardment-status');
   private environmentStatus = el('environment-status');
   private envIcon = el('env-icon');
   private envTime = el('env-time');
@@ -79,6 +80,7 @@ export class Hud {
   private dmgTimer = 0;
   private healCountsKey = '';
   private environmentKey = '';
+  private bombardmentKey = '';
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
@@ -182,6 +184,15 @@ export class Hud {
   setZoneStatus(text: string, urgent: boolean): void {
     this.zoneStatus.textContent = text;
     this.zoneStatus.classList.toggle('urgent', urgent);
+  }
+
+  setBombardment(text: string | null, active: boolean): void {
+    const key = `${text ?? ''}|${active ? 1 : 0}`;
+    if (key === this.bombardmentKey) return;
+    this.bombardmentKey = key;
+    this.bombardmentStatus.textContent = text ?? '';
+    this.bombardmentStatus.classList.toggle('show', text !== null);
+    this.bombardmentStatus.classList.toggle('active', active);
   }
 
   setEnvironment(time: string, phase: string, label: string, weather: WeatherKind): void {

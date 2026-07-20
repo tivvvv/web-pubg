@@ -64,6 +64,36 @@ body {
   animation: blink 0.8s steps(2) infinite;
 }
 
+#bombardment-status {
+  display: none;
+  align-items: center;
+  color: #ff9a83;
+  border-left: 1px solid rgba(255, 91, 67, 0.5);
+  padding-left: 16px;
+  font-weight: 700;
+  text-shadow: 0 0 9px rgba(255, 55, 35, 0.55);
+}
+
+#bombardment-status.show {
+  display: inline-flex;
+}
+
+#bombardment-status.active {
+  color: #ff5845;
+  animation: bombardment-pulse 0.42s ease-in-out infinite alternate;
+}
+
+@keyframes bombardment-pulse {
+  from {
+    opacity: 0.65;
+    text-shadow: 0 0 5px rgba(255, 55, 35, 0.45);
+  }
+  to {
+    opacity: 1;
+    text-shadow: 0 0 14px rgba(255, 75, 45, 0.95);
+  }
+}
+
 #environment-status {
   position: absolute;
   top: 14px;

@@ -149,7 +149,7 @@ export class Effects {
     scene.add(this.light);
 
     // 冲击波环池(爆炸)
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 8; i++) {
       const mat = new THREE.MeshBasicMaterial({
         color: 0xffcf90, transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
@@ -177,7 +177,7 @@ export class Effects {
 
     // 烟柱池(每柱 3 层 sprite, ~3s 上升)
     this.puffTex = makePuffTexture();
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 8; i++) {
       const sprites: THREE.Sprite[] = [];
       const vy: number[] = [];
       for (let k = 0; k < 3; k++) {

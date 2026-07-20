@@ -1,6 +1,7 @@
 // 小地图: 地形底色离屏预渲染 + 区域标注(河带/地名) + 圈/玩家/枪声红点
 import { ROAD_PATHS, WORLD_HALF, WATER_Y, riverZAt, type World } from './world';
 import type { Zone } from './zone';
+import type { BombardmentMapState } from './bombardment';
 
 const BASE_RES = 150;
 
@@ -122,11 +123,29 @@ export class Minimap {
     vehicles: readonly { x: number; z: number; dead: boolean }[],
     squad: readonly { x: number; z: number }[],
     airdrop: { x: number; z: number } | null = null,
+    bombardment: BombardmentMapState | null = null,
   ): void {
     const ctx = this.ctx;
     const s = this.size;
     ctx.clearRect(0, 0, s, s);
     ctx.drawImage(this.base, 0, 0, s, s);
+
+    // 小范围轰炸区: 半透明红面 + 红色边界, 预警阶段使用虚线
+    if (bombardment) {
+      const bx = this.toMap(bombardment.x);
+      const bz = this.toMap(bombardment.z);
+      const br = (bombardment.radius / (WORLD_HALF * 2)) * s;
+      ctx.save();
+      ctx.fillStyle = bombardment.state === 'active' ? 'rgba(215,38,27,0.34)' : 'rgba(205,45,32,0.2)';
+      ctx.strokeStyle = bombardment.state === 'active' ? '#ff3e2e' : 'rgba(255,91,70,0.95)';
+      ctx.lineWidth = bombardment.state === 'active' ? 2 : 1.5;
+      if (bombardment.state === 'warning') ctx.setLineDash([3, 2]);
+      ctx.beginPath();
+      ctx.arc(bx, bz, br, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // 空投标记(红色菱形)
     if (airdrop) {

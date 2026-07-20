@@ -212,6 +212,8 @@ export class BotController {
     // 翻越中: 脚本位移
     c.vaultCd = Math.max(0, c.vaultCd - dt);
     if (updateVaultMotion(c, dt)) return;
+    // 预警开始就优先离开轰炸区, 进入轰炸阶段后全速逃生
+    if (this.fleeBombardment(dt, game)) return;
     this.fireTimer -= dt;
 
     // 换弹(仅枪械, 消耗对应类型弹药)
@@ -378,6 +380,16 @@ export class BotController {
     const d = Math.hypot(dx, dz) || 1;
     c.yaw = Math.atan2(dx / d, dz / d);
     moveChar(c, (dx / d) * 6.2, (dz / d) * 6.2, dt, game.world);
+    return true;
+  }
+
+  private fleeBombardment(dt: number, game: Game): boolean {
+    const c = this.char;
+    if (!game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) return false;
+    const speed = game.bombardment.state === 'active' ? 6.4 : 5.8;
+    c.setStance('stand');
+    c.yaw = turnToward(c.yaw, Math.atan2(game.tmpV2.x, game.tmpV2.y), 6 * dt);
+    moveChar(c, game.tmpV2.x * speed, game.tmpV2.y * speed, dt, game.world);
     return true;
   }
 

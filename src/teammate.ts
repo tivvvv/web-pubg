@@ -164,9 +164,16 @@ export class TeammateController {
         mx = dx / d;
         mz = dz / d;
       }
+      if (game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) {
+        mx = game.tmpV2.x;
+        mz = game.tmpV2.y;
+      }
       if (mx !== 0 || mz !== 0) moveChar(c, mx * 0.6, mz * 0.6, dt, game.world);
       return;
     }
+
+    // 轰炸预警优先于跟随和交战, 队友会立即向红区外撤离
+    if (this.fleeBombardment(dt, game)) return;
 
     // ---- 救援友军(优先玩家, 25m 内有敌先战斗; 第二队友自然掩护) ----
     {
@@ -290,6 +297,16 @@ export class TeammateController {
     }
     const g = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y);
     if (c.pos.y <= g) this.finishDescent(g);
+  }
+
+  private fleeBombardment(dt: number, game: Game): boolean {
+    const c = this.char;
+    if (!game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) return false;
+    const speed = game.bombardment.state === 'active' ? 6.5 : 5.8;
+    c.setStance('stand');
+    c.yaw = turnToward(c.yaw, Math.atan2(game.tmpV2.x, game.tmpV2.y), 6 * dt);
+    moveChar(c, game.tmpV2.x * speed, game.tmpV2.y * speed, dt, game.world);
+    return true;
   }
 
   private finishDescent(groundY: number): void {
