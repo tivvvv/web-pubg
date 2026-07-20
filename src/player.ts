@@ -54,6 +54,7 @@ export class PlayerController {
   private throwDir = new THREE.Vector3();
   private throwOrigin = new THREE.Vector3();
   private tmpSwim = new THREE.Vector3();
+  private planeNext = new THREE.Vector3();
 
   constructor(shirtColor: number) {
     this.char = new Character('你', true, shirtColor);
@@ -126,7 +127,7 @@ export class PlayerController {
     let vz = 0;
     const sprint = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
     // 疾跑/跳跃自动站起(仅站立可疾跑, 站/蹲可跳)
-    if (sprint && wlen > 0.001 && c.stance !== 'stand') c.setStance('stand');
+    if (sprint && wlen > 0.001 && !c.knocked && !c.swimming && c.stance !== 'stand') c.setStance('stand');
     let jumped = false;
     if (wlen > 0.001) {
       wx /= wlen;
@@ -177,7 +178,8 @@ export class PlayerController {
       c.applySwim(vx, vz, dt, game.world);
       // 划水声 + 小水花(按划水距离节流)
       this.swimAcc += c.speed2d * dt;
-      if (this.swimAcc > 1.7) {
+      const strokeDist = sprint ? 1.15 : 1.7;
+      if (this.swimAcc > strokeDist) {
         this.swimAcc = 0;
         game.audio.swimStroke();
         game.effects.splashSmall(this.tmpSwim.set(c.pos.x, WATER_Y + 0.04, c.pos.z));
@@ -392,8 +394,9 @@ export class PlayerController {
   // ---- 空降物理 ----
 
   // 跳伞(舱内按 F / 航线末端自动): 进入自由落体
-  startFreefall(game: Game): void {
+  startFreefall(game: Game, forced = false): void {
     if (this.descent !== 'plane') return;
+    if (!forced && !game.isInsideFlightJumpZone(this.char.pos.x, this.char.pos.z)) return;
     this.descent = 'freefall';
     this.vy = -2;
     this.char.airPose = 'fall';
@@ -437,7 +440,11 @@ export class PlayerController {
       game.flightPoint(c.pos, this.planeS);
       c.group.visible = false; // 舱内隐藏(机外追击机位看不到自己)
       game.audio.planeDroneSet(0.85);
-      if (this.planeS > 980) this.startFreefall(game); // 航线末端自动跳伞
+      const insideJumpZone = game.isInsideFlightJumpZone(c.pos.x, c.pos.z);
+      if (insideJumpZone) {
+        game.flightPoint(this.planeNext, this.planeS + 92 * dt);
+        if (!game.isInsideFlightJumpZone(this.planeNext.x, this.planeNext.z)) this.startFreefall(game, true);
+      }
       return;
     }
     // 水平操控: WASD 相对视线
@@ -774,7 +781,10 @@ export class PlayerController {
     }
 
     // FOV 缩放
-    const targetFov = BASE_FOV / zoom;
+    const swimSprintF = c.swimming
+      ? clamp((c.speed2d - SWIM_SPEED) / (SWIM_SPRINT_SPEED - SWIM_SPEED), 0, 1)
+      : 0;
+    const targetFov = (BASE_FOV + swimSprintF * 4) / zoom;
     this.fov = lerp(this.fov, targetFov, Math.min(1, dt * 10));
     if (Math.abs(this.fov - this.camera.fov) > 0.05) {
       this.camera.fov = this.fov;

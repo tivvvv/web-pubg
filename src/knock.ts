@@ -27,9 +27,6 @@ export class KnockSys {
     c.reviveT = 0;
     c.reviveTarget = null;
     c.rescuerId = 0;
-    c.setStance('prone');
-    c.swingT = 0;
-    c.speed2d = 0;
     // 强制脱离载具(驾驶/乘坐)
     if (c.isPlayer) {
       if (g.playerCtl?.driving) g.forceExitVehicle(c, 0);
@@ -48,6 +45,12 @@ export class KnockSys {
         c.pos.y = g.world.groundHeight(c.pos.x, c.pos.z, rv.pos.y + 1);
       }
     }
+    // 下车逻辑会复位站姿, 因此最后统一强制成击倒姿态
+    c.setStance('prone');
+    c.stanceF = 2;
+    c.vault = null;
+    c.swingT = 0;
+    c.speed2d = 0;
     // 击杀播报: 击倒(橙色, 区别于淘汰)
     const ns = (x: Character): string =>
       `<span class="${x.isPlayer ? 'kf-player' : x.team === 'squad' ? 'kf-squad' : 'kf-bot'}">${x.name}</span>`;

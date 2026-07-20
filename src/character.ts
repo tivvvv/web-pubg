@@ -14,6 +14,8 @@ export type Stance = 'stand' | 'crouch' | 'prone';
 const STANCE_TARGET: Record<Stance, number> = { stand: 0, crouch: 1, prone: 2 };
 export const SWIM_SPEED = 2.2;
 export const SWIM_SPRINT_SPEED = 3.6;
+export const SWIM_ENTER_DEPTH = 1.1;
+export const SWIM_EXIT_DEPTH = 0.45;
 
 // 翻越状态(脚本化运动: 起跳点→顶点上弧→落点)
 export interface VaultState {
@@ -453,13 +455,23 @@ export class Character {
 
   // 游泳位移: 水平限速由调用方保证; Y 锁定水面浮沉, 高处落水先下潜再浮起
   applySwim(vx: number, vz: number, dt: number, world: World): void {
+    const startDepth = WATER_Y - world.getHeight(this.pos.x, this.pos.z);
+    const startStandH = world.groundHeight(this.pos.x, this.pos.z, this.pos.y + 0.3);
+    if (startDepth <= SWIM_EXIT_DEPTH || startStandH >= WATER_Y - SWIM_EXIT_DEPTH) {
+      vx = 0;
+      vz = 0;
+    }
     this.pos.x += vx * dt;
     this.pos.z += vz * dt;
     world.resolveCollision(this.pos, this.radius);
     const speed = Math.hypot(vx, vz);
     this.swimT += dt * clamp(speed / SWIM_SPEED, 0.65, 1.7);
     const bob = Math.sin(this.swimT * 2.3) * 0.045;
-    let targetY = WATER_Y - 0.78 + bob;
+    const groundY = world.groundHeight(this.pos.x, this.pos.z, this.pos.y + 0.3);
+    const depth = WATER_Y - groundY;
+    const shoreF = clamp((0.8 - depth) / (0.8 - SWIM_EXIT_DEPTH), 0, 1);
+    const waterY = WATER_Y - 0.78 + bob;
+    let targetY = waterY + (groundY - waterY) * shoreF;
     if (this.swimDip > 0) {
       this.swimDip = Math.max(0, this.swimDip - dt);
       const p = 1 - this.swimDip / 0.4; // 0→1
@@ -468,7 +480,7 @@ export class Character {
     this.pos.y += (targetY - this.pos.y) * Math.min(1, dt * 5);
     this.vy = 0;
     this.grounded = false;
-    this.groundH = WATER_Y - 0.03; // 贴水面的阴影
+    this.groundH = WATER_Y - 0.03 + (groundY - (WATER_Y - 0.03)) * shoreF;
     this.speed2d = speed;
   }
 
@@ -505,8 +517,8 @@ export class Character {
     const p = this.parts;
     // 持械模型切换(仅在栏位/武器变化时克隆)
     const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
-    const wantId: WeaponModelId | null = this.airPose || this.swimming
-      ? null // 空降/游泳收枪
+    const wantId: WeaponModelId | null = this.airPose || this.swimming || this.knocked
+      ? null // 空降/游泳/击倒收枪
       : gun
         ? gun.def.id
         : this.curSlot === 3 && this.melee.def.id === 'knife' ? 'knife'
@@ -592,23 +604,50 @@ export class Character {
       p.armR.position.z = 0;
       return;
     }
+    // 击倒姿态强制卧倒, 不受站/蹲/趴输入覆盖
+    if (this.knocked) {
+      this.swimF = 0;
+      p.inner.rotation.set(Math.PI / 2 - 0.12, 0, 0);
+      p.inner.position.set(0, 0.3, 0);
+      p.armL.rotation.set(-1.55, 0, 0.38);
+      p.armR.rotation.set(-1.35, 0, -0.22);
+      p.armL.position.z = 0;
+      p.armR.position.z = 0;
+      p.legL.rotation.set(0.18, 0, 0.08);
+      p.legR.rotation.set(-0.12, 0, -0.08);
+      return;
+    }
     // 游泳姿势: 水平俯身贴水面 + 交替划臂打水(swimF 平滑进出)
-    this.swimF = clamp(this.swimF + (this.swimming ? 1 : -1) * dt * 3.2, 0, 1);
+    this.swimF = clamp(this.swimF + (this.swimming ? 3.4 : -6.5) * dt, 0, 1);
     if (this.swimF > 0.001) {
       const f = this.swimF;
       const ph = this.swimT * 3.4;
       const sL = Math.sin(ph);
       const sR = Math.sin(ph + Math.PI);
-      p.inner.rotation.x = f * (Math.PI / 2 - 0.22); // 接近水平, 头抬出水面
+      const sprintF = this.swimming
+        ? clamp((this.speed2d - SWIM_SPEED) / (SWIM_SPRINT_SPEED - SWIM_SPEED), 0, 1)
+        : 0;
+      const armStroke = 0.5 + sprintF * 0.4;
+      const legKick = 0.18 + sprintF * 0.2;
+      p.inner.rotation.x = f * (Math.PI / 2 - 0.22 + sprintF * 0.08); // 加速时更水平
+      p.inner.rotation.z = Math.sin(ph * 0.5) * sprintF * 0.09 * f;
       p.inner.rotation.y = 0;
-      p.inner.position.y = f * 0.6;
+      p.inner.position.y = f * (0.6 + sprintF * 0.04);
       p.inner.position.z = 0;
-      p.armL.rotation.set(-1.15 + f * (-0.3 + sL * 0.5), 0, 0.25 + f * 0.1);
-      p.armR.rotation.set(-1.3 + f * (-0.15 + sR * 0.5), 0, -0.1 - f * 0.1);
+      p.armL.rotation.set(
+        -1.15 + f * (-0.3 + sL * armStroke),
+        sL * sprintF * 0.18,
+        0.25 + f * 0.1,
+      );
+      p.armR.rotation.set(
+        -1.3 + f * (-0.15 + sR * armStroke),
+        sR * sprintF * 0.18,
+        -0.1 - f * 0.1,
+      );
       p.armL.position.z = 0;
       p.armR.position.z = 0;
-      p.legL.rotation.x = f * (0.3 + sR * 0.18);
-      p.legR.rotation.x = f * (0.3 + sL * 0.18);
+      p.legL.rotation.x = f * (0.3 + sR * legKick);
+      p.legR.rotation.x = f * (0.3 + sL * legKick);
       return;
     }
     // 姿态混合: fC 蹲权重(0..1), fP 趴权重(0..1)

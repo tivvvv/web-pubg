@@ -18,13 +18,13 @@ const ENGAGE_RANGE = 60;
 
 export class TeammateController {
   readonly char: Character;
-  descent: 'freefall' | 'canopy' | null = null;
+  descent: 'plane' | 'freefall' | 'canopy' | null = null;
   vy = 0;
-  jumpDelay: number;   // 跳伞延迟(玩家起跳后跟进)
   riding: Vehicle | null = null;
   seatIdx = -1;
   private followAng: number;
   private followDist: number;
+  private jumpSlot: number;
   private target: Character | null = null;
   private lostT = 0;
   private scanT = 0;
@@ -39,17 +39,18 @@ export class TeammateController {
   private vaultProbeT = 0; // 翻越探测节流
   private strafeT = 0;
   private strafeDir = 1;
+  private swimExitT = 0;
   private eye = new THREE.Vector3();
   private tgt = new THREE.Vector3();
   private dir = new THREE.Vector3();
   private aim = new THREE.Vector3();
 
-  constructor(name: string, shirtColor: number) {
+  constructor(name: string, shirtColor: number, jumpSlot = 1) {
     this.char = new Character(name, false, shirtColor);
     this.char.team = 'squad';
     this.followAng = rand(0, Math.PI * 2);
     this.followDist = rand(4, 9);
-    this.jumpDelay = rand(0.4, 1.3);
+    this.jumpSlot = jumpSlot;
   }
 
   update(dt: number, game: Game): void {
@@ -114,6 +115,7 @@ export class TeammateController {
     if (updateVaultMotion(c, dt)) return;
 
     // ---- 游泳: 跟随玩家渡河, 不交战不拾取 ----
+    const wasSwimming = c.swimming;
     game.updateSwim(c);
     if (c.swimming) {
       // 直接朝玩家位置游(跟随偏移点可能落在水里, 会原地踩水)
@@ -129,6 +131,16 @@ export class TeammateController {
         game.soundAt(c.pos, (dd, p2) => game.audio.swimStrokeAt(dd, p2));
       }
       this.fireTimer -= dt;
+      return;
+    }
+    if (wasSwimming) {
+      this.swimExitT = 0.18;
+      c.speed2d = 0;
+      return;
+    }
+    if (this.swimExitT > 0) {
+      this.swimExitT = Math.max(0, this.swimExitT - dt);
+      c.speed2d = 0;
       return;
     }
 
@@ -235,18 +247,29 @@ export class TeammateController {
   // ---- 空降物理(跟随玩家落点) ----
   private updateDescent(dt: number, game: Game): void {
     const c = this.char;
-    // 等待跳伞延迟: 还在"机舱"跟玩家(舱内隐藏, 玩家起跳后显形跟进)
-    if (this.jumpDelay > 0) {
-      this.jumpDelay -= dt;
-      c.group.visible = game.playerCtl?.descent !== 'plane';
-      const p = game.playerCtl?.char.pos;
-      if (p) c.pos.set(p.x + this.followDist * 0.5, p.y, p.z + this.followDist * 0.5);
-      if (this.jumpDelay > 0) return;
+    const player = game.playerCtl;
+    if (this.descent === 'plane') {
+      if (!player) return;
+      c.group.visible = false;
+      c.pos.copy(player.char.pos);
+      c.yaw = player.char.yaw;
+      if (player.descent === 'plane') return;
+      const fwdX = Math.sin(player.yaw);
+      const fwdZ = Math.cos(player.yaw);
+      const rightX = -fwdZ;
+      const rightZ = fwdX;
+      const side = (this.jumpSlot - 1) * 2.2;
+      const ahead = this.jumpSlot === 1 ? 3.4 : 2.7;
+      c.pos.x += fwdX * ahead + rightX * side;
+      c.pos.z += fwdZ * ahead + rightZ * side;
+      c.group.visible = true;
+      c.airPose = 'fall';
+      this.descent = 'freefall';
       this.vy = -2;
     }
     const vt = this.descent === 'freefall' ? -55 : -10;
     this.vy += (vt - this.vy) * (1 - Math.exp(-dt * 1.2));
-    const p = game.playerCtl?.char.pos;
+    const p = player?.char.pos;
     if (p) {
       const dx = p.x - c.pos.x;
       const dz = p.z - c.pos.z;

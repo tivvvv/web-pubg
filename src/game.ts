@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 
 const UP_Y = new THREE.Vector3(0, 1, 0);
-const MATE_NAMES = ['阿伟', '老六', '小胖'];
+const MATE_NAMES = ['队友1', '队友2', '队友3'];
 const MATE_SHIRTS = [0x3cb36a, 0x3f8a4e, 0x66a05a];
 
 // 队友头顶名牌(绿色小字, 远处隐藏)
@@ -67,7 +67,7 @@ import { AudioSys } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
 import { BotController, BOT_NAMES } from './bot';
 import type { Destructible } from './buildings';
-import { Character, BOT_SHIRTS } from './character';
+import { Character, BOT_SHIRTS, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH } from './character';
 import { Effects } from './effects';
 import { Hud, type BackpackData } from './hud';
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
@@ -337,12 +337,14 @@ export class Game {
       case 'crouch': {
         // C: 站⇄蹲; 趴→蹲
         const c = this.player.char;
+        if (c.knocked) break;
         c.setStance(c.stance === 'crouch' ? 'stand' : 'crouch');
         break;
       }
       case 'prone': {
         // Z: 站/蹲→趴; 趴→蹲
         const c = this.player.char;
+        if (c.knocked) break;
         c.setStance(c.stance === 'prone' ? 'crouch' : 'prone');
         break;
       }
@@ -550,6 +552,11 @@ export class Game {
     this.zoneArmed = true;
   }
 
+  // 运输机只有位于当前白圈内时允许玩家主动跳伞
+  isInsideFlightJumpZone(x: number, z: number): boolean {
+    return !this.zone.isOutside(x, z);
+  }
+
   // ---- 对局管理 ----
 
   startMatch(): void {
@@ -624,15 +631,17 @@ export class Game {
     for (let i = 1; i < TOTAL; i++) {
       const p = pts[i] as { x: number; z: number };
       if (i <= 3) {
-        // 队友 ×3(跟随飞机, 玩家起跳后错峰跳伞)
+        // 队友 ×3(舱内隐藏等待, 玩家离机时同帧跟随跳伞)
         const mate = new TeammateController(
           (MATE_NAMES[i - 1] ?? `队友${i}`) as string,
           (MATE_SHIRTS[i - 1] ?? 0x3cb36a) as number,
+          i - 1,
         );
         mate.char.pos.copy(this.player.char.pos);
-        mate.char.airPose = 'fall';
-        mate.descent = 'freefall';
-        mate.vy = -2;
+        mate.char.airPose = 'sit';
+        mate.char.group.visible = false;
+        mate.descent = 'plane';
+        mate.vy = 0;
         this.mates.push(mate);
         this.chars.push(mate.char);
         this.charsGroup.add(mate.char.group);
@@ -707,7 +716,7 @@ export class Game {
     this.hud.setDrinkBuff(-1);
     this.hud.setPickupPrompt(null);
     this.hud.showScreen(null);
-    this.hud.toast('航线已开启: 按 F 跳伞');
+    this.hud.toast('飞机正在接近安全区');
     this.state = 'playing';
     this.onResize();
     this.input.requestLock();
@@ -797,7 +806,7 @@ export class Game {
       if (!tag) continue;
       const c = m.char;
       const dp = Math.hypot(c.pos.x - player.char.pos.x, c.pos.z - player.char.pos.z);
-      tag.visible = c.alive && dp < 60;
+      tag.visible = c.alive && c.group.visible && dp < 60;
       tag.position.set(c.pos.x, c.pos.y + 2.05, c.pos.z);
       // 倒地队友橙色标记(80m 内脉动)
       const km = this.knockMarks[i];
@@ -897,7 +906,7 @@ export class Game {
 
   // ---- 游泳状态机(玩家/bot/队友共用, 各控制器每帧调用一次) ----
   // 入水: 水深(水面-地形) >1.1 且脚下无可站立浅台(桥面/岩石不算);
-  // 出水: 水深 <0.9 或脚下出现 ≥水面-0.9 的站立面(河岸/浅滩/桥面)
+  // 出水: 水深 ≤0.45 或脚下出现 ≥水面-0.45 的站立面(河岸/浅滩/桥面)
   updateSwim(c: Character): void {
     if (!c.alive) {
       c.swimming = false;
@@ -908,14 +917,17 @@ export class Game {
     const z = c.pos.z;
     const depth = WATER_Y - this.world.getHeight(x, z);
     if (!c.swimming) {
-      if (depth > 1.1 && c.pos.y < WATER_Y + 0.3) {
+      if (depth > SWIM_ENTER_DEPTH && c.pos.y < WATER_Y + 0.3) {
         const standH = this.world.groundHeight(x, z, c.pos.y + 0.3);
         if (standH < WATER_Y - 1.0) {
-          const plunge = !c.grounded || c.vy < -2; // 高处落水: 下潜+大水花
+          const plunge = c.vy < -6; // 只有高速落水才下潜
           c.swimming = true;
           c.swimT = 0;
           c.swimAcc = 0;
           c.swimDip = plunge ? 0.4 : 0;
+          if (!plunge) c.pos.y = Math.max(c.pos.y, WATER_Y - 0.82);
+          c.vy = 0;
+          c.grounded = false;
           this.tmpA.set(x, WATER_Y + 0.06, z);
           this.effects.splash(this.tmpA);
           if (plunge) this.effects.splash(this.tmpA);
@@ -924,9 +936,15 @@ export class Game {
           if (c.isPlayer && this.healT > 0) this.cancelHeal('入水打断恢复');
         }
       }
-    } else if (depth < 0.9 || this.world.groundHeight(x, z, c.pos.y + 0.3) > WATER_Y - 0.9) {
+    } else {
+      const standH = this.world.groundHeight(x, z, c.pos.y + 0.3);
+      if (depth > SWIM_EXIT_DEPTH && standH < WATER_Y - SWIM_EXIT_DEPTH) return;
+      if (c.pos.y < standH - 0.08) return;
       c.swimming = false;
       c.swimDip = 0;
+      c.pos.y = Math.max(c.pos.y, standH);
+      c.vy = 0;
+      c.grounded = true;
       if (c.isPlayer) this.audio.splashOut();
       else this.soundAt(c.pos, (d, p) => this.audio.splashAt(d, p));
     }
@@ -1808,14 +1826,16 @@ export class Game {
   private refreshHud(): void {
     const player = this.player as PlayerController;
     const c = player.char;
+    const flightJumpReady = player.descent === 'plane' && this.isInsideFlightJumpZone(c.pos.x, c.pos.z);
     this.hud.setHP(c.hp);
     this.hud.setHeals(`绷带×${c.heals.bandage}  医疗包×${c.heals.medkit}  饮料×${c.heals.drink}`);
     // 空降仪表与提示
     if (player.descent) {
       const agl = c.pos.y - this.world.getHeight(c.pos.x, c.pos.z);
       this.hud.setAltitude(agl, player.vy);
-      if (player.descent === 'plane') this.hud.setPickupPrompt('按 F 跳伞');
-      else if (player.descent === 'freefall' && agl < 150) this.hud.setPickupPrompt('按 Space 开伞');
+      if (player.descent === 'plane') {
+        this.hud.setPickupPrompt(flightJumpReady ? '按 F 跳伞' : null);
+      } else if (player.descent === 'freefall' && agl < 150) this.hud.setPickupPrompt('按 Space 开伞');
       else this.hud.setPickupPrompt(null); // 开伞后清除
     } else {
       this.hud.setAltitude(-1, 0);
@@ -1884,8 +1904,11 @@ export class Game {
     }
 
     // 毒圈状态
-    const outside = this.zone.isOutside(c.pos.x, c.pos.z);
-    if (outside && c.alive) {
+    const inPlane = player.descent === 'plane';
+    const outside = !inPlane && this.zone.isOutside(c.pos.x, c.pos.z);
+    if (inPlane) {
+      this.hud.setZoneStatus(flightJumpReady ? '飞机已进入安全区' : '等待飞机进入安全区', false);
+    } else if (outside && c.alive) {
       this.hud.setZoneStatus(`你在圈外！尽快移动 (-${this.zone.dps}/s)`, true);
     } else {
       this.hud.setZoneStatus(this.zone.statusText(), this.zone.state === 'shrink');

@@ -1,6 +1,6 @@
 // Bot AI: 游走/拾取 ↔ 交战 状态机; 赤手空拳开局, 优先找枪, 近身用近战
 import * as THREE from 'three';
-import { Character, moveChar, SWIM_SPRINT_SPEED } from './character';
+import { Character, moveChar, SWIM_EXIT_DEPTH, SWIM_SPRINT_SPEED } from './character';
 import type { AmmoType, WeaponId } from './types';
 import { WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF, type World } from './world';
@@ -29,43 +29,70 @@ export function findSwimBank(
   preferX: number,
   preferZ: number,
   world: SwimBankWorld,
+  avoidX?: number,
+  avoidZ?: number,
 ): boolean {
   const pdx = preferX - x;
   const pdz = preferZ - z;
   const pl = Math.hypot(pdx, pdz);
   const pnx = pl > 0.001 ? pdx / pl : 0;
   const pnz = pl > 0.001 ? pdz / pl : 0;
+  const adx = avoidX === undefined ? 0 : avoidX - x;
+  const adz = avoidZ === undefined ? 0 : avoidZ - z;
+  const al = Math.hypot(adx, adz);
+  const anx = al > 0.001 ? adx / al : 0;
+  const anz = al > 0.001 ? adz / al : 0;
   let fallbackX = x;
   let fallbackZ = z;
   let fallbackScore = -Infinity;
+  let forwardBankX = x;
+  let forwardBankZ = z;
+  let forwardBankScore = -Infinity;
+  let anyBankX = x;
+  let anyBankZ = z;
+  let anyBankScore = -Infinity;
 
   for (const radius of SWIM_RADII) {
-    let bankX = x;
-    let bankZ = z;
-    let bankScore = -Infinity;
     for (const [dx, dz] of SWIM_DIRS) {
       const tx = clamp(x + dx * radius, -WORLD_HALF + 2, WORLD_HALF - 2);
       const tz = clamp(z + dz * radius, -WORLD_HALF + 2, WORLD_HALF - 2);
+      if (al > 0.001 && dx * anx + dz * anz > 0.96) continue;
       const height = world.getHeight(tx, tz);
       const alignment = dx * pnx + dz * pnz;
-      const score = height + alignment * 0.45;
-      if (score > fallbackScore) {
-        fallbackScore = score;
+      const fallbackCandidate = height + alignment * 0.8 - radius * 0.005;
+      if (fallbackCandidate > fallbackScore) {
+        fallbackScore = fallbackCandidate;
         fallbackX = tx;
         fallbackZ = tz;
       }
-      if (height < WATER_Y - 0.72 || height > WATER_Y + 1.4) continue;
-      if (!world.pointFree(tx, tz, 0.55, WATER_Y - 0.72, WATER_Y + 1.4)) continue;
-      if (score > bankScore) {
-        bankScore = score;
-        bankX = tx;
-        bankZ = tz;
+      const bankMinH = WATER_Y - SWIM_EXIT_DEPTH + 0.08;
+      if (height < bankMinH || height > WATER_Y + 1.4) continue;
+      if (!world.pointFree(tx, tz, 0.55, bankMinH, WATER_Y + 1.4)) continue;
+      const waterlinePenalty = Math.abs(height - WATER_Y) * 0.2;
+      const anyScore = alignment * 0.1 - radius * 0.05 - waterlinePenalty;
+      if (anyScore > anyBankScore) {
+        anyBankScore = anyScore;
+        anyBankX = tx;
+        anyBankZ = tz;
+      }
+      if (alignment >= 0.2) {
+        const forwardScore = alignment * 2 - radius * 0.015 - waterlinePenalty;
+        if (forwardScore > forwardBankScore) {
+          forwardBankScore = forwardScore;
+          forwardBankX = tx;
+          forwardBankZ = tz;
+        }
       }
     }
-    if (bankScore > -Infinity) {
-      out.set(bankX, bankZ);
-      return true;
-    }
+  }
+
+  if (forwardBankScore > -Infinity) {
+    out.set(forwardBankX, forwardBankZ);
+    return true;
+  }
+  if (anyBankScore > -Infinity) {
+    out.set(anyBankX, anyBankZ);
+    return true;
   }
 
   out.set(fallbackX, fallbackZ);
@@ -96,6 +123,11 @@ export class BotController {
   private hasMoveTarget = false;
   private swimBank = new THREE.Vector2();
   private swimRepathT = 0;
+  private swimStuckT = 0;
+  private swimLastX = 0;
+  private swimLastZ = 0;
+  private hasSwimBank = false;
+  private swimExitT = 0;
   private lastKnown = new THREE.Vector3();
   // 破门: 被门/窗挡路计时
   private blockT = 0;
@@ -157,8 +189,24 @@ export class BotController {
     const wasSwimming = c.swimming;
     game.updateSwim(c);
     if (c.swimming) {
-      if (!wasSwimming) this.swimRepathT = 0;
+      if (!wasSwimming) {
+        this.hasSwimBank = false;
+        this.swimRepathT = 0;
+        this.swimStuckT = 0;
+        this.swimLastX = c.pos.x;
+        this.swimLastZ = c.pos.z;
+      }
       this.swimToBank(dt, game);
+      return;
+    }
+    if (wasSwimming) {
+      this.swimExitT = 0.18;
+      c.speed2d = 0;
+      return;
+    }
+    if (this.swimExitT > 0) {
+      this.swimExitT = Math.max(0, this.swimExitT - dt);
+      c.speed2d = 0;
       return;
     }
     // 翻越中: 脚本位移
@@ -238,22 +286,63 @@ export class BotController {
   // 游泳中: 朝目标岸(渡河)或最近岸(地形上坡方向)游, 不打斗
   private swimToBank(dt: number, game: Game): void {
     const c = this.char;
-    this.swimRepathT -= dt;
-    const oldDx = this.swimBank.x - c.pos.x;
-    const oldDz = this.swimBank.y - c.pos.z;
-    if (this.swimRepathT <= 0 || Math.hypot(oldDx, oldDz) < 1.5) {
+    if (!this.hasSwimBank) {
       const preferX = this.hasMoveTarget ? this.moveTarget.x : c.pos.x + Math.sin(c.yaw) * 20;
       const preferZ = this.hasMoveTarget ? this.moveTarget.z : c.pos.z + Math.cos(c.yaw) * 20;
       findSwimBank(this.swimBank, c.pos.x, c.pos.z, preferX, preferZ, game.world);
-      this.swimRepathT = 0.65;
+      this.hasSwimBank = true;
+      this.swimRepathT = 0.75;
+      this.swimLastX = c.pos.x;
+      this.swimLastZ = c.pos.z;
     }
-    const tx = this.swimBank.x;
-    const tz = this.swimBank.y;
-    const dx = tx - c.pos.x;
-    const dz = tz - c.pos.z;
+
+    let dx = this.swimBank.x - c.pos.x;
+    let dz = this.swimBank.y - c.pos.z;
+    const bankDepth = WATER_Y - game.world.getHeight(this.swimBank.x, this.swimBank.y);
+    if (Math.hypot(dx, dz) < 1.5 && bankDepth >= 0.9) {
+      const preferX = this.hasMoveTarget ? this.moveTarget.x : c.pos.x + Math.sin(c.yaw) * 20;
+      const preferZ = this.hasMoveTarget ? this.moveTarget.z : c.pos.z + Math.cos(c.yaw) * 20;
+      findSwimBank(this.swimBank, c.pos.x, c.pos.z, preferX, preferZ, game.world);
+      dx = this.swimBank.x - c.pos.x;
+      dz = this.swimBank.y - c.pos.z;
+    }
+
+    this.swimRepathT -= dt;
+    if (this.swimRepathT <= 0) {
+      const progress = Math.hypot(c.pos.x - this.swimLastX, c.pos.z - this.swimLastZ);
+      this.swimStuckT = progress < 0.4 ? this.swimStuckT + 0.75 : 0;
+      this.swimLastX = c.pos.x;
+      this.swimLastZ = c.pos.z;
+      this.swimRepathT = 0.75;
+      if (this.swimStuckT >= 1.5) {
+        const oldX = this.swimBank.x;
+        const oldZ = this.swimBank.y;
+        const preferX = this.hasMoveTarget ? this.moveTarget.x : c.pos.x + Math.sin(c.yaw) * 20;
+        const preferZ = this.hasMoveTarget ? this.moveTarget.z : c.pos.z + Math.cos(c.yaw) * 20;
+        findSwimBank(this.swimBank, c.pos.x, c.pos.z, preferX, preferZ, game.world, oldX, oldZ);
+        this.swimStuckT = 0;
+        dx = this.swimBank.x - c.pos.x;
+        dz = this.swimBank.y - c.pos.z;
+      }
+    }
     const d = Math.hypot(dx, dz) || 1;
+    const localDepth = WATER_Y - game.world.getHeight(c.pos.x, c.pos.z);
+    const localStandH = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y + 0.3);
+    const reachedShore = localDepth <= SWIM_EXIT_DEPTH || localStandH >= WATER_Y - SWIM_EXIT_DEPTH;
+    const swimSpeed = reachedShore
+      ? 0
+      : bankDepth < SWIM_EXIT_DEPTH
+        ? Math.min(SWIM_SPRINT_SPEED, d * 2.5)
+        : SWIM_SPRINT_SPEED;
     c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 3.2 * dt);
-    moveChar(c, (dx / d) * SWIM_SPRINT_SPEED, (dz / d) * SWIM_SPRINT_SPEED, dt, game.world, SWIM_SPRINT_SPEED);
+    moveChar(
+      c,
+      (dx / d) * swimSpeed,
+      (dz / d) * swimSpeed,
+      dt,
+      game.world,
+      SWIM_SPRINT_SPEED,
+    );
     c.swimAcc += c.speed2d * dt;
     if (c.swimAcc > 1.7) {
       c.swimAcc = 0;
@@ -745,7 +834,7 @@ export class BotController {
 }
 
 export const BOT_NAMES = [
-  '伏地魔', '老六', '刚枪王', '快递员', '盒子精', '跑毒仔', '苟分佬', '枪神',
+  '伏地魔', '突击手', '刚枪王', '快递员', '盒子精', '跑毒仔', '苟分佬', '枪神',
   '萌新', '大佬', '草丛伦', '天命圈', '平底锅', '三级头', '空投猎手', '幻影坦克',
   '雷神', '鹰眼', '毒奶', '吃鸡少年', '人体描边', '万事屋', '夜猫子',
 ];
