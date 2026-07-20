@@ -14,17 +14,36 @@ const SKY_FRAG = /* glsl */ `
 uniform vec3 uZenith;
 uniform vec3 uHorizon;
 uniform vec3 uSunDir;
+uniform vec3 uMoonDir;
+uniform float uDaylight;
+uniform float uCloudCover;
+uniform float uFlash;
 varying vec3 vDir;
+
+float hash31(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
 void main() {
   vec3 d = normalize(vDir);
   float t = pow(clamp(d.y, 0.0, 1.0), 0.55);
   vec3 col = mix(uHorizon, uZenith, t);
   float haze = pow(1.0 - clamp(d.y, 0.0, 1.0), 5.0);
   col = mix(col, vec3(0.84, 0.83, 0.72), haze * 0.2);
+  col = mix(col, vec3(0.31, 0.35, 0.39), uCloudCover * (0.12 + haze * 0.18));
   float s = max(dot(d, uSunDir), 0.0);
-  col += vec3(1.0, 0.68, 0.38) * pow(s, 6.0) * 0.24;   // 大范围暖晕(金色时刻)
-  col += vec3(1.0, 0.82, 0.58) * pow(s, 90.0) * 0.82;  // 近太阳亮晕
-  col += vec3(1.0, 0.95, 0.85) * smoothstep(0.9993, 0.9997, s); // 日盘
+  col += vec3(1.0, 0.68, 0.38) * pow(s, 6.0) * 0.24 * uDaylight;
+  col += vec3(1.0, 0.82, 0.58) * pow(s, 90.0) * 0.82 * uDaylight;
+  col += vec3(1.0, 0.95, 0.85) * smoothstep(0.9993, 0.9997, s) * uDaylight;
+  float moon = max(dot(d, uMoonDir), 0.0);
+  float night = 1.0 - uDaylight;
+  col += vec3(0.55, 0.68, 0.9) * pow(moon, 55.0) * 0.22 * night;
+  col += vec3(0.78, 0.86, 1.0) * smoothstep(0.9991, 0.99962, moon) * night;
+  float star = step(0.9964, hash31(floor(d * 460.0))) * pow(max(d.y, 0.0), 0.35);
+  col += vec3(0.72, 0.82, 1.0) * star * night * (1.0 - smoothstep(0.35, 0.88, uCloudCover));
+  col += vec3(0.72, 0.82, 0.95) * uFlash * 0.62;
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -69,8 +88,11 @@ function makeCloudTexture(): THREE.CanvasTexture {
 }
 
 export class Sky {
-  private clouds: { spr: THREE.Sprite; speed: number }[] = [];
-  private dome: THREE.Mesh;
+  private clouds: { spr: THREE.Sprite; speed: number; baseOpacity: number }[] = [];
+  private dome: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+  private cloudCover = 0.3;
+  private wind = 1;
+  private daylight = 1;
 
   constructor(scene: THREE.Scene) {
     // 穹顶(与 updateShadow 的太阳偏移方向一致: +85,+72,+42)
@@ -85,6 +107,10 @@ export class Sky {
           uZenith: { value: new THREE.Color(0x5a92cf) },
           uHorizon: { value: new THREE.Color(0xead9c4) },
           uSunDir: { value: sunDir },
+          uMoonDir: { value: sunDir.clone().negate() },
+          uDaylight: { value: 1 },
+          uCloudCover: { value: 0.3 },
+          uFlash: { value: 0 },
         },
         vertexShader: SKY_VERT,
         fragmentShader: SKY_FRAG,
@@ -112,16 +138,49 @@ export class Sky {
       spr.position.set((rng() * 2 - 1) * 550, high ? 150 + rng() * 45 : 92 + rng() * 54, (rng() * 2 - 1) * 550);
       spr.scale.set(high ? 120 + rng() * 90 : 68 + rng() * 75, high ? 24 + rng() * 14 : 28 + rng() * 24, 1);
       scene.add(spr);
-      this.clouds.push({ spr, speed: high ? 0.3 + rng() * 0.45 : 0.7 + rng() * 1.1 });
+      this.clouds.push({
+        spr,
+        speed: high ? 0.3 + rng() * 0.45 : 0.7 + rng() * 1.1,
+        baseOpacity: mat.opacity,
+      });
     }
+  }
+
+  setAtmosphere(
+    zenith: THREE.Color,
+    horizon: THREE.Color,
+    sunDir: THREE.Vector3,
+    daylight: number,
+    cloudCover: number,
+    wind: number,
+    flash: number,
+  ): void {
+    const u = this.dome.material.uniforms;
+    (u.uZenith?.value as THREE.Color).copy(zenith);
+    (u.uHorizon?.value as THREE.Color).copy(horizon);
+    (u.uSunDir?.value as THREE.Vector3).copy(sunDir);
+    (u.uMoonDir?.value as THREE.Vector3).copy(sunDir).negate();
+    if (u.uDaylight) u.uDaylight.value = daylight;
+    if (u.uCloudCover) u.uCloudCover.value = cloudCover;
+    if (u.uFlash) u.uFlash.value = flash;
+    this.daylight = daylight;
+    this.cloudCover = cloudCover;
+    this.wind = wind;
   }
 
   update(dt: number, camPos: THREE.Vector3): void {
     // 穹顶跟随相机: 否则远处球面会超出相机 far 平面被裁出黑洞
     this.dome.position.copy(camPos);
     for (const c of this.clouds) {
-      c.spr.position.x += c.speed * dt;
+      c.spr.position.x += c.speed * this.wind * dt;
       if (c.spr.position.x > 560) c.spr.position.x -= 1120;
+      const mat = c.spr.material;
+      mat.opacity = c.baseOpacity * (0.22 + this.cloudCover * 1.22) * (0.58 + this.daylight * 0.42);
+      mat.color.setRGB(
+        0.52 + this.daylight * 0.48,
+        0.58 + this.daylight * 0.42,
+        0.66 + this.daylight * 0.34,
+      );
     }
   }
 }

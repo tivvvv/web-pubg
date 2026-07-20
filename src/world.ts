@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { Noise2D, fbm } from './noise';
 import { Buildings } from './buildings';
+import { EnvironmentSystem, type EnvironmentSnapshot } from './environment';
 import { Sky } from './sky';
 import type { Collider, DestructibleLike, SurfaceKind } from './types';
 import { clamp, mulberry32, smoothstep } from './utils';
@@ -52,6 +53,7 @@ export class World {
   readonly platforms: Platform[] = []; // 楼梯踏步等"可站立但无碰撞体"平台
   readonly buildings = new Buildings();
   readonly bushes: { x: number; z: number; r: number }[] = []; // 灌木足迹(隐蔽判定)
+  readonly environment: EnvironmentSystem;
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -61,6 +63,7 @@ export class World {
   private camU = { value: new THREE.Vector3() }; // 共享相机 uniform(草距离消退)
   private elapsed = 0;
   private scenicSites: ScenicSite[] = [];
+  private shadowAnchor = new THREE.Vector3();
 
   get landmarks(): readonly ScenicSite[] {
     return this.scenicSites;
@@ -154,11 +157,12 @@ export class World {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
-    const terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    const terrainMat = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 0.96,
       metalness: 0,
-    }));
+    });
+    const terrain = new THREE.Mesh(geo, terrainMat);
     terrain.receiveShadow = true;
     scene.add(terrain);
 
@@ -207,7 +211,8 @@ export class World {
     scene.add(water);
 
     // 天空 / 雾 / 光照(雾色与天穹地平线一致; 金色暖阳)
-    scene.fog = new THREE.Fog(0xd9d9c9, 175, 665);
+    const fog = new THREE.Fog(0xd9d9c9, 175, 665);
+    scene.fog = fog;
     const hemi = new THREE.HemisphereLight(0xddebf8, 0x68704d, 0.92);
     scene.add(hemi);
     this.sun = new THREE.DirectionalLight(0xffddb0, 2.5);
@@ -224,6 +229,7 @@ export class World {
     scene.add(this.sun);
     scene.add(this.sun.target);
     this.sky = new Sky(scene);
+    this.environment = new EnvironmentSystem(scene, this.sky, this.sun, hemi, fog, terrainMat, waterMat);
 
     this.buildStatics(scene);
   }
@@ -1308,19 +1314,34 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     mat.customProgramCacheKey = () => `sway:${amp}:${lo}:${hi}:${fade}:${upNormal}:${fadeNear}:${fadeFar}`;
   }
 
-  // 每帧视觉更新: 水面波浪 / 植被摇摆 / 云漂移(所有相机状态下都执行)
-  updateVisuals(dt: number, camPos: THREE.Vector3): void {
+  get environmentState(): EnvironmentSnapshot {
+    return this.environment.snapshot;
+  }
+
+  resetEnvironment(): void {
+    this.environment.reset();
+  }
+
+  consumeEnvironmentNotice(): string | null {
+    return this.environment.consumeNotice();
+  }
+
+  consumeThunder(): boolean {
+    return this.environment.consumeThunder();
+  }
+
+  // 每帧视觉更新: 水波/植被/天空/昼夜/天气(暂停时仅保留视觉动画)
+  updateVisuals(dt: number, camPos: THREE.Vector3, advanceEnvironment = false): void {
     this.elapsed += dt;
     this.timeU.value = this.elapsed;
     this.camU.value.copy(camPos);
+    this.environment.update(dt, camPos, advanceEnvironment ? this.shadowAnchor : camPos, advanceEnvironment);
     this.sky.update(dt, camPos);
   }
 
-  // 阴影相机跟随玩家
+  // 记录阴影跟随锺点, 太阳/月亮方位由环境系统统一计算
   updateShadow(px: number, pz: number): void {
-    this.sun.position.set(px + 85, 72, pz + 42); // 低角度金色阳光(与天穹日盘同向)
-    this.sun.target.position.set(px, 0, pz);
-    this.sun.target.updateMatrixWorld();
+    this.shadowAnchor.set(px, 0, pz);
   }
 
   // ---- 物理查询 ----

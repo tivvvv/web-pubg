@@ -564,6 +564,7 @@ export class Game {
     this.audio.unlock();
     this.audio.windStop(); // 上一局可能死在自由落体(风声未停)
     this.audio.planeDroneStop(); // 上一局可能死在舱内(引擎声未停)
+    this.world.resetEnvironment();
     // 清理旧角色
     this.charsGroup.clear();
     this.chars.length = 0;
@@ -748,7 +749,15 @@ export class Game {
     }
     this.hud.update(dt);
     const cam = this.state === 'menu' || !this.player ? this.menuCam : this.player.camera;
-    this.world.updateVisuals(dt, cam.position); // 水波/植被摇摆/云漂移(全状态)
+    const environmentActive = this.state === 'playing';
+    this.world.updateVisuals(dt, cam.position, environmentActive);
+    const env = this.world.environmentState;
+    this.renderer.toneMappingExposure = env.exposure;
+    this.hud.setEnvironment(env.timeText, env.phaseLabel, env.weatherLabel, env.weather);
+    this.audio.setRain(env.rainIntensity);
+    const environmentNotice = this.world.consumeEnvironmentNotice();
+    if (environmentNotice && environmentActive) this.hud.toast(environmentNotice);
+    if (this.world.consumeThunder()) this.audio.thunder();
     this.renderer.render(this.scene, cam);
   }
 

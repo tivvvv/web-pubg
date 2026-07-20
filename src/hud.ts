@@ -3,6 +3,7 @@ import { fmtTime } from './utils';
 import type { ArmorState, GameStats } from './types';
 import { ARMORS, type ArmorKind } from './armor';
 import type { HealId } from './heals';
+import type { WeatherKind } from './environment';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -37,6 +38,10 @@ export class Hud {
   private aliveEl = el('alive-count');
   private killsEl = el('kill-count');
   private zoneStatus = el('zone-status');
+  private environmentStatus = el('environment-status');
+  private envIcon = el('env-icon');
+  private envTime = el('env-time');
+  private envLabel = el('env-label');
   private killfeed = el('killfeed');
   private crosshair = el('crosshair');
   private hitmarkerEl = el('hitmarker');
@@ -73,6 +78,7 @@ export class Hud {
   private hitTimer = 0;
   private dmgTimer = 0;
   private healCountsKey = '';
+  private environmentKey = '';
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
@@ -176,6 +182,19 @@ export class Hud {
   setZoneStatus(text: string, urgent: boolean): void {
     this.zoneStatus.textContent = text;
     this.zoneStatus.classList.toggle('urgent', urgent);
+  }
+
+  setEnvironment(time: string, phase: string, label: string, weather: WeatherKind): void {
+    const key = `${time}|${phase}|${label}|${weather}`;
+    if (key === this.environmentKey) return;
+    this.environmentKey = key;
+    const icons: Record<WeatherKind, string> = {
+      clear: '☀︎', cloudy: '☁︎', rain: '☂︎', fog: '≡', storm: 'ϟ',
+    };
+    this.envIcon.textContent = icons[weather];
+    this.envTime.textContent = time;
+    this.envLabel.textContent = `${phase} · ${label}`;
+    this.environmentStatus.dataset.weather = weather;
   }
 
   setPickupPrompt(text: string | null): void {

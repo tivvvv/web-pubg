@@ -6,6 +6,9 @@ export class AudioSys {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
+  private rainSource: AudioBufferSourceNode | null = null;
+  private rainGain: GainNode | null = null;
+  private rainLevel = 0;
   muted = false;
 
   // 必须在用户手势中调用
@@ -22,6 +25,7 @@ export class AudioSys {
       for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
     }
     if (this.ctx.state === 'suspended') void this.ctx.resume();
+    if (this.rainLevel > 0.01) this.ensureRainLoop();
   }
 
   toggleMute(): boolean {
@@ -39,6 +43,39 @@ export class AudioSys {
     p.pan.value = clamp(pan, -1, 1);
     p.connect(this.master);
     return p;
+  }
+
+  private ensureRainLoop(): void {
+    if (!this.ctx || !this.master || !this.noiseBuf || this.rainSource) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 900;
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 6200;
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    src.connect(hp).connect(lp).connect(gain).connect(this.master);
+    src.start();
+    this.rainSource = src;
+    this.rainGain = gain;
+  }
+
+  setRain(level: number): void {
+    this.rainLevel = clamp(level, 0, 1);
+    if (this.rainLevel > 0.01) this.ensureRainLoop();
+    if (this.ctx && this.rainGain) {
+      this.rainGain.gain.setTargetAtTime(this.rainLevel * 0.085, this.ctx.currentTime, 0.35);
+    }
+  }
+
+  thunder(): void {
+    this.noiseBurst(0.72, 0, 115, 0.3, 0.85);
+    this.thump(0.68, 0, 72, 24, 0.7);
+    window.setTimeout(() => this.noiseBurst(0.28, 0, 180, 0.4, 0.65), 180);
   }
 
   // 噪声爆发: 枪声主体
