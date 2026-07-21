@@ -51,7 +51,11 @@ const SLAB_T = 0.24;        // 楼板厚
 const WALL_H = 2.9;         // 层高(地板面→墙顶)
 const DOOR_W = 1.3, DOOR_H = 2.2;
 const WIN_W = 1.15, WIN_SILL = 1.05, WIN_H = 1.05;
-const STAIR_STEPS = 9, STAIR_W = 1.5;
+const STAIR_STEPS = 9, STAIR_W = 1.8;
+const STAIR_LANDING = 1.6;         // 楼梯两端净空, 足够角色转身和交错通行
+const STAIR_EDGE_OVERLAP = 0.12;   // 楼板压入首末踏步, 不占用落脚平台
+const STAIR_SIDE_CLEARANCE = 1.45; // 开放侧到室内隔墙的最小通道宽度
+const STOREY_JOINT_OVERLAP = 0.14; // 上下层墙跨过楼板边带互相搭接, 楼梯井侧也不会漏光
 const BOUND = 265;
 const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
 const DOOR_TWEEN = 0.3;                   // 开关门动画时长(秒)
@@ -353,12 +357,49 @@ export class Buildings {
     for (let i = 0; i < STAIR_STEPS; i++) {
       const z0 = Math.min(zFrom + i * run, zFrom + (i + 1) * run);
       const z1 = Math.max(zFrom + i * run, zFrom + (i + 1) * run);
-      box('floor', x0, f1, z0, x1, f1 + rise * (i + 1), z1, c, { collider: false, platform: true });
-      if (i === 1 || i === 4 || i === 7) {
-        const zm = (z0 + z1) / 2;
-        const top = f1 + rise * (i + 1);
-        box('wall', x1 - 0.05, top, zm - 0.04, x1 + 0.05, top + 0.82, zm + 0.04, RAIL_C, { collider: false });
+      const top = f1 + rise * (i + 1);
+      // 每级使用独立薄踏板, 释放梯下空间, 避免从侧面看成一整块错误的实心柱体。
+      box('floor', x0, Math.max(f1, top - 0.17), z0, x1, top, z1, c, { collider: false, platform: true });
+      box('wall', x1 - 0.075, Math.max(f1, top - 0.24), z0, x1 + 0.025, top - 0.13, z1, RAIL_C, { collider: false });
+      // 开放侧使用连续的阶梯形扶手, 立柱从对应踏步生根, 不再出现悬空柱和整块黑墙。
+      box('wall', x1 - 0.055, top + 0.78, z0 - 0.02, x1 + 0.055, top + 0.88, z1 + 0.02, RAIL_C, { collider: false });
+      if (i === 0 || i === 3 || i === 6 || i === STAIR_STEPS - 1) {
+        const postZ = (z0 + z1) / 2;
+        box('wall', x1 - 0.055, top, postZ - 0.055, x1 + 0.055, top + 0.88, postZ + 0.055, RAIL_C, { collider: false });
       }
+    }
+  }
+
+  // 带楼梯井的楼板: 楼梯两端铺设完整落脚平台, 只在实际梯段范围内开洞。
+  private stairSlab(
+    box: BoxFn,
+    ix0: number, ix1: number, iz0: number, iz1: number,
+    openX0: number, openX1: number, holeZ0: number, holeZ1: number,
+    ceilingY: number, floorY: number, c: number,
+  ): void {
+    const edge = WT / 2 + 0.02;
+    const y0 = ceilingY - STOREY_JOINT_OVERLAP;
+    if (openX0 > ix0 + 0.02) {
+      box('floor', ix0 - edge, y0, iz0 - edge, openX0 + STOREY_JOINT_OVERLAP, floorY, iz1 + edge, c);
+    }
+    if (openX1 < ix1 - 0.02) {
+      box('floor', openX1 - STOREY_JOINT_OVERLAP, y0, iz0 - edge, ix1 + edge, floorY, iz1 + edge, c);
+    }
+    box('floor', openX0 - edge, y0, iz0 - edge, openX1 + edge, floorY, holeZ0 + STAIR_EDGE_OVERLAP, c);
+    box('floor', openX0 - edge, y0, holeZ1 - STAIR_EDGE_OVERLAP, openX1 + edge, floorY, iz1 + edge, c);
+  }
+
+  // 楼梯井护栏: 低矮挡脚边提供碰撞, 细立柱和双横杆负责视觉, 避免实心墙板挤压空间。
+  private stairGuard(box: BoxFn, x: number, z0: number, z1: number, y: number): void {
+    if (z1 <= z0) return;
+    box('wall', x - 0.065, y, z0, x + 0.065, y + 0.13, z1, RAIL_C);
+    for (const railY of [y + 0.48, y + 0.86]) {
+      box('wall', x - 0.05, railY, z0, x + 0.05, railY + 0.09, z1, RAIL_C, { collider: false });
+    }
+    const spans = Math.max(1, Math.ceil((z1 - z0) / 1.35));
+    for (let i = 0; i <= spans; i++) {
+      const z = z0 + (z1 - z0) * (i / spans);
+      box('wall', x - 0.055, y, z - 0.055, x + 0.055, y + 0.95, z + 0.055, RAIL_C, { collider: false });
     }
   }
 
@@ -380,7 +421,7 @@ export class Buildings {
     // 一层隔间为西侧楼梯保留完整通道，隔墙不再横穿踏步。
     if (household) {
       const splitZ = iz0 + d * 0.58;
-      const wallX0 = multistory ? ix0 + STAIR_W + 0.72 : ix0;
+      const wallX0 = multistory ? ix0 + 0.14 + STAIR_W + STAIR_SIDE_CLEARANCE : ix0;
       const doorX = wallX0 + (ix1 - wallX0) * 0.48;
       this.wallRun(world, box, 'x', splitZ, wallX0, ix1, f1, f1 + WALL_H - 0.28, [
         { a0: doorX - DOOR_W / 2, a1: doorX + DOOR_W / 2, y0: f1, y1: f1 + DOOR_H, door: true },
@@ -670,10 +711,11 @@ export class Buildings {
     }
     const win = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f1 + WIN_SILL, y1: f1 + WIN_SILL + WIN_H });
     const buried = f1 - 0.9;
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, wt1, northOps, p.wall, WT, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, wt1, southOps, p.wall, WT, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, wt1, [win(iz0 + d * 0.3)], p.wall, WT, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, wt1, [win(iz0 + d * 0.62)], p.wall, WT, -1);
+    const lowerWallTop = wt1 + STOREY_JOINT_OVERLAP;
+    this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, lowerWallTop, northOps, p.wall, WT, 1);
+    this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, lowerWallTop, southOps, p.wall, WT, -1);
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.3)], p.wall, WT, 1);
+    this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.62)], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
     // 转角壁柱(部分房屋, 纯装饰)
     if (idx % 2 === 0) {
@@ -698,21 +740,22 @@ export class Buildings {
     const f2 = wt1 + SLAB_T;
     const rise = (f2 - f1) / STAIR_STEPS;
     const stairX0 = ix0 + 0.14, stairX1 = stairX0 + STAIR_W;
-    const holeZ0 = iz0 + 1.0;
-    this.stairs(box, stairX0, stairX1, iz1 - 0.6, holeZ0 + 0.15, f1, rise, FLOOR2_C);
-    box('floor', stairX1, wt1, iz0, ix1, f2, iz1, FLOOR2_C);
-    box('floor', ix0, wt1, iz0, stairX1, f2, holeZ0, FLOOR2_C);
+    const holeZ0 = iz0 + STAIR_LANDING;
+    const holeZ1 = iz1 - STAIR_LANDING;
+    this.stairs(box, stairX0, stairX1, holeZ1, holeZ0, f1, rise, FLOOR2_C);
+    this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, stairX1, holeZ0, holeZ1, wt1, f2, FLOOR2_C);
     this.lootSpots.push(
       { x: ix0 + w * 0.5, y: f2, z: iz0 + d * 0.3, premium: true },
       { x: ix1 - w * 0.22, y: f2, z: iz1 - d * 0.2, premium: true },
     );
-    this.rail(box, stairX1, holeZ0, stairX1 + 0.08, iz1, f2, 0.95);
+    this.stairGuard(box, stairX1, holeZ0, holeZ1, f2);
     const uwt = f2 + WALL_H - 0.15;
     const win2 = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f2 + 0.9, y1: f2 + 0.9 + WIN_H });
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.35)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.55)], p.wall, WT2, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, f2, uwt, [win2(iz0 + d * 0.4)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, f2, uwt, [win2(iz0 + d * 0.55)], p.wall, WT2, -1);
+    const upperWallBottom = f2 - STOREY_JOINT_OVERLAP;
+    this.wallRun(world, box, 'x', iz0, ix0, ix1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(ix0 + w * 0.35)], p.wall, WT2, 1);
+    this.wallRun(world, box, 'x', iz1, ix0, ix1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(ix0 + w * 0.55)], p.wall, WT2, -1);
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.4)], p.wall, WT2, 1);
+    this.wallRun(world, box, 'z', ix1, iz0, iz1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.55)], p.wall, WT2, -1);
     this.gableRoof(box, ix0, iz0, ix1, iz1, uwt, p.roof);
     this.extras(box, p, ix0, iz0, ix1, uwt + 0.2, w);
   }
@@ -728,10 +771,11 @@ export class Buildings {
     const doorA0 = ix0 + w / 2 - DOOR_W / 2;
     const win = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f1 + WIN_SILL, y1: f1 + WIN_SILL + WIN_H });
     const buried = f1 - 0.9;
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, wt1, [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: f1, y1: f1 + DOOR_H, door: true }], p.wall, WT, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, wt1, [win(ix0 + w * 0.3), win(ix0 + w * 0.62)], p.wall, WT, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, wt1, [win(iz0 + d * 0.35)], p.wall, WT, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, wt1, [win(iz0 + d * 0.55)], p.wall, WT, -1);
+    const lowerWallTop = wt1 + STOREY_JOINT_OVERLAP;
+    this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, lowerWallTop, [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: f1, y1: f1 + DOOR_H, door: true }], p.wall, WT, 1);
+    this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, lowerWallTop, [win(ix0 + w * 0.3), win(ix0 + w * 0.62)], p.wall, WT, -1);
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.35)], p.wall, WT, 1);
+    this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.55)], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
     box('floor', doorA0 - 0.15, f1 - 0.14, iz0 - 0.75, doorA0 + DOOR_W + 0.15, f1 - 0.02, iz0, TRIM_C, { collider: false, platform: true });
     this.lootSpots.push(
@@ -743,22 +787,23 @@ export class Buildings {
     const f2 = wt1 + SLAB_T;
     const rise = (f2 - f1) / STAIR_STEPS;
     const stairX0 = ix0 + 0.14, stairX1 = stairX0 + STAIR_W;
-    const holeZ0 = iz0 + 1.0;
-    this.stairs(box, stairX0, stairX1, iz1 - 0.6, holeZ0 + 0.15, f1, rise, FLOOR2_C);
-    box('floor', stairX1, wt1, iz0, ix1, f2, iz1, FLOOR2_C);
-    box('floor', ix0, wt1, iz0, stairX1, f2, holeZ0, FLOOR2_C);
-    this.rail(box, stairX1, holeZ0, stairX1 + 0.08, iz1, f2, 0.95);
+    const holeZ0 = iz0 + STAIR_LANDING;
+    const holeZ1 = iz1 - STAIR_LANDING;
+    this.stairs(box, stairX0, stairX1, holeZ1, holeZ0, f1, rise, FLOOR2_C);
+    this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, stairX1, holeZ0, holeZ1, wt1, f2, FLOOR2_C);
+    this.stairGuard(box, stairX1, holeZ0, holeZ1, f2);
 
     // 二层房间占北 55%: 房间南墙(zRoom)开门通向露台
     const zRoom = iz0 + d * 0.55;
     const uwt = f2 + WALL_H - 0.15;
     const win2 = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f2 + 0.9, y1: f2 + 0.9 + WIN_H });
     // 房间北墙(外墙延伸) + 东西墙(北段) + 房间南墙(带门)
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.4)], p.wall, WT2, 1);
+    const upperWallBottom = f2 - STOREY_JOINT_OVERLAP;
+    this.wallRun(world, box, 'x', iz0, ix0, ix1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(ix0 + w * 0.4)], p.wall, WT2, 1);
     const roomDoorA0 = ix0 + w * 0.55;
-    this.wallRun(world, box, 'x', zRoom, ix0, ix1, f2, uwt, [{ a0: roomDoorA0, a1: roomDoorA0 + DOOR_W, y0: f2, y1: f2 + DOOR_H, door: true }], p.wall, WT2, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, zRoom, f2, uwt, [win2(iz0 + d * 0.25)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, zRoom, f2, uwt, [win2(iz0 + d * 0.3)], p.wall, WT2, -1);
+    this.wallRun(world, box, 'x', zRoom, ix0, ix1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [{ a0: roomDoorA0, a1: roomDoorA0 + DOOR_W, y0: f2, y1: f2 + DOOR_H, door: true }], p.wall, WT2, -1);
+    this.wallRun(world, box, 'z', ix0, iz0, zRoom, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.25)], p.wall, WT2, 1);
+    this.wallRun(world, box, 'z', ix1, iz0, zRoom, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.3)], p.wall, WT2, -1);
     // 房间顶(小坡屋顶)
     this.gableRoof(box, ix0, iz0, ix1, zRoom + 0.1, uwt, p.roof);
 
@@ -785,10 +830,11 @@ export class Buildings {
     const buried = f1 - 0.9;
     const doorA0 = ix0 + w / 2 - DOOR_W / 2;
     // 1F: 每面两窗(北墙为门)
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, wt1, [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: f1, y1: f1 + DOOR_H, door: true }], p.wall, WT, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, wt1, [win(ix0 + w * 0.22, f1), win(ix0 + w * 0.62, f1)], p.wall, WT, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, wt1, [win(iz0 + d * 0.25, f1), win(iz0 + d * 0.6, f1)], p.wall, WT, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, wt1, [win(iz0 + d * 0.3, f1), win(iz0 + d * 0.65, f1)], p.wall, WT, -1);
+    const lowerWallTop = wt1 + STOREY_JOINT_OVERLAP;
+    this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, lowerWallTop, [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: f1, y1: f1 + DOOR_H, door: true }], p.wall, WT, 1);
+    this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, lowerWallTop, [win(ix0 + w * 0.22, f1), win(ix0 + w * 0.62, f1)], p.wall, WT, -1);
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.25, f1), win(iz0 + d * 0.6, f1)], p.wall, WT, 1);
+    this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.3, f1), win(iz0 + d * 0.65, f1)], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
     box('floor', doorA0 - 0.15, f1 - 0.14, iz0 - 0.75, doorA0 + DOOR_W + 0.15, f1 - 0.02, iz0, TRIM_C, { collider: false, platform: true });
     this.lootSpots.push(
@@ -800,18 +846,20 @@ export class Buildings {
     const f2 = wt1 + SLAB_T;
     const rise = (f2 - f1) / STAIR_STEPS;
     const s1x0 = ix0 + 0.14, s1x1 = s1x0 + STAIR_W;
-    const hole1Z0 = iz0 + 1.0;
-    this.stairs(box, s1x0, s1x1, iz1 - 0.6, hole1Z0 + 0.15, f1, rise, FLOOR2_C);
-    box('floor', s1x1, wt1, iz0, ix1, f2, iz1, FLOOR2_C);
-    box('floor', ix0, wt1, iz0, s1x1, f2, hole1Z0, FLOOR2_C);
-    this.rail(box, s1x1, hole1Z0, s1x1 + 0.08, iz1, f2, 0.95);
+    const hole1Z0 = iz0 + STAIR_LANDING;
+    const hole1Z1 = iz1 - STAIR_LANDING;
+    this.stairs(box, s1x0, s1x1, hole1Z1, hole1Z0, f1, rise, FLOOR2_C);
+    this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, s1x1, hole1Z0, hole1Z1, wt1, f2, FLOOR2_C);
+    this.stairGuard(box, s1x1, hole1Z0, hole1Z1, f2);
 
     // 2F 墙 + 窗(南北两面双窗, 东西单窗)
     const win2 = (a0: number): Op => win(a0, f2);
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, f2, f2 + WALL_H, [win2(ix0 + w * 0.25), win2(ix0 + w * 0.6)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, f2, f2 + WALL_H, [win2(ix0 + w * 0.3), win2(ix0 + w * 0.65)], p.wall, WT2, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, f2, f2 + WALL_H, [win2(iz0 + d * 0.45)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, f2, f2 + WALL_H, [win2(iz0 + d * 0.5)], p.wall, WT2, -1);
+    const secondWallBottom = f2 - STOREY_JOINT_OVERLAP;
+    const secondWallTop = f2 + WALL_H + STOREY_JOINT_OVERLAP;
+    this.wallRun(world, box, 'x', iz0, ix0, ix1, secondWallBottom, secondWallTop, [win2(ix0 + w * 0.25), win2(ix0 + w * 0.6)], p.wall, WT2, 1);
+    this.wallRun(world, box, 'x', iz1, ix0, ix1, secondWallBottom, secondWallTop, [win2(ix0 + w * 0.3), win2(ix0 + w * 0.65)], p.wall, WT2, -1);
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, secondWallBottom, secondWallTop, [win2(iz0 + d * 0.45)], p.wall, WT2, 1);
+    this.wallRun(world, box, 'z', ix1, iz0, iz1, secondWallBottom, secondWallTop, [win2(iz0 + d * 0.5)], p.wall, WT2, -1);
     this.lootSpots.push(
       { x: ix0 + w * 0.5, y: f2, z: iz0 + d * 0.35, premium: false },
       { x: ix1 - w * 0.2, y: f2, z: iz1 - d * 0.25, premium: false },
@@ -822,19 +870,20 @@ export class Buildings {
     const f3 = wt2 + SLAB_T;
     const rise2 = (f3 - f2) / STAIR_STEPS;
     const s2x1 = ix1 - 0.14, s2x0 = s2x1 - STAIR_W;
-    const hole2Z1 = iz1 - 1.0;
-    this.stairs(box, s2x0, s2x1, iz0 + 0.6, hole2Z1 - 0.15, f2, rise2, FLOOR2_C);
-    // 3F 板: 西全宽 + 东南角北部条(留出跑梯2井口)
-    box('floor', ix0, wt2, iz0, s2x0, f3, iz1, FLOOR2_C);
-    box('floor', s2x0, wt2, iz0, ix1, f3, hole2Z1, FLOOR2_C);
-    this.rail(box, s2x0 - 0.08, hole2Z1, s2x0, iz1, f3, 0.95);
+    const hole2Z0 = iz0 + STAIR_LANDING;
+    const hole2Z1 = iz1 - STAIR_LANDING;
+    this.stairs(box, s2x0, s2x1, hole2Z0, hole2Z1, f2, rise2, FLOOR2_C);
+    this.stairSlab(box, ix0, ix1, iz0, iz1, s2x0, ix1, hole2Z0, hole2Z1, wt2, f3, FLOOR2_C);
+    this.stairGuard(box, s2x0, hole2Z0, hole2Z1, f3);
 
     // 3F 墙 + 窗(南北双窗, 东西单窗) + 顶层高级物资
     const win3 = (a0: number): Op => win(a0, f3);
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, f3, f3 + WALL_H, [win3(ix0 + w * 0.25), win3(ix0 + w * 0.6)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, f3, f3 + WALL_H, [win3(ix0 + w * 0.3), win3(ix0 + w * 0.65)], p.wall, WT2, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, f3, f3 + WALL_H, [win3(iz0 + d * 0.45)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, f3, f3 + WALL_H, [win3(iz0 + d * 0.5)], p.wall, WT2, -1);
+    const thirdWallBottom = f3 - STOREY_JOINT_OVERLAP;
+    const thirdWallTop = f3 + WALL_H + STOREY_JOINT_OVERLAP;
+    this.wallRun(world, box, 'x', iz0, ix0, ix1, thirdWallBottom, thirdWallTop, [win3(ix0 + w * 0.25), win3(ix0 + w * 0.6)], p.wall, WT2, 1);
+    this.wallRun(world, box, 'x', iz1, ix0, ix1, thirdWallBottom, thirdWallTop, [win3(ix0 + w * 0.3), win3(ix0 + w * 0.65)], p.wall, WT2, -1);
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, thirdWallBottom, thirdWallTop, [win3(iz0 + d * 0.45)], p.wall, WT2, 1);
+    this.wallRun(world, box, 'z', ix1, iz0, iz1, thirdWallBottom, thirdWallTop, [win3(iz0 + d * 0.5)], p.wall, WT2, -1);
     this.lootSpots.push(
       { x: ix0 + w * 0.4, y: f3, z: iz0 + d * 0.35, premium: true },
       { x: ix1 - w * 0.3, y: f3, z: iz1 - d * 0.3, premium: true },

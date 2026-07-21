@@ -1635,6 +1635,41 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     }
     return true;
   }
+
+  // AI 局部导航采样。与出生点 pointFree 不同，这里按角色当前脚高判断楼层，
+  // 忽略地板/屋顶的水平碰撞，并把门视为可通行目标，让机器人能够主动靠近开门。
+  navPointFree(
+    x: number,
+    z: number,
+    feetY: number,
+    r = 0.48,
+    allowWater = true,
+    swimExit = false,
+  ): boolean {
+    const standY = this.groundHeight(x, z, feetY + 0.16);
+    const deepWater = standY < WATER_Y - 0.55;
+    const swimExitApproach = swimExit && allowWater && feetY < WATER_Y + 0.2 && standY <= WATER_Y + 3.6;
+    if (deepWater && !allowWater) return false;
+    if (!deepWater && !swimExitApproach && (standY > feetY + 0.62 || standY < feetY - 1.45)) return false;
+    const bodyY = deepWater ? WATER_Y - 0.78 : standY;
+    for (const c of this.cyls) {
+      if (bodyY >= c.y1 - 0.05 || bodyY + 1.65 <= c.y0) continue;
+      const dx = x - c.x;
+      const dz = z - c.z;
+      const rr = r + c.r;
+      if (dx * dx + dz * dz < rr * rr) return false;
+    }
+    for (const b of this.aabbs) {
+      if (b.off || b.tag === 'floor' || b.tag === 'roof' || b.tag === 'door') continue;
+      if (bodyY >= b.maxY - 0.02 || bodyY + 1.65 <= b.minY) continue;
+      const cx = clamp(x, b.minX, b.maxX);
+      const cz = clamp(z, b.minZ, b.maxZ);
+      const dx = x - cx;
+      const dz = z - cz;
+      if (dx * dx + dz * dz < r * r) return false;
+    }
+    return x > -WORLD_HALF + 1 && x < WORLD_HALF - 1 && z > -WORLD_HALF + 1 && z < WORLD_HALF - 1;
+  }
 }
 
 // 草丛几何体: 5 叶片丛(圆盘内散布), 根深暗/尖亮(顶点色围绕 1.0, 与 instanceColor 相乘)

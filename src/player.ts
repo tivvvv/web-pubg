@@ -1,6 +1,8 @@
 // 玩家: 第一/第三人称可切换(V) + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力 + 投掷
 import * as THREE from 'three';
-import { Character, SWIM_SPEED, SWIM_SPRINT_SPEED } from './character';
+import {
+  CANOPY_DEPLOY_VELOCITY, Character, stepAirDescentVelocity, SWIM_SPEED, SWIM_SPRINT_SPEED,
+} from './character';
 import type { Input } from './input';
 import { isGunKind, isMeleeKind, isWeaponKind } from './loot';
 import { ARMORS, armorFromLoot } from './armor';
@@ -523,7 +525,7 @@ export class PlayerController {
   private deployCanopy(game: Game): void {
     if (this.descent !== 'freefall') return;
     this.descent = 'canopy';
-    this.vy = -9;
+    this.vy = CANOPY_DEPLOY_VELOCITY;
     this.char.airPose = 'canopy';
     this.char.attachCanopy(0xd8843c);
     game.audio.canopyDeploy();
@@ -564,6 +566,8 @@ export class PlayerController {
       }
       return;
     }
+    const phase = this.descent;
+    if (!phase) return;
     // 水平操控: WASD 相对视线
     const fwdX = Math.sin(this.yaw);
     const fwdZ = Math.cos(this.yaw);
@@ -595,10 +599,8 @@ export class PlayerController {
       c.airSteerRight = clamp((this.hv.x * rightX + this.hv.y * rightZ) / maxHv, -1, 1);
       c.airSteerForward = clamp((this.hv.x * fwdX + this.hv.y * fwdZ) / maxHv, -1, 1);
     }
-    // 垂直逼近终端速度(自由落体 55 / 滑翔 10)
-    const vt = this.descent === 'freefall' ? -55 : -10;
-    const k = this.descent === 'freefall' ? 1.1 : 2.2;
-    this.vy += (vt - this.vy) * (1 - Math.exp(-dt * k));
+    // 玩家与 AI 使用同一套自由落体/滑翔速度曲线。
+    this.vy = stepAirDescentVelocity(this.vy, phase, dt);
     c.pos.x += this.hv.x * dt;
     c.pos.z += this.hv.y * dt;
     c.pos.x = clamp(c.pos.x, -WORLD_HALF + 1, WORLD_HALF - 1);

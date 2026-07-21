@@ -17,6 +17,20 @@ export const SWIM_SPRINT_SPEED = 4.8;
 export const SWIM_ENTER_DEPTH = 1.1;
 export const SWIM_EXIT_DEPTH = 0.45;
 
+// 玩家和 AI 共用同一套空降垂直物理, 避免机器人因开伞减速参数漂移而提前落地。
+export type AirDescentPhase = 'freefall' | 'canopy';
+export const CANOPY_DEPLOY_VELOCITY = -9;
+const FREEFALL_TERMINAL_VELOCITY = -55;
+const CANOPY_TERMINAL_VELOCITY = -10;
+const FREEFALL_VELOCITY_RESPONSE = 1.1;
+const CANOPY_VELOCITY_RESPONSE = 2.2;
+
+export function stepAirDescentVelocity(vy: number, phase: AirDescentPhase, dt: number): number {
+  const terminal = phase === 'freefall' ? FREEFALL_TERMINAL_VELOCITY : CANOPY_TERMINAL_VELOCITY;
+  const response = phase === 'freefall' ? FREEFALL_VELOCITY_RESPONSE : CANOPY_VELOCITY_RESPONSE;
+  return vy + (terminal - vy) * (1 - Math.exp(-dt * response));
+}
+
 // 翻越状态(脚本化运动: 起跳点→顶点上弧→落点)
 export interface VaultState {
   t: number;      // 已进行秒数

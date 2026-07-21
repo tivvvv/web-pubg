@@ -1290,7 +1290,9 @@ export class Game {
 
   meleeAttack(attacker: Character): boolean {
     const m = attacker.melee.def;
-    if (this.now - attacker.lastMeleeT < m.cooldown) return false;
+    // AI 会逐帧卡住冷却结束的瞬间出拳, 徒手时加入可读的恢复间隔, 避免实际压制频率高于玩家操作。
+    const cooldown = !attacker.isPlayer && m.id === 'fists' ? Math.max(m.cooldown, 0.6) : m.cooldown;
+    if (this.now - attacker.lastMeleeT < cooldown) return false;
     attacker.lastMeleeT = this.now;
     attacker.swingT = 1;
     attacker.swingSide *= -1; // 交替出拳

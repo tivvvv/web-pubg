@@ -29,9 +29,9 @@ interface WeatherProfile {
 const WEATHER: Record<WeatherKind, WeatherProfile> = {
   clear: { cloud: 0.18, rain: 0, fogNear: 185, fogFar: 690, light: 1, wind: 0.75, wet: 0, storm: 0 },
   cloudy: { cloud: 0.72, rain: 0, fogNear: 140, fogFar: 545, light: 0.8, wind: 1.25, wet: 0.08, storm: 0 },
-  rain: { cloud: 0.9, rain: 0.76, fogNear: 96, fogFar: 440, light: 0.76, wind: 2.05, wet: 0.82, storm: 0.16 },
+  rain: { cloud: 0.9, rain: 0.76, fogNear: 110, fogFar: 485, light: 0.86, wind: 2.05, wet: 0.82, storm: 0.16 },
   fog: { cloud: 0.62, rain: 0.04, fogNear: 30, fogFar: 235, light: 0.7, wind: 0.34, wet: 0.28, storm: 0 },
-  storm: { cloud: 0.98, rain: 1, fogNear: 68, fogFar: 365, light: 0.58, wind: 3.1, wet: 1, storm: 1 },
+  storm: { cloud: 0.98, rain: 1, fogNear: 82, fogFar: 410, light: 0.72, wind: 3.1, wet: 1, storm: 1 },
 };
 
 const WEATHER_LABEL: Record<WeatherKind, string> = {
@@ -293,8 +293,8 @@ export class EnvironmentSystem {
     this.hemi.color.copy(this.zenith).lerp(this.dayHemi, daylight * 0.28);
     this.hemi.groundColor.copy(this.nightGround).lerp(this.dayGround, daylight);
     // 阴雨天用柔和天空光补足被云层削弱的直射光，室内和建筑背阴面仍保持可辨识。
-    const rainFill = this.current.rain * (0.08 + daylight * 0.14);
-    this.hemi.intensity = 0.42 + daylight * 0.62 * this.current.light + rainFill + this.flash * 1.7;
+    const rainFill = this.current.rain * (0.13 + daylight * 0.18) + this.current.storm * 0.06;
+    this.hemi.intensity = 0.46 + daylight * 0.68 * this.current.light + rainFill + this.flash * 1.7;
 
     const groundDay = lerp(0.76, 1, daylight) * lerp(0.86, 1, this.current.light);
     this.terrainMat.color.setRGB(groundDay * (0.9 + daylight * 0.1), groundDay * (0.94 + daylight * 0.06), groundDay);
@@ -306,9 +306,9 @@ export class EnvironmentSystem {
 
     this.snapshot.daylight = daylight;
     this.snapshot.exposure = clamp(
-      1.17 - daylight * 0.09 + (1 - this.current.light) * 0.08 + this.current.rain * 0.09 + this.current.storm * 0.025,
+      1.17 - daylight * 0.09 + (1 - this.current.light) * 0.08 + this.current.rain * 0.16 + this.current.storm * 0.06,
       1.06,
-      1.3,
+      1.4,
     );
   }
 

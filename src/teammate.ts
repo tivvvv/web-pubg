@@ -2,17 +2,22 @@
 // teammate.ts - 队友 AI: 跟随/交战/乘车/跳伞; 与 enemy BotController 共享战斗原语
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { Character, moveChar, SWIM_SPRINT_SPEED } from './character';
+import {
+  CANOPY_DEPLOY_VELOCITY, Character, moveChar, stepAirDescentVelocity, SWIM_SPRINT_SPEED,
+} from './character';
 import type { Game } from './game';
 import type { PlayerController } from './player';
-import { isGunKind, isWeaponKind } from './loot';
+import { isGunKind, isWeaponKind, type LootItem } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
-import { isPackKind } from './backpack';
-import { magSizeOf } from './attachments';
+import { isPackKind, packLevelFromLoot } from './backpack';
+import { ATTACHMENTS, attachFromLoot, canAttach, isAttachKind, magSizeOf } from './attachments';
 import { seatWorldAt, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
-import { WEAPONS } from './weapons';
+import { THROWABLES, WEAPONS, ammoTypeFromLoot } from './weapons';
 import { angleDiff, rand, turnToward } from './utils';
+import { AgentNavigator, allyBlocksShot, findCoverPoint, findSwimBank } from './botnav';
+import type { DestructibleLike } from './types';
+import { WATER_Y } from './world';
 
 const ENGAGE_RANGE = 60;
 
@@ -37,9 +42,24 @@ export class TeammateController {
   private healCd = 0;
   private stuckT = 0;
   private vaultProbeT = 0; // 翻越探测节流
-  private strafeT = 0;
   private strafeDir = 1;
-  private swimExitT = 0;
+  private navigator = new AgentNavigator();
+  private tacticPoint = new THREE.Vector2();
+  private tacticT = 0;
+  private tacticMode: 'advance' | 'strafe' | 'retreat' | 'cover' | 'search' = 'advance';
+  private losOk = false;
+  private lastKnown = new THREE.Vector3();
+  private lootTarget: LootItem | null = null;
+  private lootScanT = 0;
+  private swimBank = new THREE.Vector2();
+  private hasSwimBank = false;
+  private swimRepathT = 0;
+  private swimLastX = 0;
+  private swimLastZ = 0;
+  private blockedDoor: DestructibleLike | null = null;
+  private blockCheckT = 0;
+  private blockT = 0;
+  private fragOut = { x: 0, z: 0 };
   private eye = new THREE.Vector3();
   private tgt = new THREE.Vector3();
   private dir = new THREE.Vector3();
@@ -48,7 +68,7 @@ export class TeammateController {
   constructor(name: string, shirtColor: number, jumpSlot = 1) {
     this.char = new Character(name, false, shirtColor);
     this.char.team = 'squad';
-    this.followAng = rand(0, Math.PI * 2);
+    this.followAng = (jumpSlot - 1) * 0.68;
     this.followDist = rand(4, 9);
     this.jumpSlot = jumpSlot;
   }
@@ -72,6 +92,7 @@ export class TeammateController {
       this.updateDescent(dt, game);
       return;
     }
+    this.fireTimer = Math.max(0, this.fireTimer - dt);
 
     // ---- 载具乘降 ----
     const pv = player.driving;
@@ -87,6 +108,7 @@ export class TeammateController {
         const rz = -Math.sin(rv.yaw);
         c.pos.set(rv.pos.x + rx * 2.0, 0, rv.pos.z + rz * 2.0);
         c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, rv.pos.y + 1);
+        this.navigator.reset(c);
       } else {
         seatWorldAt(rv, this.seatIdx + 1, c.pos); // 0=驾驶位, 乘客从 1 起
         c.yaw = rv.yaw;
@@ -98,8 +120,11 @@ export class TeammateController {
         seatWorldAt(pv, seat + 1, this.tgt);
         const d = Math.hypot(this.tgt.x - c.pos.x, this.tgt.z - c.pos.z);
         if (d > 2.0) {
-          c.yaw = Math.atan2(this.tgt.x - c.pos.x, this.tgt.z - c.pos.z);
-          moveChar(c, Math.sin(c.yaw) * 5.4, Math.cos(c.yaw) * 5.4, dt, game.world);
+          this.navigator.move(c, this.tgt.x, this.tgt.z, 5.6, dt, game.world, {
+            stopDistance: 1.8,
+            turnRate: 6,
+            neighbors: game.chars,
+          });
         } else {
           this.riding = pv;
           this.seatIdx = seat;
@@ -118,75 +143,45 @@ export class TeammateController {
     const wasSwimming = c.swimming;
     game.updateSwim(c);
     if (c.swimming) {
-      // 直接朝玩家位置游(跟随偏移点可能落在水里, 会原地踩水)
-      const p = player.char.pos;
-      const dx = p.x - c.pos.x;
-      const dz = p.z - c.pos.z;
-      const d = Math.hypot(dx, dz) || 1;
-      c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 4 * dt);
-      const speed = Math.min(SWIM_SPRINT_SPEED, Math.max(2.8, d * 0.45));
-      moveChar(c, (dx / d) * speed, (dz / d) * speed, dt, game.world, SWIM_SPRINT_SPEED);
-      c.swimAcc += c.speed2d * dt;
-      if (c.swimAcc > 1.7) {
-        c.swimAcc = 0;
-        game.soundAt(c.pos, (dd, p2) => game.audio.swimStrokeAt(dd, p2));
+      if (!wasSwimming) {
+        this.hasSwimBank = false;
+        this.swimRepathT = 0;
+        this.swimLastX = c.pos.x;
+        this.swimLastZ = c.pos.z;
+        this.navigator.reset(c);
       }
-      this.fireTimer -= dt;
+      this.swimToBank(dt, game, player, c.knocked ? 1.2 : SWIM_SPRINT_SPEED);
       return;
     }
     if (wasSwimming) {
-      this.swimExitT = 0.18;
-      c.speed2d = 0;
-      return;
-    }
-    if (this.swimExitT > 0) {
-      this.swimExitT = Math.max(0, this.swimExitT - dt);
-      c.speed2d = 0;
-      return;
+      this.navigator.reset(c);
     }
 
     // ---- 倒地: 缓慢爬离伤害来源(圈外优先爬向圈心) ----
     if (c.knocked) {
-      let mx = 0;
-      let mz = 0;
-      if (c.lastHitX !== 0 || c.lastHitZ !== 0) {
-        const dx = c.pos.x - c.lastHitX;
-        const dz = c.pos.z - c.lastHitZ;
-        const d = Math.hypot(dx, dz) || 1;
-        if (d < 14) {
-          mx = dx / d;
-          mz = dz / d;
-        }
-      }
-      if (game.zone.isOutside(c.pos.x, c.pos.z)) {
-        const dx = game.zone.center.x - c.pos.x;
-        const dz = game.zone.center.y - c.pos.z;
-        const d = Math.hypot(dx, dz) || 1;
-        mx = dx / d;
-        mz = dz / d;
-      }
-      if (game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) {
-        mx = game.tmpV2.x;
-        mz = game.tmpV2.y;
-      }
-      if (mx !== 0 || mz !== 0) moveChar(c, mx * 0.6, mz * 0.6, dt, game.world);
+      this.updateKnocked(dt, game);
       return;
     }
 
     // 轰炸预警优先于跟随和交战, 队友会立即向红区外撤离
     if (this.fleeBombardment(dt, game)) return;
+    if (this.fleeGrenade(dt, game)) return;
 
     // ---- 救援友军(优先玩家, 25m 内有敌先战斗; 第二队友自然掩护) ----
     {
       let ally: Character | null = null;
       const pc = game.playerCtl?.char;
       if (pc?.knocked) ally = pc;
-      if (!ally) ally = game.knock.nearestKnocked(c.pos.x, c.pos.z, 999, c);
+      if (!ally) ally = game.knock.nearestKnocked(c.pos.x, c.pos.z, 70, c);
       if (ally && (ally.rescuerId === 0 || ally.rescuerId === c.id)) {
         let enemyNear = false;
         for (const o of game.chars) {
           if (!o.alive || o.team !== 'enemy') continue;
-          if (Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z) < 25) {
+          const enemyD = Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z);
+          if (enemyD >= 25) continue;
+          c.eyePos(this.eye);
+          o.chestPos(this.tgt);
+          if (enemyD < 8 || !game.isLOSBlocked(this.eye, this.tgt, this.dir)) {
             enemyNear = true;
             break;
           }
@@ -196,8 +191,12 @@ export class TeammateController {
           const dz = ally.pos.z - c.pos.z;
           const d = Math.hypot(dx, dz) || 1;
           if (d > 2.0) {
-            c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 5 * dt);
-            moveChar(c, (dx / d) * 5.4, (dz / d) * 5.4, dt, game.world);
+            this.navigator.move(c, ally.pos.x, ally.pos.z, 5.5, dt, game.world, {
+              stopDistance: 1.8,
+              turnRate: 6,
+              neighbors: game.chars,
+            });
+            this.updateDoorBreak(dt, game, true);
           } else if (!c.reviveTarget) {
             game.knock.startRevive(c, ally);
           }
@@ -249,7 +248,9 @@ export class TeammateController {
       // 非交战: 顺路拾取 + 跟随
       if (!this.lootNear(dt, game)) this.follow(dt, game, player);
     }
-    this.fireTimer -= dt;
+    const followGap = Math.hypot(player.char.pos.x - c.pos.x, player.char.pos.z - c.pos.z);
+    const wantsMove = !c.reviveTarget && (this.target !== null || this.lootTarget !== null || followGap > 3);
+    this.updateDoorBreak(dt, game, wantsMove);
   }
 
   // ---- 空降物理(跟随玩家落点) ----
@@ -275,8 +276,9 @@ export class TeammateController {
       this.descent = 'freefall';
       this.vy = -2;
     }
-    const vt = this.descent === 'freefall' ? -55 : -10;
-    this.vy += (vt - this.vy) * (1 - Math.exp(-dt * 1.2));
+    const phase = this.descent;
+    if (!phase) return;
+    this.vy = stepAirDescentVelocity(this.vy, phase, dt);
     const p = player?.char.pos;
     if (p) {
       const dx = p.x - c.pos.x;
@@ -293,6 +295,7 @@ export class TeammateController {
     const agl = c.pos.y - game.world.getHeight(c.pos.x, c.pos.z);
     if (this.descent === 'freefall' && agl <= 70) {
       this.descent = 'canopy';
+      this.vy = CANOPY_DEPLOY_VELOCITY;
       c.airPose = 'canopy';
       c.attachCanopy(0x9ab86a);
     }
@@ -305,9 +308,112 @@ export class TeammateController {
     if (!game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) return false;
     const speed = game.bombardment.state === 'active' ? 6.5 : 5.8;
     c.setStance('stand');
-    c.yaw = turnToward(c.yaw, Math.atan2(game.tmpV2.x, game.tmpV2.y), 6 * dt);
-    moveChar(c, game.tmpV2.x * speed, game.tmpV2.y * speed, dt, game.world);
+    this.navigator.move(
+      c,
+      c.pos.x + game.tmpV2.x * 22,
+      c.pos.z + game.tmpV2.y * 22,
+      speed,
+      dt,
+      game.world,
+      { stopDistance: 0.5, turnRate: 7, neighbors: game.chars },
+    );
+    this.updateDoorBreak(dt, game, true);
     return true;
+  }
+
+  private fleeGrenade(dt: number, game: Game): boolean {
+    const c = this.char;
+    if (!game.grenades.nearestLiveFrag(c.pos.x, c.pos.y, c.pos.z, 6, this.fragOut)) return false;
+    const dx = c.pos.x - this.fragOut.x;
+    const dz = c.pos.z - this.fragOut.z;
+    const d = Math.hypot(dx, dz) || 1;
+    this.navigator.move(
+      c,
+      c.pos.x + (dx / d) * 15,
+      c.pos.z + (dz / d) * 15,
+      6.3,
+      dt,
+      game.world,
+      { stopDistance: 0.5, turnRate: 8, neighbors: game.chars },
+    );
+    this.updateDoorBreak(dt, game, true);
+    return true;
+  }
+
+  private updateKnocked(dt: number, game: Game): void {
+    const c = this.char;
+    let goalX = c.pos.x;
+    let goalZ = c.pos.z;
+    if (c.lastHitX !== 0 || c.lastHitZ !== 0) {
+      const dx = c.pos.x - c.lastHitX;
+      const dz = c.pos.z - c.lastHitZ;
+      const d = Math.hypot(dx, dz) || 1;
+      if (d < 14) {
+        goalX += (dx / d) * 8;
+        goalZ += (dz / d) * 8;
+      }
+    }
+    if (game.zone.isOutside(c.pos.x, c.pos.z)) {
+      goalX = game.zone.center.x;
+      goalZ = game.zone.center.y;
+    }
+    if (game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) {
+      goalX = c.pos.x + game.tmpV2.x * 12;
+      goalZ = c.pos.z + game.tmpV2.y * 12;
+    }
+    this.navigator.move(c, goalX, goalZ, 0.65, dt, game.world, {
+      stopDistance: 0.5,
+      turnRate: 3,
+      allowWater: false,
+      neighbors: game.chars,
+    });
+  }
+
+  private swimToBank(dt: number, game: Game, player: PlayerController, maxSpeed: number): void {
+    const c = this.char;
+    const p = player.char.pos;
+    if (!this.hasSwimBank) {
+      const fwdX = Math.sin(player.yaw);
+      const fwdZ = Math.cos(player.yaw);
+      const preferX = player.char.swimming ? p.x + fwdX * 28 : p.x;
+      const preferZ = player.char.swimming ? p.z + fwdZ * 28 : p.z;
+      findSwimBank(this.swimBank, c.pos.x, c.pos.z, preferX, preferZ, game.world);
+      this.hasSwimBank = true;
+      this.swimRepathT = 0.7;
+    }
+    this.swimRepathT -= dt;
+    if (this.swimRepathT <= 0) {
+      const progress = Math.hypot(c.pos.x - this.swimLastX, c.pos.z - this.swimLastZ);
+      this.swimLastX = c.pos.x;
+      this.swimLastZ = c.pos.z;
+      this.swimRepathT = 0.7;
+      const bankDist = Math.hypot(this.swimBank.x - c.pos.x, this.swimBank.y - c.pos.z);
+      const bankDepth = WATER_Y - game.world.getHeight(this.swimBank.x, this.swimBank.y);
+      if (progress < 0.25 || (bankDist < 1.2 && bankDepth > 0.65)) {
+        const oldX = this.swimBank.x;
+        const oldZ = this.swimBank.y;
+        const fwdX = Math.sin(player.yaw);
+        const fwdZ = Math.cos(player.yaw);
+        const preferX = player.char.swimming ? p.x + fwdX * 28 : p.x;
+        const preferZ = player.char.swimming ? p.z + fwdZ * 28 : p.z;
+        findSwimBank(this.swimBank, c.pos.x, c.pos.z, preferX, preferZ, game.world, oldX, oldZ);
+      }
+    }
+    const dx = this.swimBank.x - c.pos.x;
+    const dz = this.swimBank.y - c.pos.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const speed = Math.min(maxSpeed, Math.max(c.knocked ? 0.35 : 0.55, d * 1.6));
+    this.navigator.move(c, this.swimBank.x, this.swimBank.y, speed, dt, game.world, {
+      stopDistance: 0.25,
+      turnRate: 4.5,
+      allowWater: true,
+      neighbors: game.chars,
+    });
+    c.swimAcc += c.speed2d * dt;
+    if (c.swimAcc > 1.7) {
+      c.swimAcc = 0;
+      game.soundAt(c.pos, (dd, p2) => game.audio.swimStrokeAt(dd, p2));
+    }
   }
 
   private finishDescent(groundY: number): void {
@@ -320,20 +426,27 @@ export class TeammateController {
     c.stance = 'stand';
     c.stanceF = 0;
     c.removeCanopy();
+    this.navigator.reset(c);
   }
 
   // ---- 索敌: 可见敌人, 偏好玩家附近 ----
   private scan(game: Game): void {
     const c = this.char;
+    const bestGun = c.bestGunSlot();
+    c.curSlot = bestGun >= 0 ? bestGun : 3;
     c.eyePos(this.eye);
     let best: Character | null = null;
     let bestScore = ENGAGE_RANGE + 40;
+    const playerAttacker = game.playerCtl?.char.lastAttackerId ?? 0;
     for (const o of game.chars) {
       if (!o.alive || o.team !== 'enemy') continue;
       const d = Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z);
       if (d > ENGAGE_RANGE) continue;
       const pd = game.playerCtl ? Math.hypot(o.pos.x - game.playerCtl.char.pos.x, o.pos.z - game.playerCtl.char.pos.z) : 99;
-      const score = d + pd * 0.4;
+      let score = d + pd * 0.35;
+      if (o === this.target) score -= 14;
+      if (o.id === c.lastAttackerId) score -= 20;
+      if (o.id === playerAttacker) score -= 16;
       if (score >= bestScore) continue;
       o.chestPos(this.tgt);
       if (game.isLOSBlocked(this.eye, this.tgt, this.dir)) continue;
@@ -346,11 +459,19 @@ export class TeammateController {
         this.reactT = rand(0.2, 0.5);
         this.burstLeft = 0;
         this.burstCd = 0;
+        this.tacticT = 0;
+        this.navigator.reset(c);
       }
       this.lostT = 0;
+      this.losOk = true;
+      this.lastKnown.copy(best.pos);
     } else if (this.target) {
       this.lostT += 0.25;
-      if (this.lostT > 2.5) this.target = null;
+      this.losOk = false;
+      if (this.lostT > 3.2) {
+        this.target = null;
+        this.tacticT = 0;
+      }
     }
   }
 
@@ -360,6 +481,7 @@ export class TeammateController {
     const t = this.target as Character;
     if (!t.alive) {
       this.target = null;
+      this.navigator.reset(c);
       return;
     }
     const dx = t.pos.x - c.pos.x;
@@ -367,30 +489,110 @@ export class TeammateController {
     const dist = Math.hypot(dx, dz);
     if (dist > ENGAGE_RANGE + 20) {
       this.target = null;
+      this.navigator.reset(c);
       return;
     }
     const desiredYaw = Math.atan2(dx, dz);
-    c.yaw = turnToward(c.yaw, desiredYaw, 5 * dt);
-    // 小走位保持距离
-    this.strafeT -= dt;
-    if (this.strafeT <= 0) {
-      this.strafeT = rand(0.8, 1.6);
-      this.strafeDir = Math.random() < 0.5 ? -1 : 1;
+    const gun = c.heldGun();
+    let preferred = 2.1;
+    if (gun) {
+      switch (gun.def.id) {
+        case 'shotgun': preferred = 9; break;
+        case 'smg': preferred = 16; break;
+        case 'pistol': preferred = 19; break;
+        case 'dmr': preferred = 42; break;
+        case 'sniper': preferred = 52; break;
+        default: preferred = 29;
+      }
     }
-    const nx = dx / (dist || 1);
-    const nz = dz / (dist || 1);
-    const radial = dist > 30 ? 0.7 : dist < 10 ? -0.6 : 0;
-    const mx = -nz * this.strafeDir * 0.7 + nx * radial;
-    const mz = nx * this.strafeDir * 0.7 + nz * radial;
-    const ml = Math.hypot(mx, mz) || 1;
-    moveChar(c, (mx / ml) * 3.2, (mz / ml) * 3.2, dt, game.world);
+    this.tacticT -= dt;
+    if (this.tacticT <= 0) {
+      this.tacticT = rand(0.75, 1.25);
+      if (Math.random() < 0.35) this.strafeDir *= -1;
+      if (gun && (this.reloadT > 0 || c.hp < 35) &&
+        findCoverPoint(this.tacticPoint, c, t, game.world, 12) &&
+        !game.zone.isOutside(this.tacticPoint.x, this.tacticPoint.y)) {
+        this.tacticMode = 'cover';
+      } else if (!this.losOk) {
+        const nx = dx / (dist || 1);
+        const nz = dz / (dist || 1);
+        this.tacticPoint.set(
+          this.lastKnown.x - nz * this.strafeDir * Math.min(9, dist * 0.3),
+          this.lastKnown.z + nx * this.strafeDir * Math.min(9, dist * 0.3),
+        );
+        this.tacticMode = 'search';
+      } else if (!gun || dist > preferred * 1.25) {
+        this.tacticPoint.set(t.pos.x, t.pos.z);
+        this.tacticMode = 'advance';
+      } else if (dist < preferred * 0.55) {
+        const nx = dx / (dist || 1);
+        const nz = dz / (dist || 1);
+        this.tacticPoint.set(c.pos.x - nx * 9, c.pos.z - nz * 9);
+        this.tacticMode = 'retreat';
+      } else {
+        const nx = dx / (dist || 1);
+        const nz = dz / (dist || 1);
+        this.tacticPoint.set(c.pos.x - nz * this.strafeDir * 6, c.pos.z + nx * this.strafeDir * 6);
+        this.tacticMode = 'strafe';
+      }
+    }
+    const advancing = this.tacticMode === 'advance';
+    const nav = this.navigator.move(
+      c,
+      advancing ? t.pos.x : this.tacticPoint.x,
+      advancing ? t.pos.z : this.tacticPoint.y,
+      !gun ? 5.3 : this.reloadT > 0 ? 5.0 : 3.8,
+      dt,
+      game.world,
+      {
+        stopDistance: advancing ? preferred : 1.0,
+        turnRate: !gun ? 6.5 : 5,
+        allowWater: false,
+        neighbors: game.chars,
+      },
+    );
+    if (this.losOk) c.yaw = turnToward(c.yaw, desiredYaw, 8 * dt);
+    c.setStance(gun && nav.reached && dist > 20 && this.tacticMode !== 'advance' ? 'crouch' : 'stand');
+
+    if (nav.reached && this.tacticMode === 'cover' && !this.losOk && this.healCd <= 0 && c.hp < 60) {
+      if (c.heals.medkit > 0 && c.hp < 35) {
+        c.heals.medkit--;
+        c.hp = 100;
+        this.healCd = 4;
+      } else if (c.heals.bandage > 0) {
+        c.heals.bandage--;
+        c.hp = Math.min(75, c.hp + 15);
+        this.healCd = 2;
+      }
+    }
+
+    this.vaultProbeT -= dt;
+    if (nav.blocked && this.vaultProbeT <= 0 && !c.vault && c.vaultCd <= 0) {
+      this.vaultProbeT = 0.32;
+      const gx = (advancing ? t.pos.x : this.tacticPoint.x) - c.pos.x;
+      const gz = (advancing ? t.pos.z : this.tacticPoint.y) - c.pos.z;
+      const probe = probeVault(c, gx, gz, game.world);
+      if (probe) {
+        if (probe.win?.alive) game.hitDestructible(probe.win, 999, c.pos);
+        startVault(c, probe);
+        game.soundAt(c.pos, (dd, p2) => game.audio.melee(dd, p2));
+        return;
+      }
+    }
+
+    if (!gun) {
+      if (dist < c.melee.def.range * 1.05) {
+        c.yaw = turnToward(c.yaw, desiredYaw, 10 * dt);
+        if (angleDiff(c.yaw, desiredYaw) < 0.3) game.meleeAttack(c);
+      }
+      return;
+    }
     // 开火
     if (this.reactT > 0) {
       this.reactT -= dt;
       return;
     }
-    const gun = c.heldGun();
-    if (!gun || this.reloadT > 0) return;
+    if (this.reloadT > 0 || !this.losOk || allyBlocksShot(c, t, game.chars)) return;
     if (angleDiff(c.yaw, desiredYaw) > 0.22) return;
     if (gun.def.id === 'shotgun' && dist > 26) return; // 霰弹仅限近距
     if (this.burstLeft > 0) {
@@ -431,25 +633,38 @@ export class TeammateController {
   private follow(dt: number, game: Game, player: PlayerController): void {
     const c = this.char;
     const p = player.char.pos;
-    const tx = p.x + Math.sin(this.followAng) * this.followDist;
-    const tz = p.z + Math.cos(this.followAng) * this.followDist;
+    const formationAng = player.yaw + Math.PI + this.followAng;
+    const tx = p.x + Math.sin(formationAng) * this.followDist;
+    const tz = p.z + Math.cos(formationAng) * this.followDist;
     const dx = tx - c.pos.x;
     const dz = tz - c.pos.z;
     const d = Math.hypot(dx, dz);
     const pd = Math.hypot(p.x - c.pos.x, p.z - c.pos.z);
-    if (pd > 20) this.stuckT += dt;
-    else this.stuckT = 0;
-    if (this.stuckT > 8) {
-      // 掉队救援: 最后手段传送到玩家身后
+    if (pd > 28 && c.speed2d < 0.25) this.stuckT += dt;
+    else this.stuckT = Math.max(0, this.stuckT - dt * 2);
+    if (this.stuckT > 18 && pd > 55) {
+      // 极端掉队兜底只在长时间完全无法移动时触发，并验证落点可用。
       this.stuckT = 0;
-      c.pos.set(p.x - Math.sin(player.yaw) * 4, 0, p.z - Math.cos(player.yaw) * 4);
-      c.pos.y = game.world.getHeight(c.pos.x, c.pos.z);
-      return;
+      for (let i = 0; i < 8; i++) {
+        const a = player.yaw + Math.PI + (i - 3.5) * 0.25;
+        const x = p.x + Math.sin(a) * (5 + i * 0.25);
+        const z = p.z + Math.cos(a) * (5 + i * 0.25);
+        if (!game.world.navPointFree(x, z, p.y, 0.55, false)) continue;
+        c.pos.set(x, game.world.groundHeight(x, z, p.y + 0.2), z);
+        this.navigator.reset(c);
+        return;
+      }
     }
     if (d > 2.2) {
+      const sp = pd > 14 || player.char.speed2d > 5 ? 6.6 : 4.3;
+      const nav = this.navigator.move(c, tx, tz, Math.min(sp, Math.max(2.2, d * 1.3)), dt, game.world, {
+        stopDistance: 2,
+        turnRate: 5.5,
+        neighbors: game.chars,
+      });
       // 跟随被可翻越障碍挡住且玩家在对面: 翻越(节流探测)
       this.vaultProbeT -= dt;
-      if (this.vaultProbeT <= 0) {
+      if (nav.blocked && this.vaultProbeT <= 0) {
         this.vaultProbeT = 0.4;
         if (!c.vault && c.vaultCd <= 0) {
           const probe = probeVault(c, dx, dz, game.world);
@@ -464,51 +679,162 @@ export class TeammateController {
           }
         }
       }
-      const sp = pd > 14 || player.char.speed2d > 5 ? 6.6 : 4.3;
-      c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 5 * dt);
-      moveChar(c, (dx / d) * Math.min(sp, d * 1.5), (dz / d) * Math.min(sp, d * 1.5), dt, game.world);
     } else {
       moveChar(c, 0, 0, dt, game.world);
       c.yaw = turnToward(c.yaw, player.yaw, 2.5 * dt);
     }
   }
 
-  // ---- 顺路拾取(跟随点附近 15m) ----
+  private updateDoorBreak(dt: number, game: Game, wantsMove: boolean): void {
+    const c = this.char;
+    this.blockCheckT -= dt;
+    if (this.blockCheckT <= 0) {
+      this.blockCheckT = 0.15;
+      const fx = Math.sin(c.yaw);
+      const fz = Math.cos(c.yaw);
+      this.blockedDoor = wantsMove ? game.findBlockingDoor(c, fx, fz) : null;
+      if (!this.blockedDoor) this.blockT = 0;
+    }
+    const d = this.blockedDoor;
+    if (!d || !d.alive || d.collider.off || !wantsMove) {
+      this.blockT = 0;
+      return;
+    }
+    this.blockT += dt;
+    if (d.kind === 'door') {
+      if (this.blockT > 0.3) {
+        game.openDoor(d);
+        this.blockedDoor = null;
+        this.blockT = 0;
+      }
+      return;
+    }
+    if (this.blockT < 0.85) return;
+    c.yaw = Math.atan2(d.cx - c.pos.x, d.cz - c.pos.z);
+    const gun = c.heldGun();
+    if (gun && gun.mag > 0 && this.fireTimer <= 0) {
+      c.eyePos(this.eye);
+      this.aim.set(d.cx, d.cy, d.cz);
+      this.dir.subVectors(this.aim, this.eye).normalize();
+      if (game.fireWeapon(c, this.eye, this.dir, 0)) this.fireTimer = gun.def.fireInterval * 1.6;
+    } else if (!gun || gun.mag <= 0) {
+      game.meleeAttack(c);
+    }
+    if (!d.alive) {
+      this.blockedDoor = null;
+      this.blockT = 0;
+    }
+  }
+
+  private wantsLoot(item: LootItem): boolean {
+    const c = this.char;
+    const k = item.kind;
+    if (isWeaponKind(k)) {
+      if (!c.hasGun()) return true;
+      if (!isGunKind(k)) return c.melee.def.id === 'fists';
+      const slot = c.bestGunSlot();
+      return WEAPONS[k].tier > (slot >= 0 ? (c.guns[slot]?.def.tier ?? 0) : 0);
+    }
+    if (isArmorKind(k)) {
+      const info = armorFromLoot(k);
+      if (!info) return false;
+      const cur = info.kind === 'helmet' ? c.helmet : c.vest;
+      return !cur || cur.level < info.level;
+    }
+    if (isPackKind(k)) {
+      const level = packLevelFromLoot(k);
+      return level !== null && (!c.pack || c.pack.level < level);
+    }
+    if (isAttachKind(k)) {
+      const id = attachFromLoot(k);
+      const gun = c.heldGun();
+      if (!id || !gun || !canAttach(gun.def.id, id)) return false;
+      return gun.att[ATTACHMENTS[id].slot] === null;
+    }
+    const ammo = ammoTypeFromLoot(k);
+    if (ammo) return c.guns.some((g) => g?.def.ammo === ammo) && c.ammo[ammo] < 120;
+    if (k === 'bandage') return c.heals.bandage < 5;
+    if (k === 'medkit') return c.heals.medkit < 2;
+    if (k === 'drink') return c.heals.drink < 3;
+    if (k === 'frag' || k === 'smoke') return c.throwables[k] < THROWABLES[k].max;
+    return false;
+  }
+
+  // ---- 顺路拾取(只选真正需要且没有更近队友负责的物品) ----
   private lootNear(dt: number, game: Game): boolean {
     const c = this.char;
-    const item = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 15);
+    const player = game.playerCtl?.char;
+    if (!player || Math.hypot(player.pos.x - c.pos.x, player.pos.z - c.pos.z) > 18) {
+      this.lootTarget = null;
+      return false;
+    }
+    this.lootScanT -= dt;
+    if (!this.lootTarget?.active || !this.wantsLoot(this.lootTarget) || this.lootScanT <= 0) {
+      this.lootTarget = null;
+      this.lootScanT = 0.55;
+      let bestScore = -Infinity;
+      for (let i = 0; i < game.loot.items.length; i++) {
+        const it = game.loot.items[i] as LootItem;
+        if (!it.active || !this.wantsLoot(it)) continue;
+        const dx = it.group.position.x - c.pos.x;
+        const dy = it.group.position.y - c.pos.y - 1;
+        const dz = it.group.position.z - c.pos.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 13 || Math.abs(dy) > 3.2) continue;
+        let claimed = false;
+        for (const ally of game.chars) {
+          if (ally === c || ally.isPlayer || !ally.alive || ally.team !== 'squad') continue;
+          if (Math.hypot(it.group.position.x - ally.pos.x, it.group.position.z - ally.pos.z) + 1.2 < d) {
+            claimed = true;
+            break;
+          }
+        }
+        if (claimed) continue;
+        const priority = isWeaponKind(it.kind) && !c.hasGun() ? 18 :
+          isArmorKind(it.kind) || isPackKind(it.kind) ? 8 :
+            isAttachKind(it.kind) ? 6 : 3;
+        const score = priority - d + ((c.id + i) % 5) * 0.08;
+        if (score > bestScore) {
+          bestScore = score;
+          this.lootTarget = it;
+        }
+      }
+    }
+    const item = this.lootTarget;
     if (!item) return false;
     const k = item.kind;
     const d = Math.hypot(item.group.position.x - c.pos.x, item.group.position.z - c.pos.z);
-    if (d > 1.6) {
-      c.yaw = Math.atan2(item.group.position.x - c.pos.x, item.group.position.z - c.pos.z);
-      moveChar(c, Math.sin(c.yaw) * 4.6, Math.cos(c.yaw) * 4.6, dt, game.world);
+    if (d > 1.7) {
+      this.navigator.move(c, item.group.position.x, item.group.position.z, 4.6, dt, game.world, {
+        stopDistance: 1.55,
+        turnRate: 5,
+        neighbors: game.chars,
+      });
       return true;
     }
+    let taken = false;
     if (isWeaponKind(k)) {
       const cur = c.bestGunSlot();
       const curTier = cur >= 0 ? (c.guns[cur]?.def.tier ?? 0) : 0;
       if (!c.hasGun() || (isGunKind(k) && WEAPONS[k].tier > curTier)) {
-        game.tryPickupWeapon(c, item);
-        return true;
+        taken = game.tryPickupWeapon(c, item);
       }
-      return false;
-    }
-    if (isArmorKind(k)) {
+    } else if (isArmorKind(k)) {
       const info = armorFromLoot(k);
       if (info) {
         const cur = info.kind === 'helmet' ? c.helmet : c.vest;
         if (!cur || cur.level < info.level) {
-          game.tryPickupArmor(c, item);
-          return true;
+          taken = game.tryPickupArmor(c, item);
         }
       }
-      return false;
+    } else if (isPackKind(k)) {
+      const lv = packLevelFromLoot(k);
+      if (lv && (!c.pack || c.pack.level < lv)) taken = game.tryPickupPack(c, item);
+    } else {
+      taken = game.applyAutoPickup(c, item);
     }
-    if (!isPackKind(k)) return game.applyAutoPickup(c, item);
-    // 背包: 没有或更高级才拿
-    const lv = k === 'pack1' ? 1 : k === 'pack2' ? 2 : 3;
-    if (!c.pack || c.pack.level < lv) return game.tryPickupPack(c, item);
-    return false;
+    this.lootTarget = null;
+    this.lootScanT = taken ? 0.1 : 0.8;
+    return taken;
   }
 }
