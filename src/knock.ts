@@ -78,7 +78,10 @@ export class KnockSys {
       c.reviveTarget.rescuerId = 0;
       c.reviveTarget = null;
       c.reviveT = 0;
-      if (c.isPlayer) this.game.hud.toast('救援被打断');
+      if (c.isPlayer) {
+        this.game.hud.setHealCast(-1);
+        this.game.hud.toast('救援被打断');
+      }
     }
   }
 
@@ -103,6 +106,7 @@ export class KnockSys {
           t.rescuerId = 0;
           c.reviveTarget = null;
           c.reviveT = 0;
+          if (c.isPlayer) g.hud.setHealCast(-1);
         } else {
           c.reviveT += dt;
           if (c.reviveT >= REVIVE_TIME) {
@@ -113,6 +117,7 @@ export class KnockSys {
             t.setStance('stand');
             c.reviveTarget = null;
             c.reviveT = 0;
+            if (c.isPlayer) g.hud.setHealCast(-1);
             g.hud.toast(`${t.name} 被扶起来了`);
             if (c.isPlayer || t.isPlayer) g.audio.heal();
           }

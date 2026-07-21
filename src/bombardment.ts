@@ -38,6 +38,25 @@ const RING_SEGMENTS = 64;
 const UP = new THREE.Vector3(0, 1, 0);
 const CIRCLE_NORMAL = new THREE.Vector3(0, 0, 1);
 
+export function bombardmentEscapeVector(
+  state: BombardmentState,
+  centerX: number,
+  centerZ: number,
+  radius: number,
+  x: number,
+  z: number,
+  out: THREE.Vector2,
+): boolean {
+  if (state === 'idle') return false;
+  const dx = x - centerX;
+  const dz = z - centerZ;
+  const d = Math.hypot(dx, dz);
+  if (d > radius + 7) return false;
+  if (d < 0.05) out.set(1, 0);
+  else out.set(dx / d, dz / d);
+  return true;
+}
+
 function makeCraterTexture(): THREE.Texture {
   const canvas = document.createElement('canvas');
   canvas.width = 128;
@@ -245,16 +264,20 @@ export class BombardmentSystem {
     return null;
   }
 
+  // 固定回归场景入口: 跳过随机选区, 直接展示指定位置的预警或落弹阶段.
+  setTestArea(game: Game, x: number, z: number, state: Exclude<BombardmentState, 'idle'>): void {
+    this.center.set(x, z);
+    this.state = state;
+    this.timer = state === 'warning' ? WARNING_DURATION : ACTIVE_DURATION;
+    this.shellTimer = 0;
+    this.marker.visible = true;
+    this.syncMarkerToTerrain(game);
+    this.updateMarker(game.nowSec);
+  }
+
   // 位于预警区或轰炸区时返回向外逃生的单位方向
   escapeVector(x: number, z: number, out: THREE.Vector2): boolean {
-    if (this.state === 'idle') return false;
-    const dx = x - this.center.x;
-    const dz = z - this.center.y;
-    const d = Math.hypot(dx, dz);
-    if (d > RADIUS + 7) return false;
-    if (d < 0.05) out.set(1, 0);
-    else out.set(dx / d, dz / d);
-    return true;
+    return bombardmentEscapeVector(this.state, this.center.x, this.center.y, RADIUS, x, z, out);
   }
 
   private beginWarning(game: Game): void {

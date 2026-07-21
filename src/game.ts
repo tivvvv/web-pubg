@@ -68,7 +68,7 @@ import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWei
 import { BotController, BOT_NAMES } from './bot';
 import { BombardmentSystem } from './bombardment';
 import type { Destructible } from './buildings';
-import { Character, BOT_SHIRTS, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH } from './character';
+import { Character, BOT_SHIRTS, shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH } from './character';
 import { Effects } from './effects';
 import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathcrate';
 import { Hud, type BackpackData } from './hud';
@@ -942,28 +942,28 @@ export class Game {
     const z = c.pos.z;
     const depth = WATER_Y - this.world.getHeight(x, z);
     if (!c.swimming) {
-      if (depth > SWIM_ENTER_DEPTH && c.pos.y < WATER_Y + 0.3) {
-        const standH = this.world.groundHeight(x, z, c.pos.y + 0.3);
-        if (standH < WATER_Y - 1.0) {
-          const plunge = c.vy < -6; // 只有高速落水才下潜
-          c.swimming = true;
-          c.swimT = 0;
-          c.swimAcc = 0;
-          c.swimDip = plunge ? 0.4 : 0;
-          if (!plunge) c.pos.y = Math.max(c.pos.y, WATER_Y - 0.82);
-          c.vy = 0;
-          c.grounded = false;
-          this.tmpA.set(x, WATER_Y + 0.06, z);
-          this.effects.splash(this.tmpA);
-          if (plunge) this.effects.splash(this.tmpA);
-          if (c.isPlayer) this.audio.splashIn();
-          else this.soundAt(c.pos, (d, p) => this.audio.splashAt(d, p));
-          if (c.isPlayer && this.healT > 0) this.cancelHeal('入水打断恢复');
-        }
+      // 保留陆地角色的快速路径, 仅在接近深水时查询楼层高度.
+      if (depth <= SWIM_ENTER_DEPTH || c.pos.y >= WATER_Y + 0.3) return;
+      const standH = this.world.groundHeight(x, z, c.pos.y + 0.3);
+      if (shouldEnterSwimming(depth, standH, c.pos.y)) {
+        const plunge = c.vy < -6; // 只有高速落水才下潜
+        c.swimming = true;
+        c.swimT = 0;
+        c.swimAcc = 0;
+        c.swimDip = plunge ? 0.4 : 0;
+        if (!plunge) c.pos.y = Math.max(c.pos.y, WATER_Y - 0.82);
+        c.vy = 0;
+        c.grounded = false;
+        this.tmpA.set(x, WATER_Y + 0.06, z);
+        this.effects.splash(this.tmpA);
+        if (plunge) this.effects.splash(this.tmpA);
+        if (c.isPlayer) this.audio.splashIn();
+        else this.soundAt(c.pos, (d, p) => this.audio.splashAt(d, p));
+        if (c.isPlayer && this.healT > 0) this.cancelHeal('入水打断恢复');
       }
     } else {
       const standH = this.world.groundHeight(x, z, c.pos.y + 0.3);
-      if (depth > SWIM_EXIT_DEPTH && standH < WATER_Y - SWIM_EXIT_DEPTH) return;
+      if (!shouldExitSwimming(depth, standH)) return;
       c.swimming = false;
       c.swimDip = 0;
       c.pos.y = Math.max(c.pos.y, standH);
@@ -1865,6 +1865,9 @@ export class Game {
         : '按 WASD 缓慢爬行, 等待队友救援');
     } else if (c.reviveTarget) {
       this.hud.setHealCast(c.reviveT / 8); // 玩家救援读条(复用读条 UI)
+    } else if (this.healT <= 0) {
+      // 救援结束或被打断后立即清掉复用的读条, 避免已站起仍显示"包扎中".
+      this.hud.setHealCast(-1);
     }
     // 小队面板(玩家高亮, 倒地橙色, 变化才刷新)
     this.hud.setSquad([

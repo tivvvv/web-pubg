@@ -17,6 +17,14 @@ export const SWIM_SPRINT_SPEED = 4.8;
 export const SWIM_ENTER_DEPTH = 1.1;
 export const SWIM_EXIT_DEPTH = 0.45;
 
+export function shouldEnterSwimming(depth: number, standH: number, feetY: number): boolean {
+  return depth > SWIM_ENTER_DEPTH && feetY < WATER_Y + 0.3 && standH < WATER_Y - 1;
+}
+
+export function shouldExitSwimming(depth: number, standH: number): boolean {
+  return depth <= SWIM_EXIT_DEPTH || standH >= WATER_Y - SWIM_EXIT_DEPTH;
+}
+
 // 玩家和 AI 共用同一套空降垂直物理, 避免机器人因开伞减速参数漂移而提前落地。
 export type AirDescentPhase = 'freefall' | 'canopy';
 export const CANOPY_DEPLOY_VELOCITY = -9;

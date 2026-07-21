@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { findSwimBank } from '../src/botnav';
+import { shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH } from '../src/character';
 import { WATER_Y } from '../src/world';
 
 describe('游泳上岸点搜索', () => {
@@ -22,5 +23,14 @@ describe('游泳上岸点搜索', () => {
     const out = new THREE.Vector2();
     expect(findSwimBank(out, 0, 0, 20, 0, world)).toBe(false);
     expect(out.x).toBeGreaterThan(0);
+  });
+
+  it('严格区分深水入水和浅滩上岸阈值', () => {
+    expect(shouldEnterSwimming(SWIM_ENTER_DEPTH + 0.01, WATER_Y - 1.01, WATER_Y)).toBe(true);
+    expect(shouldEnterSwimming(SWIM_ENTER_DEPTH, WATER_Y - 2, WATER_Y)).toBe(false);
+    expect(shouldEnterSwimming(2, WATER_Y - 0.9, WATER_Y)).toBe(false);
+    expect(shouldExitSwimming(SWIM_EXIT_DEPTH, WATER_Y - 2)).toBe(true);
+    expect(shouldExitSwimming(2, WATER_Y - SWIM_EXIT_DEPTH)).toBe(true);
+    expect(shouldExitSwimming(2, WATER_Y - SWIM_EXIT_DEPTH - 0.01)).toBe(false);
   });
 });
