@@ -19,9 +19,10 @@ function scenarioFromUrl(): ScenarioId | null {
   return id === 'stairs' || id === 'swim' || id === 'combat' || id === 'parachute' ? id : 'combat';
 }
 
-function showScenarioPanel(id: ScenarioId): void {
+function showScenarioPanel(id: ScenarioId, game: Game): void {
   const panel = document.createElement('aside');
   panel.id = 'test-scenario-panel';
+  panel.dataset.tacticalCoverCount = String(game.world.tacticalCoverCount);
   panel.innerHTML = `<strong>TEST / ${id.toUpperCase()}</strong><span>${SCENARIO_TEXT[id]}</span>`;
   document.body.appendChild(panel);
 }
@@ -175,5 +176,5 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'combat') setupCombat(game);
   else setupParachute(game);
   if (id === 'combat' && new URLSearchParams(window.location.search).get('ads') === '1') game.input.rmb = true;
-  showScenarioPanel(id);
+  showScenarioPanel(id, game);
 }

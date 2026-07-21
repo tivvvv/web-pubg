@@ -6,6 +6,7 @@ import { EnvironmentSystem, type EnvironmentSnapshot } from './environment';
 import { Sky } from './sky';
 import type { Collider, DestructibleLike, SurfaceKind } from './types';
 import { clamp, mulberry32, smoothstep } from './utils';
+import { TACTICAL_ROUTES, type TacticalCoverKind } from './tactics';
 
 export const WORLD_SIZE = 700;
 export const WORLD_HALF = 350;
@@ -54,6 +55,8 @@ export class World {
   readonly buildings = new Buildings();
   readonly bushes: { x: number; z: number; r: number }[] = []; // 灌木足迹(隐蔽判定)
   readonly environment: EnvironmentSystem;
+  readonly tacticalRoutes = TACTICAL_ROUTES;
+  tacticalCoverCount = 0;
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -762,6 +765,7 @@ export class World {
     this.addScenicLandmarks(scene);
     this.addEnvironmentProps(scene);
     this.addRegionalTacticalProps(scene);
+    this.addTacticalRouteLanes(scene);
     this.addShoreDetails(scene);
 
     // ---- 双桥(木板面+护栏+桥墩, 可走平台) ----
@@ -1238,6 +1242,74 @@ export class World {
     for (const [x, z, a] of [[176, -236, 0.25], [205, -250, -0.2], [232, -218, 0.4], [184, -198, -0.3]] as const) {
       box(x, z, 1.5, 1.2, 1.45, mats.wood, a);
       box(x + 1.3, z + 0.7, 1.05, 0.82, 1.0, mats.metal, -a);
+    }
+  }
+
+  private addTacticalRouteLanes(scene: THREE.Scene): void {
+    const mats: Record<TacticalCoverKind, THREE.MeshStandardMaterial> = {
+      barrier: new THREE.MeshStandardMaterial({ color: 0x70736f, roughness: 0.96 }),
+      crate: new THREE.MeshStandardMaterial({ color: 0x4f6066, roughness: 0.76, metalness: 0.2 }),
+      hay: new THREE.MeshStandardMaterial({ color: 0xbfa24e, roughness: 1 }),
+      logs: new THREE.MeshStandardMaterial({ color: 0x76593d, roughness: 0.98 }),
+      breastwork: new THREE.MeshStandardMaterial({ color: 0x93815c, roughness: 1 }),
+    };
+    const sizeOf = (kind: TacticalCoverKind, index: number): readonly [number, number, number] => {
+      if (kind === 'crate') return index % 2 === 0 ? [1.65, 1.35, 1.55] : [2.5, 0.82, 0.72];
+      if (kind === 'hay') return index % 2 === 0 ? [1.7, 1.25, 1.5] : [3.2, 0.78, 0.7];
+      if (kind === 'logs') return [3.8, 0.82, 0.84];
+      if (kind === 'breastwork') return [4.1, 0.82, 0.72];
+      return [4.0, 0.86, 0.68];
+    };
+    for (const route of TACTICAL_ROUTES) {
+      for (let i = 0; i < route.points.length; i++) {
+        const point = route.points[i] as readonly [number, number];
+        const prev = route.points[Math.max(0, i - 1)] as readonly [number, number];
+        const next = route.points[Math.min(route.points.length - 1, i + 1)] as readonly [number, number];
+        const [w, h, d] = sizeOf(route.cover, i);
+        const yaw = Math.atan2(next[1] - prev[1], next[0] - prev[0]) + Math.PI / 2;
+        const radius = Math.hypot(w, d) * 0.5;
+        let x = point[0];
+        let z = point[1];
+        let y = this.getHeight(x, z);
+        let placed = false;
+        // 建筑和随机环境物可能占据设计节点, 在 6m 内做确定性螺旋偏移,
+        // 保住掩体链密度的同时不把物件塞进房屋或树干。
+        for (let attempt = 0; attempt < 19; attempt++) {
+          const ring = attempt === 0 ? 0 : 2 + Math.floor((attempt - 1) / 6) * 2;
+          const angle = attempt * 2.399963 + i * 0.71;
+          const tx = point[0] + Math.cos(angle) * ring;
+          const tz = point[1] + Math.sin(angle) * ring;
+          const ty = this.getHeight(tx, tz);
+          if (ty < WATER_Y + 0.2 || ty > 16 || this.slopeAt(tx, tz) > 0.7) continue;
+          if (this.inPlot(tx, tz, radius + 0.45) || !this.pointFree(tx, tz, radius + 0.25, WATER_Y, 17)) continue;
+          x = tx;
+          z = tz;
+          y = ty;
+          placed = true;
+          break;
+        }
+        if (!placed) continue;
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats[route.cover]);
+        mesh.position.set(x, y + h / 2, z);
+        mesh.rotation.y = yaw;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData.tacticalRoute = route.id;
+        scene.add(mesh);
+        const cw = Math.abs(Math.cos(yaw)) * w + Math.abs(Math.sin(yaw)) * d;
+        const cd = Math.abs(Math.sin(yaw)) * w + Math.abs(Math.cos(yaw)) * d;
+        this.addCollider({
+          kind: 'aabb',
+          minX: x - cw / 2,
+          minY: y,
+          minZ: z - cd / 2,
+          maxX: x + cw / 2,
+          maxY: y + h,
+          maxZ: z + cd / 2,
+          tag: 'wall',
+        });
+        this.tacticalCoverCount++;
+      }
     }
   }
 
