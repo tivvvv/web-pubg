@@ -66,12 +66,12 @@ export class Input {
       this.rmb = false;
     });
     this.listen(document, 'mousemove', (e: MouseEvent) => {
-      if (!this.locked) return;
+      if (!this.locked && !this.testMode) return;
       this.dx += e.movementX;
       this.dy += e.movementY;
     });
     this.listen(document, 'mousedown', (e: MouseEvent) => {
-      if (!this.locked) return;
+      if (!this.locked && !this.testMode) return;
       if (e.button === 0) {
         this.lmb = true;
         this.firePressed = true;

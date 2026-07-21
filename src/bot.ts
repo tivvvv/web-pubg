@@ -21,6 +21,7 @@ const BOT_CANOPIES = [0x7a8a6a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a, 0x8a6e62
 
 export class BotController {
   readonly char: Character;
+  trainingIdle = false; // 固定测试场景专用, 普通对局始终为 false
   private state: 'wander' | 'engage' = 'wander';
   private target: Character | null = null;
   private scanT: number;
@@ -86,6 +87,11 @@ export class BotController {
         const g = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y);
         if (c.pos.y <= g) this.finishDescent(g);
       }
+      return;
+    }
+    if (this.trainingIdle) {
+      c.speed2d = 0;
+      c.grounded = true;
       return;
     }
     // 舱内等待: 跟随飞机(隐藏), 到达出舱里程跳伞
