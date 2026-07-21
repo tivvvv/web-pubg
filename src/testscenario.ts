@@ -8,7 +8,7 @@ import { MELEE, WEAPONS } from './weapons';
 import { riverZAt, WATER_Y } from './world';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'combat', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive',
+  'stairs', 'swim', 'combat', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -21,6 +21,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   deathcrate: '死亡盒回归: F 搜索盒子, 自动装备武器护具并遵守负重上限',
   bombardment: '轰炸区回归: 检查预警边界和小地图, 使用 phase=active 检查落弹',
   revive: '救援回归: F 救援倒地队友, 检查 8 秒读条和站立恢复',
+  maptour: '地图巡查: 使用 region=区域 id 依次检查六区主地标, 补给点和转移路线',
 };
 
 export function parseScenarioId(value: string | null): ScenarioId {
@@ -38,6 +39,17 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.id = 'test-scenario-panel';
   panel.dataset.scenario = id;
   panel.dataset.tacticalCoverCount = String(game.world.tacticalCoverCount);
+  panel.dataset.mapSiteCount = String(game.world.mapSites.length);
+  panel.dataset.mapLootSpotCount = String(game.world.mapLootSpots.length);
+  if (id === 'maptour') {
+    const requested = new URLSearchParams(window.location.search).get('region');
+    const site = game.world.mapSites.find((candidate) => candidate.region === requested) ?? game.world.mapSites[0];
+    if (site) {
+      panel.dataset.mapSiteId = site.id;
+      panel.dataset.mapSiteX = site.resolvedX.toFixed(1);
+      panel.dataset.mapSiteZ = site.resolvedZ.toFixed(1);
+    }
+  }
   const player = game.playerCtl?.char;
   if (player) {
     const stats = game.world.collisionIndexStatsAt(player.pos.x, player.pos.z);
@@ -315,6 +327,47 @@ function setupParachute(game: Game): void {
   }
 }
 
+function setupMapTour(game: Game): void {
+  const requested = new URLSearchParams(window.location.search).get('region');
+  const site = game.world.mapSites.find((candidate) => candidate.region === requested) ?? game.world.mapSites[0];
+  if (!site) {
+    setGroundPlayer(game, -60, -20);
+    return;
+  }
+  let spawnX = site.resolvedX;
+  let spawnZ = site.resolvedZ + 12;
+  let found = false;
+  for (let ring = 16; ring <= 28 && !found; ring += 3) {
+    for (let step = 0; step < 16; step++) {
+      const angle = step / 16 * Math.PI * 2;
+      const x = site.resolvedX + Math.cos(angle) * ring;
+      const z = site.resolvedZ + Math.sin(angle) * ring;
+      if (!game.world.pointFree(x, z, 0.65, WATER_Y + 0.2, 17)) continue;
+      const cameraX = x + Math.cos(angle) * 5.5;
+      const cameraZ = z + Math.sin(angle) * 5.5;
+      if (!game.world.pointFree(cameraX, cameraZ, 0.5, WATER_Y + 0.2, 17)) continue;
+      let viewClear = true;
+      for (const fraction of [0.2, 0.38, 0.55, 0.65]) {
+        const probeX = x + (site.resolvedX - x) * fraction;
+        const probeZ = z + (site.resolvedZ - z) * fraction;
+        if (game.world.pointFree(probeX, probeZ, 0.32, WATER_Y + 0.2, 17)) continue;
+        viewClear = false;
+        break;
+      }
+      if (!viewClear) continue;
+      spawnX = x;
+      spawnZ = z;
+      found = true;
+      break;
+    }
+  }
+  setGroundPlayer(game, spawnX, spawnZ);
+  const player = game.playerCtl;
+  if (!player) return;
+  player.yaw = Math.atan2(site.resolvedX - spawnX, site.resolvedZ - spawnZ);
+  player.pitch = 0.04;
+}
+
 export function applyTestScenarioFromUrl(game: Game): void {
   const id = scenarioFromUrl();
   if (!id) return;
@@ -328,7 +381,8 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'vehicle') setupVehicle(game);
   else if (id === 'deathcrate') setupDeathCrate(game);
   else if (id === 'bombardment') setupBombardment(game);
-  else setupRevive(game);
+  else if (id === 'revive') setupRevive(game);
+  else setupMapTour(game);
   if (id === 'combat' && new URLSearchParams(window.location.search).get('ads') === '1') game.input.rmb = true;
   showScenarioPanel(id, game);
 }

@@ -976,6 +976,7 @@ export class Game {
   }
 
   private updateZoneDamage(dt: number): void {
+    if (!this.zoneArmed) return;
     this.zoneDmgT += dt;
     if (this.zoneDmgT >= 0.5) {
       this.zoneDmgT -= 0.5;
@@ -1942,7 +1943,12 @@ export class Game {
     this.hud.setZoneTint(outside && c.alive);
     this.hud.setBombardment(this.bombardment.hudText(), this.bombardment.state === 'active');
     const region = regionOrWilderness(c.pos.x, c.pos.z);
-    this.hud.setLocation(region.name, region.tier, region.feature);
+    const mapSite = this.world.mapSiteAt(c.pos.x, c.pos.z);
+    this.hud.setLocation(
+      mapSite ? `${region.name} · ${mapSite.name}` : region.name,
+      region.tier,
+      mapSite?.feature ?? region.feature,
+    );
 
     // 准星: 弧度→像素; 装配瞄具后按类型切换独立准镜。
     const sizeH = this.graphics.cssHeight();

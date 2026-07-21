@@ -8,6 +8,13 @@ import type { Collider, DestructibleLike, SurfaceKind } from './types';
 import { clamp, mulberry32, smoothstep } from './utils';
 import { TACTICAL_ROUTES, type TacticalCoverKind } from './tactics';
 import { SpatialPointGrid } from './spatialgrid';
+import {
+  MAP_CONTENT_SITES,
+  mapContentSiteAt,
+  type MapContentKind,
+  type ResolvedMapContentSite,
+} from './mapcontent';
+import { regionAt, type RegionId } from './regions';
 
 type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
 type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
@@ -46,11 +53,22 @@ export interface ScenicSite {
   r: number;
 }
 
+export interface MapLootSpot {
+  x: number;
+  y: number;
+  z: number;
+  premium: boolean;
+  region: RegionId;
+  siteId: string;
+}
+
 export const ROAD_PATHS: readonly (readonly [number, number])[][] = [
   [[-92, -96], [-66, -72], [-58, -20], [-52, 36], [-50, 66], [-50, 112], [-44, 164], [-40, 246]],
   [[-142, -26], [-98, -23], [-58, -20], [-8, -18], [42, -12], [98, -18], [152, -31], [212, -48]],
   [[178, -38], [194, -82], [203, -140], [205, -218]],
   [[-84, -20], [-136, -7], [-181, 9], [-228, 20]],
+  [[-58, -20], [-46, -68], [-30, -112], [-16, -158], [-8, -205]],
+  [[178, -38], [171, 18], [170, 64], [170, 112], [134, 160], [70, 190], [-40, 200]],
 ];
 
 export class World {
@@ -63,6 +81,8 @@ export class World {
   readonly bushes: { x: number; z: number; r: number }[] = []; // 灌木足迹(隐蔽判定)
   readonly environment: EnvironmentSystem;
   readonly tacticalRoutes = TACTICAL_ROUTES;
+  readonly mapSites: ResolvedMapContentSite[] = [];
+  readonly mapLootSpots: MapLootSpot[] = [];
   tacticalCoverCount = 0;
   maxTerrainH = 24;
 
@@ -88,6 +108,10 @@ export class World {
 
   get landmarks(): readonly ScenicSite[] {
     return this.scenicSites;
+  }
+
+  mapSiteAt(x: number, z: number): ResolvedMapContentSite | null {
+    return mapContentSiteAt(this.mapSites, x, z);
   }
 
   constructor(scene: THREE.Scene) {
@@ -799,6 +823,7 @@ export class World {
     this.addEnvironmentProps(scene);
     this.addRegionalTacticalProps(scene);
     this.addTacticalRouteLanes(scene);
+    this.addFinalMapContent(scene);
     this.addShoreDetails(scene);
 
     // ---- 双桥(木板面+护栏+桥墩, 可走平台) ----
@@ -1343,6 +1368,243 @@ export class World {
         });
         this.tacticalCoverCount++;
       }
+    }
+  }
+
+  // 地图最终收口内容使用两组实例网格, 六区增加内容但只增加固定 draw call.
+  private addFinalMapContent(scene: THREE.Scene): void {
+    interface BoxInstance {
+      x: number; y: number; z: number;
+      w: number; h: number; d: number;
+      yaw: number; color: number;
+    }
+    interface CylinderInstance {
+      x: number; y: number; z: number;
+      diameter: number; length: number;
+      axis: 'x' | 'y' | 'z'; color: number;
+    }
+    const boxes: BoxInstance[] = [];
+    const cylinders: CylinderInstance[] = [];
+    this.mapSites.length = 0;
+    this.mapLootSpots.length = 0;
+
+    const addBox = (
+      site: ResolvedMapContentSite,
+      lx: number, lz: number,
+      w: number, h: number, d: number,
+      color: number, yaw = 0, block = true, lift = 0,
+    ): void => {
+      const x = site.resolvedX + lx;
+      const z = site.resolvedZ + lz;
+      const ground = this.getHeight(x, z);
+      boxes.push({ x, y: ground + lift + h / 2, z, w, h, d, yaw, color });
+      if (!block) return;
+      const cw = Math.abs(Math.cos(yaw)) * w + Math.abs(Math.sin(yaw)) * d;
+      const cd = Math.abs(Math.sin(yaw)) * w + Math.abs(Math.cos(yaw)) * d;
+      this.addCollider({
+        kind: 'aabb', minX: x - cw / 2, minY: ground + lift, minZ: z - cd / 2,
+        maxX: x + cw / 2, maxY: ground + lift + h, maxZ: z + cd / 2, tag: 'wall',
+      });
+    };
+    const addCylinder = (
+      site: ResolvedMapContentSite,
+      lx: number, lz: number,
+      diameter: number, length: number,
+      color: number, axis: 'x' | 'y' | 'z' = 'y', block = false, lift = 0,
+    ): void => {
+      const x = site.resolvedX + lx;
+      const z = site.resolvedZ + lz;
+      const ground = this.getHeight(x, z);
+      const visibleHeight = axis === 'y' ? length : diameter;
+      cylinders.push({ x, y: ground + lift + visibleHeight / 2, z, diameter, length, axis, color });
+      if (block) {
+        if (axis === 'y') {
+          this.addCollider({
+            kind: 'cyl', x, z, r: diameter / 2, y0: ground + lift, y1: ground + lift + length, tag: 'rock',
+          });
+        } else {
+          const halfX = axis === 'x' ? length / 2 : diameter / 2;
+          const halfZ = axis === 'z' ? length / 2 : diameter / 2;
+          this.addCollider({
+            kind: 'aabb', minX: x - halfX, minY: ground + lift, minZ: z - halfZ,
+            maxX: x + halfX, maxY: ground + lift + diameter, maxZ: z + halfZ, tag: 'wall',
+          });
+        }
+      }
+    };
+
+    for (const def of MAP_CONTENT_SITES) {
+      const site = this.resolveMapContentSite(def);
+      if (!site) continue;
+      this.mapSites.push(site);
+      this.buildMapContentKit(site, addBox, addCylinder);
+    }
+
+    if (boxes.length > 0) {
+      const geometry = new THREE.BoxGeometry(1, 1, 1);
+      const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.03 });
+      const mesh = new THREE.InstancedMesh(geometry, material, boxes.length);
+      const matrix = new THREE.Matrix4();
+      const quaternion = new THREE.Quaternion();
+      const position = new THREE.Vector3();
+      const scale = new THREE.Vector3();
+      const color = new THREE.Color();
+      for (let i = 0; i < boxes.length; i++) {
+        const item = boxes[i] as BoxInstance;
+        position.set(item.x, item.y, item.z);
+        quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), item.yaw);
+        scale.set(item.w, item.h, item.d);
+        matrix.compose(position, quaternion, scale);
+        mesh.setMatrixAt(i, matrix);
+        mesh.setColorAt(i, color.setHex(item.color));
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      scene.add(mesh);
+    }
+
+    if (cylinders.length > 0) {
+      const geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);
+      const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86, metalness: 0.08 });
+      const mesh = new THREE.InstancedMesh(geometry, material, cylinders.length);
+      const matrix = new THREE.Matrix4();
+      const quaternion = new THREE.Quaternion();
+      const position = new THREE.Vector3();
+      const scale = new THREE.Vector3();
+      const color = new THREE.Color();
+      for (let i = 0; i < cylinders.length; i++) {
+        const item = cylinders[i] as CylinderInstance;
+        position.set(item.x, item.y, item.z);
+        quaternion.identity();
+        if (item.axis === 'x') quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+        else if (item.axis === 'z') quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+        scale.set(item.diameter, item.length, item.diameter);
+        matrix.compose(position, quaternion, scale);
+        mesh.setMatrixAt(i, matrix);
+        mesh.setColorAt(i, color.setHex(item.color));
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      scene.add(mesh);
+    }
+
+    for (const site of this.mapSites) this.addMapContentLootSpots(site);
+  }
+
+  private resolveMapContentSite(def: (typeof MAP_CONTENT_SITES)[number]): ResolvedMapContentSite | null {
+    for (let attempt = 0; attempt < 180; attempt++) {
+      const ring = attempt === 0 ? 0 : 3.5 + Math.floor((attempt - 1) / 10) * 3;
+      const angle = attempt * 2.399963;
+      const x = def.x + Math.cos(angle) * ring;
+      const z = def.z + Math.sin(angle) * ring;
+      if (regionAt(x, z)?.id !== def.region) continue;
+      if (this.inPlot(x, z, 5.2) || this.inScenicSite(x, z, 3.5)) continue;
+      if (this.slopeAt(x, z) > 0.42 || !this.pointFree(x, z, 4.8, WATER_Y + 0.35, 16)) continue;
+      return { ...def, resolvedX: x, resolvedZ: z };
+    }
+    return null;
+  }
+
+  private buildMapContentKit(
+    site: ResolvedMapContentSite,
+    box: (
+      site: ResolvedMapContentSite,
+      lx: number, lz: number,
+      w: number, h: number, d: number,
+      color: number, yaw?: number, block?: boolean, lift?: number,
+    ) => void,
+    cylinder: (
+      site: ResolvedMapContentSite,
+      lx: number, lz: number,
+      diameter: number, length: number,
+      color: number, axis?: 'x' | 'y' | 'z', block?: boolean, lift?: number,
+    ) => void,
+  ): void {
+    const wood = 0x765437;
+    const woodDark = 0x493728;
+    const metal = 0x55636a;
+    const canvas = 0xd0b774;
+    const red = 0x9e493d;
+    const blue = 0x486d82;
+    const concrete = 0x858780;
+    const kit = site.kind as MapContentKind;
+
+    if (kit === 'market') {
+      for (const x of [-2.6, 2.6]) {
+        box(site, x, 0, 2.2, 0.82, 1.25, wood, 0, true);
+        box(site, x, 0, 2.8, 0.16, 2.2, x < 0 ? red : canvas, 0, false, 2.15);
+        for (const z of [-0.9, 0.9]) cylinder(site, x - 1, z, 0.12, 2.25, woodDark);
+      }
+      box(site, 0, -3.5, 5.6, 0.75, 0.55, concrete, 0, true);
+      box(site, 0, -3.5, 1.9, 0.3, 0.62, red, 0, false, 0.76);
+    } else if (kit === 'freight') {
+      box(site, -2.4, -1.6, 5.2, 2.15, 2.05, blue, 0.12, true);
+      box(site, 2.5, 1.7, 5.2, 2.15, 2.05, red, -0.1, true);
+      for (const x of [-3.4, 3.4]) cylinder(site, x, -4.2, 0.22, 3.3, metal);
+      box(site, 0, -4.2, 7, 0.28, 0.35, metal, 0, false, 3.05);
+      box(site, 0, -4.15, 2.8, 1.05, 0.22, canvas, 0, false, 3.3);
+    } else if (kit === 'grain') {
+      cylinder(site, -2.2, 0, 3.2, 6.4, 0xb5aa8b, 'y', true);
+      cylinder(site, -2.2, 0, 2.45, 1.0, 0x8f6f4b, 'y', false, 6.2);
+      box(site, 2.5, 0.4, 3.6, 2.5, 3.2, wood, 0.08, true);
+      box(site, 2.5, 0.4, 4.1, 0.24, 3.7, red, 0.08, false, 2.48);
+      cylinder(site, 0.6, -3.3, 0.2, 5.2, metal);
+      box(site, 0.6, -3.3, 2.8, 0.15, 0.22, canvas, 0, false, 4.55);
+    } else if (kit === 'lumber') {
+      for (let row = 0; row < 3; row++) {
+        for (let level = 0; level < 2; level++) {
+          cylinder(site, -2.8 + level * 0.62, -1.6 + row * 1.5, 0.5, 4.2, wood, 'x', true);
+        }
+      }
+      box(site, 2.2, 0.4, 3.1, 0.9, 1.4, woodDark, 0.1, true);
+      box(site, 2.2, 0.4, 3.6, 0.16, 2.4, 0x687052, 0.1, false, 0.92);
+      box(site, 0.2, 4.0, 5.4, 0.78, 0.72, wood, 0.05, true);
+    } else if (kit === 'relay') {
+      cylinder(site, 0, 0, 0.28, 10.5, metal, 'y', true);
+      box(site, 0, 0, 5.8, 0.16, 0.16, metal, 0, false, 4.2);
+      box(site, 0, 0, 3.8, 0.16, 0.16, metal, Math.PI / 2, false, 7.3);
+      box(site, 0, 0, 0.7, 0.7, 0.18, red, 0, false, 9.55);
+      box(site, -2.4, 2.8, 2.4, 1.65, 1.8, concrete, 0.12, true);
+      box(site, 2.5, 2.5, 2.2, 1.2, 1.7, metal, -0.08, true);
+      for (const x of [-3.6, 3.6]) box(site, x, -3.2, 3.2, 0.75, 0.62, concrete, x < 0 ? 0.25 : -0.25, true);
+    } else {
+      for (const x of [-2.5, 2.5]) {
+        box(site, x, 0, 3.1, 0.86, 1.2, wood, 0, true);
+        box(site, x, 0, 3.5, 0.18, 2.4, x < 0 ? blue : canvas, 0, false, 2.35);
+        for (const z of [-0.95, 0.95]) cylinder(site, x - 1.35, z, 0.14, 2.5, woodDark);
+      }
+      box(site, 0, -3.6, 4.8, 1.0, 1.1, metal, 0.08, true);
+      cylinder(site, 0, 3.8, 0.22, 5.8, metal);
+      box(site, 0, 3.8, 1.6, 0.42, 0.35, red, 0, false, 5.15);
+    }
+  }
+
+  private addMapContentLootSpots(site: ResolvedMapContentSite): void {
+    const maxSpots = 4;
+    for (let i = 0; i < maxSpots; i++) {
+      let found = false;
+      for (let step = 0; step < 4; step++) {
+        const angle = i / maxSpots * Math.PI * 2 + 0.55 + step * 0.38;
+        const distance = 6.2 + step * 1.25;
+        const x = site.resolvedX + Math.cos(angle) * distance;
+        const z = site.resolvedZ + Math.sin(angle) * distance;
+        if (!this.pointFree(x, z, 0.42, WATER_Y + 0.25, 17)) continue;
+        this.mapLootSpots.push({
+          x, y: this.getHeight(x, z), z,
+          premium: i < site.premiumSpots,
+          region: site.region,
+          siteId: site.id,
+        });
+        found = true;
+        break;
+      }
+      if (!found) continue;
     }
   }
 

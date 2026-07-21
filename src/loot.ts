@@ -255,6 +255,17 @@ export class LootManager {
   populate(world: World): void {
     this.clear();
     let count = 0;
+    // 六区主地标使用稳定室外锚点, 确保地标不只是装饰而是真正的争夺目标.
+    for (const s of world.mapLootSpots) {
+      if (count >= LOOT_CAP) break;
+      const region = regionOrWilderness(s.x, s.z);
+      const kind = this.rollKind(s.premium ? 'premium' : 'indoor', region.tier, region.profile);
+      const item = this.spawn(kind, s.x, s.y, s.z);
+      if (!item) break;
+      item.outdoor = true;
+      count++;
+      count += this.pairAmmo(world, kind, s.x, s.y, s.z, 0.82, true);
+    }
     // 室内点位(一层普通表, 二层 premium 高级枪表)
     for (const s of world.buildings.lootSpots) {
       if (count >= LOOT_CAP) break;

@@ -88,7 +88,26 @@ export class Minimap {
       const py = ((r.z + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
       bctx.fillStyle = r.tier === 'high' ? 'rgba(255,220,194,0.82)' : r.tier === 'medium' ? 'rgba(255,239,174,0.72)' : 'rgba(235,244,229,0.58)';
       const tier = r.tier === 'high' ? '高' : r.tier === 'medium' ? '中' : '低';
-      bctx.fillText(`${r.name} ${tier}`, px, py);
+      bctx.fillText(`${r.name} ${tier}`, px, py - 3.2);
+    }
+    // 六区主地标使用菱形和副标签, 与资源区名称错层显示.
+    bctx.font = 'bold 5.2px sans-serif';
+    bctx.strokeStyle = 'rgba(44,38,31,0.92)';
+    bctx.lineWidth = 0.65;
+    for (const site of world.mapSites) {
+      const px = ((site.resolvedX + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      const py = ((site.resolvedZ + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      bctx.fillStyle = 'rgba(255,211,104,0.94)';
+      bctx.beginPath();
+      bctx.moveTo(px, py - 2.1);
+      bctx.lineTo(px + 2.1, py);
+      bctx.lineTo(px, py + 2.1);
+      bctx.lineTo(px - 2.1, py);
+      bctx.closePath();
+      bctx.fill();
+      bctx.stroke();
+      bctx.fillStyle = 'rgba(255,246,211,0.82)';
+      bctx.fillText(site.name, px, py + 6.2);
     }
     // 房屋地块标记(含 2m 安全边, 画内圈 footprint)
     bctx.fillStyle = 'rgba(122,110,94,0.95)';
