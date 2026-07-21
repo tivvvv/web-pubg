@@ -28,6 +28,9 @@ npm run build
 - `/?test=1&scenario=deathcrate`: 死亡盒搜索, 自动装备和负重
 - `/?test=1&scenario=bombardment`: 轰炸区预警, 追加 `&phase=active` 检查落弹
 - `/?test=1&scenario=revive`: 队友击倒, 救援读条和恢复站姿
+- `/?test=1&scenario=zone`: 圈外持续伤害和进圈后停止伤害
+- `/?test=1&scenario=endgame`: 最后一名敌人淘汰和胜利结算
+- `/?test=1&scenario=defeat`: 玩家淘汰, 失败结算和重新开始
 - `/?test=1&scenario=maptour&region=stonegate`: 地图主地标, 区域资源和转移路线巡查
 
 普通对局仍使用 `/` 进入。

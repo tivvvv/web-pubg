@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { findSwimBank } from '../src/botnav';
-import { shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH } from '../src/character';
+import {
+  shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
+} from '../src/character';
 import { WATER_Y } from '../src/world';
 
 describe('游泳上岸点搜索', () => {
@@ -32,5 +34,9 @@ describe('游泳上岸点搜索', () => {
     expect(shouldExitSwimming(SWIM_EXIT_DEPTH, WATER_Y - 2)).toBe(true);
     expect(shouldExitSwimming(2, WATER_Y - SWIM_EXIT_DEPTH)).toBe(true);
     expect(shouldExitSwimming(2, WATER_Y - SWIM_EXIT_DEPTH - 0.01)).toBe(false);
+  });
+
+  it('加速游泳速度明显高于普通划水', () => {
+    expect(SWIM_SPRINT_SPEED).toBeGreaterThanOrEqual(SWIM_SPEED * 1.8);
   });
 });

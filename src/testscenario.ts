@@ -8,7 +8,7 @@ import { MELEE, WEAPONS } from './weapons';
 import { riverZAt, WATER_Y } from './world';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'combat', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'maptour',
+  'stairs', 'swim', 'combat', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -21,6 +21,9 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   deathcrate: '死亡盒回归: F 搜索盒子, 自动装备武器护具并遵守负重上限',
   bombardment: '轰炸区回归: 检查预警边界和小地图, 使用 phase=active 检查落弹',
   revive: '救援回归: F 救援倒地队友, 检查 8 秒读条和站立恢复',
+  zone: '毒圈回归: 圈外持续受伤, 进入圈内后立即停止伤害',
+  endgame: '结算回归: 淘汰最后一名敌人后进入胜利界面',
+  defeat: '失败回归: 玩家被淘汰后进入失败界面并可重新开始',
   maptour: '地图巡查: 使用 region=区域 id 依次检查六区主地标, 补给点和转移路线',
 };
 
@@ -198,7 +201,6 @@ function setupCombat(game: Game): void {
   c.ammo.rifle = 180;
   c.curSlot = 0;
   player.yaw = Math.atan2(targetX - playerX, targetZ - playerZ);
-  player.pitch = 0.02;
 
   const target = game.bots[0];
   if (!target) return;
@@ -210,6 +212,10 @@ function setupCombat(game: Game): void {
   target.char.pos.set(targetX, game.world.groundHeight(targetX, targetZ, 30), targetZ);
   target.char.groundH = target.char.pos.y;
   target.char.grounded = true;
+  player.pitch = Math.atan2(
+    target.char.pos.y + target.char.chestHeight() - (c.pos.y + c.eyeHeight()),
+    Math.hypot(targetX - playerX, targetZ - playerZ),
+  );
 }
 
 function setupVehicle(game: Game): void {
@@ -327,6 +333,67 @@ function setupParachute(game: Game): void {
   }
 }
 
+function setupZone(game: Game): void {
+  const lane = testLane(game);
+  const centerX = lane[0];
+  const centerZ = lane[1];
+  const radius = 8;
+  game.zone.center.set(centerX, centerZ);
+  game.zone.nextCenter.set(centerX, centerZ);
+  game.zone.radius = radius;
+  game.zone.nextRadius = radius;
+  game.zoneArmed = true;
+  game.zone.update(0);
+  setGroundPlayer(game, centerX + radius + 2, centerZ);
+  const player = game.playerCtl;
+  if (player) {
+    player.yaw = -Math.PI / 2;
+    player.pitch = 0.04;
+  }
+}
+
+function setupEndgame(game: Game): void {
+  const lane = testLane(game);
+  const [playerX, playerZ, targetX, targetZ] = lane;
+  setGroundPlayer(game, playerX, playerZ);
+  const player = game.playerCtl;
+  if (!player) return;
+  player.char.guns[0] = {
+    def: WEAPONS.dmr,
+    mag: 20,
+    att: { ...emptyAttachments(), sight: 'scope2', mag: 'extmag', muzzle: 'comp' },
+  };
+  player.char.ammo.rifle = 90;
+  player.char.curSlot = 0;
+  player.yaw = Math.atan2(targetX - playerX, targetZ - playerZ);
+  for (const bot of game.bots) {
+    bot.char.alive = false;
+    bot.char.group.visible = false;
+  }
+  const target = game.bots[0];
+  if (!target) return;
+  target.trainingIdle = true;
+  target.char.alive = true;
+  target.char.hp = 10;
+  target.char.airPose = null;
+  target.char.group.visible = true;
+  target.char.pos.set(targetX, game.world.groundHeight(targetX, targetZ, 30), targetZ);
+  target.char.groundH = target.char.pos.y;
+  target.char.grounded = true;
+  player.pitch = Math.atan2(
+    target.char.pos.y + target.char.chestHeight() - (player.char.pos.y + player.char.eyeHeight()),
+    Math.hypot(targetX - playerX, targetZ - playerZ),
+  );
+}
+
+function setupDefeat(game: Game): void {
+  const lane = testLane(game);
+  setGroundPlayer(game, lane[0], lane[1]);
+  const player = game.playerCtl;
+  if (!player) return;
+  game.damageChar(player.char, 200, false, null, '测试伤害', true);
+}
+
 function setupMapTour(game: Game): void {
   const requested = new URLSearchParams(window.location.search).get('region');
   const site = game.world.mapSites.find((candidate) => candidate.region === requested) ?? game.world.mapSites[0];
@@ -382,7 +449,11 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'deathcrate') setupDeathCrate(game);
   else if (id === 'bombardment') setupBombardment(game);
   else if (id === 'revive') setupRevive(game);
+  else if (id === 'zone') setupZone(game);
+  else if (id === 'endgame') setupEndgame(game);
+  else if (id === 'defeat') setupDefeat(game);
   else setupMapTour(game);
   if (id === 'combat' && new URLSearchParams(window.location.search).get('ads') === '1') game.input.rmb = true;
+  if (id === 'endgame') game.input.rmb = true;
   showScenarioPanel(id, game);
 }

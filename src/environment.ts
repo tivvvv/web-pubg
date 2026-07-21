@@ -84,7 +84,7 @@ function copyProfile(p: WeatherProfile): WeatherProfile {
   return { ...p };
 }
 
-function phaseAt(hour: number): string {
+export function phaseAt(hour: number): string {
   if (hour >= 5 && hour < 8) return '清晨';
   if (hour >= 8 && hour < 11) return '上午';
   if (hour >= 11 && hour < 14) return '正午';
@@ -94,7 +94,7 @@ function phaseAt(hour: number): string {
   return '深夜';
 }
 
-function timeText(hour: number): string {
+export function timeText(hour: number): string {
   const h = Math.floor(hour) % 24;
   const m = Math.floor((hour - Math.floor(hour)) * 60) % 60;
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;

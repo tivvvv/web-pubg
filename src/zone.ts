@@ -2,13 +2,13 @@
 import * as THREE from 'three';
 import { lerp, rand } from './utils';
 
-interface Phase {
+export interface ZonePhase {
   wait: number;   // 等待秒数
   shrink: number; // 缩圈秒数
   radius: number; // 缩到的半径
 }
 
-const PHASES: Phase[] = [
+export const ZONE_PHASES: readonly ZonePhase[] = [
   { wait: 22, shrink: 26, radius: 195 },
   { wait: 20, shrink: 24, radius: 120 },
   { wait: 18, shrink: 22, radius: 72 },
@@ -28,7 +28,7 @@ export class Zone {
   nextRadius = 310;
   phase = 0;              // 已完成缩圈次数
   state: ZoneState = 'wait';
-  timer = PHASES[0]?.wait ?? 22;
+  timer = ZONE_PHASES[0]?.wait ?? 22;
   justBeganShrink = false;
 
   private startCenter = new THREE.Vector2();
@@ -93,13 +93,13 @@ export class Zone {
     this.radius = 310;
     this.phase = 0;
     this.state = 'wait';
-    this.timer = (PHASES[0] as Phase).wait;
+    this.timer = (ZONE_PHASES[0] as ZonePhase).wait;
     this.pickNext();
     this.syncMesh();
   }
 
   private pickNext(): void {
-    const p = PHASES[this.phase] as Phase | undefined;
+    const p = ZONE_PHASES[this.phase] as ZonePhase | undefined;
     if (!p) {
       this.nextCenter.copy(this.center);
       this.nextRadius = this.radius;
@@ -137,41 +137,46 @@ export class Zone {
 
   update(dt: number): void {
     this.justBeganShrink = false;
-    this.timeU.value += dt;
+    const elapsed = Math.max(0, dt);
+    this.timeU.value += elapsed;
     if (this.state === 'done') return;
-    this.timer -= dt;
-    const p = PHASES[this.phase] as Phase | undefined;
-    if (!p) {
-      this.state = 'done';
-      return;
-    }
-    if (this.state === 'wait') {
-      if (this.timer <= 0) {
+    let remaining = elapsed;
+    let guard = 0;
+    while (remaining > 0 && this.state !== 'done' && guard++ < ZONE_PHASES.length * 2 + 1) {
+      const p = ZONE_PHASES[this.phase] as ZonePhase | undefined;
+      if (!p) {
+        this.state = 'done';
+        break;
+      }
+      const step = Math.min(remaining, Math.max(0, this.timer));
+      this.timer -= step;
+      remaining -= step;
+      if (this.state === 'wait') {
+        if (this.timer > 0) break;
         this.state = 'shrink';
         this.timer = p.shrink;
         this.startCenter.copy(this.center);
         this.startRadius = this.radius;
         this.justBeganShrink = true;
+        continue;
       }
-    } else {
       const t = 1 - Math.max(0, this.timer / p.shrink);
       this.center.set(
         lerp(this.startCenter.x, this.nextCenter.x, t),
         lerp(this.startCenter.y, this.nextCenter.y, t),
       );
       this.radius = lerp(this.startRadius, this.nextRadius, t);
-      if (this.timer <= 0) {
-        this.center.copy(this.nextCenter);
-        this.radius = this.nextRadius;
-        this.phase++;
-        const np = PHASES[this.phase] as Phase | undefined;
-        if (np) {
-          this.state = 'wait';
-          this.timer = np.wait;
-          this.pickNext();
-        } else {
-          this.state = 'done';
-        }
+      if (this.timer > 0) break;
+      this.center.copy(this.nextCenter);
+      this.radius = this.nextRadius;
+      this.phase++;
+      const np = ZONE_PHASES[this.phase] as ZonePhase | undefined;
+      if (np) {
+        this.state = 'wait';
+        this.timer = np.wait;
+        this.pickNext();
+      } else {
+        this.state = 'done';
       }
     }
     this.syncMesh();
