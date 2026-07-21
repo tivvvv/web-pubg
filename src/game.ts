@@ -70,22 +70,24 @@ import { BombardmentSystem } from './bombardment';
 import type { Destructible } from './buildings';
 import { Character, BOT_SHIRTS, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH } from './character';
 import { Effects } from './effects';
+import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathcrate';
 import { Hud, type BackpackData } from './hud';
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
 import { Input, type Action } from './input';
-import { LootManager, isWeaponKind, type LootItem } from './loot';
+import { LootManager, isGunKind, isMeleeKind, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
 import { GrenadeManager } from './throwables';
 import { TeammateController } from './teammate';
 import { VEHICLE_SPEC, VehicleManager, type Vehicle } from './vehicles';
-import type { AmmoType, DestructibleLike, GameStats, LootKind, ThrowableId } from './types';
+import type { AmmoType, DestructibleLike, GameStats, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
-import { AMMO_BOX, AMMO_LOOT_KIND, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan, makeShotResult, pelletFalloff } from './weapons';
+import { AMMO_BOX, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan, makeShotResult, pelletFalloff } from './weapons';
 import { MUZZLE_SCALE } from './weaponmodels';
 import { buildTransportPlane } from './planemodel';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
+import { regionOrWilderness } from './regions';
 
 const TOTAL = 24;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
@@ -97,6 +99,7 @@ export class Game {
   readonly zone: Zone;
   readonly bombardment: BombardmentSystem;
   readonly loot: LootManager;
+  readonly deathCrates: DeathCrateManager;
   readonly airdrop: AirdropManager;
   readonly knock: KnockSys;
   readonly grenades: GrenadeManager;
@@ -112,6 +115,7 @@ export class Game {
   promptDoor: Destructible | null = null; // 当前可开/关的门提示(优先于武器当看得更正)
   promptVehicle: Vehicle | null = null;   // 当前可驾驶载具提示
   promptCrate: Crate | null = null;       // 当前可开启的空投提示
+  promptDeathCrate: DeathCrate | null = null; // 当前可搜索的死亡盒
   promptAlly: Character | null = null;    // 当前可救援的倒地队友提示
   backpackOpen = false;
   viewFpp = false;                     // 第一人称(V 切换, 会话内跨对局记忆)
@@ -237,6 +241,7 @@ export class Game {
     this.zone = new Zone(this.scene);
     this.bombardment = new BombardmentSystem(this.scene);
     this.loot = new LootManager(this.scene);
+    this.deathCrates = new DeathCrateManager(this.scene);
     this.airdrop = new AirdropManager(this, this.scene);
     this.knock = new KnockSys(this);
     this.grenades = new GrenadeManager(this.scene);
@@ -687,6 +692,7 @@ export class Game {
     this.airdrop.reset(); // 空投清零(飞机/箱子/烟柱/碰撞)
     this.shakeAmp = 0;
     this.loot.populate(this.world);
+    this.deathCrates.clear();
     this.vehicles.populate(this.world);
     this.mapVehicles = this.vehicles.list.map(() => ({ x: 0, z: 0, dead: false }));
     this.zone.reset();
@@ -708,6 +714,7 @@ export class Game {
     this.promptItem = null;
     this.promptDoor = null;
     this.promptCrate = null;
+    this.promptDeathCrate = null;
     this.promptAlly = null;
     this.hud.setKnocked(false);
     this.backpackOpen = false;
@@ -785,10 +792,10 @@ export class Game {
 
   // 交互高亮: F 拾取菱形浮动标记 / 目标门脉冲描边
   private updateMarkers(): void {
-    if (this.promptItem) {
-      const gp = this.promptItem.group.position;
+    const marked = this.promptItem?.group.position ?? this.promptDeathCrate?.group.position;
+    if (marked) {
       this.lootMarker.visible = true;
-      this.lootMarker.position.set(gp.x, gp.y + 1.1 + Math.sin(this.now * 5) * 0.07, gp.z);
+      this.lootMarker.position.set(marked.x, marked.y + 1.1 + Math.sin(this.now * 5) * 0.07, marked.z);
       this.lootMarker.material.opacity = 0.75 + Math.sin(this.now * 6) * 0.25;
     } else {
       this.lootMarker.visible = false;
@@ -869,6 +876,7 @@ export class Game {
     this.updateBlobShadows();
     this.updateMarkers();
     this.loot.update(dt);
+    this.deathCrates.update(dt);
     this.effects.update(dt);
     this.grenades.update(dt, this);
     this.vehicles.update(dt, this);
@@ -1286,8 +1294,8 @@ export class Game {
     attacker.lastMeleeT = this.now;
     attacker.swingT = 1;
     attacker.swingSide *= -1; // 交替出拳
-    // 砍刀: 白色斩击弧(纯表现, 对象池)
-    if (m.id === 'knife') {
+    // 持械近战: 白色挥击弧(纯表现, 对象池)
+    if (m.id !== 'fists') {
       this.tmpEnd.set(
         attacker.pos.x + Math.sin(attacker.yaw) * 0.7,
         attacker.pos.y + 1.25,
@@ -1432,52 +1440,12 @@ export class Game {
     victim.stanceF = 0;
     const placement = this.aliveCount + 1;
 
-    // 掉落: 当前手持武器(保留弹匣), 否则随机物资
+    // 阵亡角色的全部物资集中保存到死亡盒，避免生成大量散落物。
     const gx = victim.pos.x;
     const gz = victim.pos.z;
-    const gy = this.world.getHeight(gx, gz);
-    const held = victim.heldGun();
-    if (held) {
-      this.loot.spawn(held.def.id, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5), held.mag, 0, held.att);
-    } else if (victim.melee.def.id === 'knife') {
-      this.loot.spawn('knife', gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
-    } else {
-      const kinds: LootKind[] = ['ammoRifle', 'ammoSmg', 'ammoPistol', 'ammoSniper', 'ammoShotgun'];
-      const kind: LootKind = Math.random() < 0.4 ? 'bandage' : (kinds[Math.floor(Math.random() * kinds.length)] as LootKind);
-      this.loot.spawn(kind, gx + rand(-0.5, 0.5), gy, gz + rand(-0.5, 0.5));
-    }
-    // 弹药储备按类型成包掉落
-    for (const t of ['pistol', 'rifle', 'smg', 'sniper', 'shotgun'] as const) {
-      const n = victim.ammo[t];
-      if (n > 0) this.loot.spawn(AMMO_LOOT_KIND[t], gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7), -1, n);
-    }
-    // 恢复品掉落(成叠, ammo 字段携带数量)
-    for (const id of HEAL_ORDER) {
-      const n = victim.heals[id];
-      if (n > 0) this.loot.spawn(id, gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7), -1, n);
-    }
-    // 投掷物掉落(成小叠)
-    for (const t of ['frag', 'smoke'] as const) {
-      const n = victim.throwables[t];
-      if (n > 0) {
-        this.loot.spawn(t, gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7), -1, n);
-      }
-    }
-    // 护具掉落(保留剩余耐久)
-    for (const kind of ['helmet', 'vest'] as const) {
-      const a = victim[kind];
-      if (a) {
-        this.loot.spawn(
-          armorLootKind(kind, a.level),
-          gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7),
-          -1, Math.max(1, Math.round(a.durability)),
-        );
-      }
-    }
-    // 背包掉落
-    if (victim.pack) {
-      this.loot.spawn(packLootKind(victim.pack.level), gx + rand(-0.7, 0.7), gy, gz + rand(-0.7, 0.7));
-    }
+    // 保留楼层/屋顶高度；水中阵亡时让盒子浮在水面，确保玩家能够接近搜索。
+    const gy = Math.max(this.world.groundHeight(gx, gz, victim.pos.y + 0.3), WATER_Y);
+    this.deathCrates.spawn(victim, gy);
 
     // 击杀信息(玩家金 / 队友绿 / 敌人白)
     const ns = (c: Character): string =>
@@ -1583,6 +1551,13 @@ export class Game {
       this.hud.setPickupPrompt(null);
       return;
     }
+    const deathCrate = this.promptDeathCrate;
+    if (deathCrate) {
+      this.lootDeathCrate(player.char, deathCrate);
+      this.promptDeathCrate = null;
+      this.hud.setPickupPrompt(null);
+      return;
+    }
     const ally = this.promptAlly;
     if (ally) {
       this.knock.startRevive(player.char, ally);
@@ -1598,6 +1573,20 @@ export class Game {
     else this.tryPickupWeapon(player.char, item);
     this.promptItem = null;
     this.hud.setPickupPrompt(null);
+  }
+
+  // F 搜索死亡盒: 自动装备更优物品并按当前负重拿取消耗品，拿不下的保留在盒内。
+  private lootDeathCrate(c: Character, crate: DeathCrate): void {
+    if (!crate.active) return;
+    const taken = autoLootDeathCrate(c, crate);
+    this.deathCrates.consumeIfEmpty(crate);
+    if (taken > 0) {
+      this.hud.toast(`已搜索 ${crate.owner} 的盒子`);
+      this.audio.pickup();
+      this.refreshBackpack();
+    } else {
+      this.hud.toast('盒子里没有可自动拾取的物资');
+    }
   }
 
   // F 拾取背包: 空槽直接装备; 已有则换下的旧包落地
@@ -1789,18 +1778,21 @@ export class Game {
   tryPickupWeapon(c: Character, item: LootItem): boolean {
     if (!item.active) return false;
     const kind = item.kind;
-    if (kind === 'knife') {
-      if (c.melee.def.id === 'knife') return false;
-      c.melee = { def: MELEE.knife };
+    if (isMeleeKind(kind)) {
+      if (c.melee.def.id === kind) return false;
+      if (c.melee.def.id !== 'fists') {
+        this.loot.spawn(c.melee.def.id, c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6));
+      }
+      c.melee = { def: MELEE[kind] };
       if (!c.hasGun()) c.curSlot = 3;
       this.loot.consume(item);
       if (c.isPlayer) {
-        this.hud.toast(`拾取 ${MELEE.knife.name}`);
+        this.hud.toast(`拾取 ${MELEE[kind].name}`);
         this.audio.pickup();
       }
       return true;
     }
-    if (!isWeaponKind(kind)) return false;
+    if (!isGunKind(kind)) return false;
 
     const def = WEAPONS[kind];
     // 目标栏位
@@ -1934,6 +1926,8 @@ export class Game {
     }
     this.hud.setZoneTint(outside && c.alive);
     this.hud.setBombardment(this.bombardment.hudText(), this.bombardment.state === 'active');
+    const region = regionOrWilderness(c.pos.x, c.pos.z);
+    this.hud.setLocation(region.name, region.tier, region.feature);
 
     // 准星: 弧度→像素; AWM 开镜时换全屏瞄准镜
     const sizeH = this.renderer.domElement.height / this.renderer.getPixelRatio();

@@ -17,10 +17,20 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     auto: true, magSize: 30, reloadTime: 2.0, spreadHip: 0.02, spreadAim: 0.0075,
     recoil: 0.0135, zoom: 1.35, tier: 3, ammo: 'rifle',
   },
+  akm: {
+    id: 'akm', name: 'AKM 突击步枪', damage: 27, headMult: 2, fireInterval: 0.115,
+    auto: true, magSize: 30, reloadTime: 2.15, spreadHip: 0.022, spreadAim: 0.008,
+    recoil: 0.018, zoom: 1.35, tier: 3.35, ammo: 'rifle',
+  },
   smg: {
     id: 'smg', name: 'UMP 冲锋枪', damage: 13, headMult: 2, fireInterval: 0.077,
     auto: true, magSize: 32, reloadTime: 1.7, spreadHip: 0.028, spreadAim: 0.013,
     recoil: 0.0085, zoom: 1.3, tier: 2, ammo: 'smg',
+  },
+  dmr: {
+    id: 'dmr', name: 'Mini14 精确射手步枪', damage: 39, headMult: 2, fireInterval: 0.19,
+    auto: false, magSize: 20, reloadTime: 2.2, spreadHip: 0.026, spreadAim: 0.003,
+    recoil: 0.024, zoom: 1.55, tier: 3.65, ammo: 'rifle', falloff: [90, 190, 0.72, 260],
   },
   sniper: {
     id: 'sniper', name: 'AWM 狙击枪', damage: 85, headMult: 2, fireInterval: 1.5,
@@ -49,6 +59,8 @@ export function pelletFalloff(def: WeaponDef, t: number): number {
 export const MELEE: Record<MeleeId, MeleeDef> = {
   fists: { id: 'fists', name: '拳头', damage: 15, range: 2.2, cooldown: 0.45 },
   knife: { id: 'knife', name: '砍刀', damage: 40, range: 2.4, cooldown: 0.6 },
+  pan: { id: 'pan', name: '平底锅', damage: 55, range: 2.25, cooldown: 0.75 },
+  crowbar: { id: 'crowbar', name: '撬棍', damage: 46, range: 2.55, cooldown: 0.62 },
 };
 
 // 投掷物定义(手雷伤害逻辑在 throwables.ts)

@@ -43,6 +43,10 @@ export class Hud {
   private envIcon = el('env-icon');
   private envTime = el('env-time');
   private envLabel = el('env-label');
+  private locationStatus = el('location-status');
+  private locationName = el('location-name');
+  private locationTier = el('location-tier');
+  private locationFeature = el('location-feature');
   private killfeed = el('killfeed');
   private crosshair = el('crosshair');
   private hitmarkerEl = el('hitmarker');
@@ -81,6 +85,7 @@ export class Hud {
   private healCountsKey = '';
   private environmentKey = '';
   private bombardmentKey = '';
+  private locationKey = '';
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
@@ -206,6 +211,16 @@ export class Hud {
     this.envTime.textContent = time;
     this.envLabel.textContent = `${phase} · ${label}`;
     this.environmentStatus.dataset.weather = weather;
+  }
+
+  setLocation(name: string, tier: 'low' | 'medium' | 'high', feature: string): void {
+    const key = `${name}|${tier}|${feature}`;
+    if (key === this.locationKey) return;
+    this.locationKey = key;
+    this.locationName.textContent = name;
+    this.locationTier.textContent = tier === 'high' ? '高资源区' : tier === 'medium' ? '中资源区' : '低资源区';
+    this.locationFeature.textContent = feature;
+    this.locationStatus.dataset.tier = tier;
   }
 
   setPickupPrompt(text: string | null): void {

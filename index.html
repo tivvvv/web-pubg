@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%23c8a23c'/><circle cx='8' cy='8' r='3' fill='%2314170f'/></svg>" />
     <title>绝地突围 - 网页大逃杀</title>
+    <style>
+      html { background: #0c0f0a; }
+      body { visibility: hidden; }
+      body.app-ready { visibility: visible; }
+    </style>
   </head>
   <body>
     <div id="game-container"></div>
@@ -24,6 +29,11 @@
         <span id="env-icon">☀︎</span>
         <span id="env-time">12:00</span>
         <span id="env-label">正午 · 晴朗</span>
+      </div>
+      <div id="location-status">
+        <span id="location-name">荒野</span>
+        <span id="location-tier">低资源区</span>
+        <span id="location-feature">补给稀疏</span>
       </div>
 
       <!-- 击杀信息流 -->
@@ -145,7 +155,7 @@
           <tr><td>Shift</td><td>疾跑</td><td>左键</td><td>射击 / 拳击</td></tr>
           <tr><td>Space</td><td>跳跃</td><td>右键(按住)</td><td>瞄准</td></tr>
           <tr><td>R</td><td>换弹</td><td>1/2/3/4</td><td>武器栏(4=近战)</td></tr>
-          <tr><td>F</td><td>拾取武器 / 开关门</td><td>滚轮</td><td>切换武器</td></tr>
+          <tr><td>F</td><td>拾取 / 搜盒 / 开关门</td><td>滚轮</td><td>切换武器</td></tr>
           <tr><td>5</td><td>投掷物(再按切换)</td><td>左键按住</td><td>蓄力瞄准, 松开投掷</td></tr>
           <tr><td>Tab / B</td><td>背包</td><td>X</td><td>使用恢复品</td></tr>
           <tr><td>V</td><td>切换视角</td><td>M</td><td>静音</td></tr>

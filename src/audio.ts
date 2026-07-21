@@ -147,9 +147,17 @@ export class AudioSys {
         this.noiseBurst(0.6 * att, pan, 750, 0.7, 0.15);
         this.thump(0.45 * att, pan, 190, 55, 0.13);
         break;
+      case 'akm':
+        this.noiseBurst(0.68 * att, pan, 620, 0.68, 0.18);
+        this.thump(0.52 * att, pan, 165, 48, 0.16);
+        break;
       case 'smg':
         this.noiseBurst(0.42 * att, pan, 1400, 1.1, 0.08);
         this.thump(0.25 * att, pan, 260, 90, 0.06);
+        break;
+      case 'dmr':
+        this.noiseBurst(0.7 * att, pan, 560, 0.58, 0.22);
+        this.thump(0.52 * att, pan, 155, 44, 0.2);
         break;
       case 'sniper':
         this.noiseBurst(0.85 * att, pan, 420, 0.5, 0.38);

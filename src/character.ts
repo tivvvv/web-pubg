@@ -572,7 +572,7 @@ export class Character {
       ? null // 空降/游泳/击倒收枪
       : gun
         ? gun.def.id
-        : this.curSlot === 3 && this.melee.def.id === 'knife' ? 'knife'
+        : this.curSlot === 3 && this.melee.def.id !== 'fists' ? this.melee.def.id
           : this.curSlot === 4 ? this.throwKind
             : null;
     this.swapHeld(wantId, gun ? gun.att : null);
@@ -594,7 +594,7 @@ export class Character {
       p.held.mag.visible = this.reload01 < 0.4 || this.reload01 > 0.68;
     }
     // 左臂大致迎向护木(长枪更前伸), 持刀/徒手放松
-    if (wantId === 'rifle' || wantId === 'sniper' || wantId === 'shotgun') {
+    if (wantId === 'rifle' || wantId === 'akm' || wantId === 'dmr' || wantId === 'sniper' || wantId === 'shotgun') {
       p.armL.rotation.x = -1.5;
       p.armL.rotation.z = 0.5;
     } else if (wantId === 'smg' || wantId === 'pistol') {
@@ -719,8 +719,8 @@ export class Character {
       const ext = Math.sin(Math.min(1, prog * 1.9) * Math.PI); // 峰值偏前的出收曲线
       const side = this.swingSide;
       const arm = side > 0 ? p.armR : p.armL;
-      if (this.melee.def.id === 'knife') {
-        // 砍刀: 大幅度横斩(手臂横扫过身)
+      if (this.melee.def.id !== 'fists') {
+        // 近战装备: 大幅度横斩或挥击(手臂横扫过身)
         arm.rotation.x = -1.5;
         arm.rotation.z = side * (0.95 - prog * 1.9);
         arm.position.z = 0.1 + ext * 0.28;

@@ -1,6 +1,6 @@
 // 共享类型定义
-export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'sniper' | 'shotgun';
-export type MeleeId = 'fists' | 'knife';
+export type WeaponId = 'pistol' | 'rifle' | 'akm' | 'smg' | 'dmr' | 'sniper' | 'shotgun';
+export type MeleeId = 'fists' | 'knife' | 'pan' | 'crowbar';
 export type AmmoType = 'pistol' | 'rifle' | 'smg' | 'sniper' | 'shotgun';
 export type ThrowableId = 'frag' | 'smoke';
 export type AttachmentId = 'reddot' | 'scope2' | 'scope4' | 'extmag' | 'comp' | 'suppressor';
@@ -12,7 +12,7 @@ export interface GunAttachments {
 }
 export type ArmorLootId = 'helmet1' | 'helmet2' | 'helmet3' | 'vest1' | 'vest2' | 'vest3';
 export type AttachLootId = 'attReddot' | 'attScope2' | 'attScope4' | 'attExtmag' | 'attComp' | 'attSuppressor';
-export type LootKind = WeaponId | 'knife' | 'ammoRifle' | 'ammoSmg' | 'ammoSniper' | 'ammoPistol' | 'ammoShotgun' | 'bandage' | 'medkit' | 'drink' | 'pack1' | 'pack2' | 'pack3' | ThrowableId | ArmorLootId | AttachLootId;
+export type LootKind = WeaponId | Exclude<MeleeId, 'fists'> | 'ammoRifle' | 'ammoSmg' | 'ammoSniper' | 'ammoPistol' | 'ammoShotgun' | 'bandage' | 'medkit' | 'drink' | 'pack1' | 'pack2' | 'pack3' | ThrowableId | ArmorLootId | AttachLootId;
 
 // 已装备护具(定义见 armor.ts)
 export interface ArmorState {

@@ -1,6 +1,6 @@
 // 战利品: 漂浮旋转发光物; 枪械/护具/背包需按 F 拾取, 弹药/恢复品走近自动拾取
 import * as THREE from 'three';
-import type { AmmoType, LootKind, WeaponId } from './types';
+import type { AmmoType, LootKind, MeleeId, WeaponId } from './types';
 import { rand } from './utils';
 import { AMMO_BOX, AMMO_CLASS_COLOR, AMMO_LOOT_KIND, WEAPONS } from './weapons';
 import { armorFromLoot, buildHelmetModel, buildVestModel, isArmorKind } from './armor';
@@ -9,6 +9,7 @@ import { attachWeaponMods, buildWeaponModel } from './weaponmodels';
 import { isAttachKind } from './attachments';
 import type { GunAttachments } from './types';
 import { WATER_Y, riverZAt, type World } from './world';
+import { regionOrWilderness, type LootProfile, type LootTier } from './regions';
 
 export interface LootItem {
   kind: LootKind;
@@ -68,10 +69,14 @@ function bandMat(t: AmmoType): THREE.MeshBasicMaterial {
 // 每种类型的光环颜色(沿用旧配色编码)
 const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   rifle: new THREE.MeshBasicMaterial({ color: 0xff7a29, transparent: true, opacity: 0.5 }),
+  akm: new THREE.MeshBasicMaterial({ color: 0xff6038, transparent: true, opacity: 0.5 }),
   smg: new THREE.MeshBasicMaterial({ color: 0x37e0d8, transparent: true, opacity: 0.5 }),
+  dmr: new THREE.MeshBasicMaterial({ color: 0x8f78ff, transparent: true, opacity: 0.5 }),
   sniper: new THREE.MeshBasicMaterial({ color: 0xc05cff, transparent: true, opacity: 0.5 }),
   pistol: new THREE.MeshBasicMaterial({ color: 0xffd24d, transparent: true, opacity: 0.5 }),
   knife: new THREE.MeshBasicMaterial({ color: 0xdfe6ee, transparent: true, opacity: 0.5 }),
+  pan: new THREE.MeshBasicMaterial({ color: 0xb8bec5, transparent: true, opacity: 0.5 }),
+  crowbar: new THREE.MeshBasicMaterial({ color: 0xd66a54, transparent: true, opacity: 0.5 }),
   ammoRifle: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
   ammoSmg: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
   ammoSniper: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
@@ -225,8 +230,16 @@ function buildLootMesh(kind: LootKind): THREE.Group {
   return g;
 }
 
-export function isWeaponKind(kind: LootKind): kind is WeaponId | 'knife' {
-  return kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun' || kind === 'knife';
+export function isGunKind(kind: LootKind): kind is WeaponId {
+  return kind === 'rifle' || kind === 'akm' || kind === 'smg' || kind === 'dmr' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun';
+}
+
+export function isMeleeKind(kind: LootKind): kind is Exclude<MeleeId, 'fists'> {
+  return kind === 'knife' || kind === 'pan' || kind === 'crowbar';
+}
+
+export function isWeaponKind(kind: LootKind): kind is WeaponId | Exclude<MeleeId, 'fists'> {
+  return isGunKind(kind) || isMeleeKind(kind);
 }
 
 export class LootManager {
@@ -245,8 +258,10 @@ export class LootManager {
     // 室内点位(一层普通表, 二层 premium 高级枪表)
     for (const s of world.buildings.lootSpots) {
       if (count >= LOOT_CAP) break;
-      if (Math.random() < 0.12) continue; // 少量留空, 避免每栋必刷
-      const kind = this.rollKind(s.premium ? 'premium' : 'indoor');
+      const region = regionOrWilderness(s.x, s.z);
+      const emptyChance = region.tier === 'high' ? 0.04 : region.tier === 'medium' ? 0.13 : 0.27;
+      if (Math.random() < emptyChance) continue;
+      const kind = this.rollKind(s.premium ? 'premium' : 'indoor', region.tier, region.profile);
       this.spawn(kind, s.x, s.y, s.z);
       count++;
       count += this.pairAmmo(world, kind, s.x, s.y, s.z, 0.8);
@@ -256,7 +271,8 @@ export class LootManager {
       const x = rand(-320, 320);
       const z = rand(-320, 320);
       if (!world.pointFree(x, z, 0.4, WATER_Y + 0.5, 14)) continue;
-      const kind = this.rollKind('wild');
+      const region = regionOrWilderness(x, z);
+      const kind = this.rollKind('wild', region.tier, region.profile);
       const y = world.getHeight(x, z);
       this.spawn(kind, x, y, z);
       count++;
@@ -269,7 +285,7 @@ export class LootManager {
   // 地面武器按概率在 1~2m 内配一盒匹配弹药(返回生成数)
   // sampleTerrain: 野外配对时弹药按自身落点地形取高(坡地不埋不浮)
   private pairAmmo(world: World, kind: LootKind, x: number, y: number, z: number, chance: number, sampleTerrain = false): number {
-    if (!isWeaponKind(kind) || kind === 'knife') return 0;
+    if (!isGunKind(kind)) return 0;
     if (Math.random() >= chance) return 0;
     const a = Math.random() * Math.PI * 2;
     const d = 0.8 + Math.random() * 1.2;
@@ -280,13 +296,12 @@ export class LootManager {
   }
 
   // 野外枪支稀有度: 手枪/冲锋枪常见, 步枪少见, 狙击稀有, 霰弹补充近战位
-  private rollOutdoorGun(): LootKind {
-    const r = Math.random();
-    if (r < 0.28) return 'pistol';
-    if (r < 0.52) return 'smg';
-    if (r < 0.68) return 'shotgun';
-    if (r < 0.88) return 'rifle';
-    return 'sniper';
+  private rollOutdoorGun(tier: LootTier, profile: LootProfile): WeaponId {
+    for (let i = 0; i < 16; i++) {
+      const kind = this.rollKind('indoor', tier, profile);
+      if (isGunKind(kind)) return kind;
+    }
+    return tier === 'high' ? 'rifle' : 'pistol';
   }
 
   // 野外锚点候选: 村边/桥两端/搁浅渔船/岩石草垛旁/树丛/山顶
@@ -388,7 +403,8 @@ export class LootManager {
     for (const a of anchors) {
       if (guns >= 16) break;
       if (!anchorOk(a, 6)) continue;
-      const kind = this.rollOutdoorGun();
+      const region = regionOrWilderness(a.x, a.z);
+      const kind = this.rollOutdoorGun(region.tier, region.profile);
       const y = world.getHeight(a.x, a.z);
       const it = this.spawn(kind, a.x, y, a.z);
       if (!it) break;
@@ -424,83 +440,31 @@ export class LootManager {
     return 'ammoSniper';
   }
 
-  private rollKind(table: 'wild' | 'indoor' | 'premium'): LootKind {
-    const r = Math.random();
-    if (table === 'premium') {
-      // 二楼: 偏高级枪, 三级甲只在这里像样地刷, 配件偏好
-      if (r < 0.26) return 'rifle';
-      if (r < 0.46) return 'sniper';
-      if (r < 0.56) return 'shotgun';
-      if (r < 0.66) return 'smg';
-      if (r < 0.7) return 'frag';
-      if (r < 0.74) return 'smoke';
-      if (r < 0.77) return 'helmet3';
-      if (r < 0.8) return 'vest3';
-      if (r < 0.83) return 'helmet2';
-      if (r < 0.86) return 'vest2';
-      if (r < 0.875) return 'attReddot';
-      if (r < 0.885) return 'attScope2';
-      if (r < 0.89) return 'attScope4';
-      if (r < 0.9) return 'attSuppressor';
-      if (r < 0.905) return 'attExtmag';
-      if (r < 0.91) return 'attComp';
-      if (r < 0.95) return this.rollAmmo();
-      if (r < 0.97) return 'pack2';
-      if (r < 0.985) return 'pack3'; // 三级背包主要在高级房
-      if (r < 0.993) return 'bandage';
-      if (r < 0.997) return 'drink';
-      return 'medkit'; // 高级房才有像样概率
+  private rollKind(table: 'wild' | 'indoor' | 'premium', tier: LootTier, profile: LootProfile): LootKind {
+    type Entry = readonly [LootKind, number];
+    const common: Entry[] = table === 'wild'
+      ? [['ammoRifle', 12], ['ammoSmg', 9], ['ammoPistol', 7], ['ammoShotgun', 5], ['bandage', 8], ['drink', 4], ['helmet1', 5], ['vest1', 5], ['pack1', 4], ['frag', 3], ['smoke', 3]]
+      : [['ammoRifle', 8], ['ammoSmg', 6], ['ammoPistol', 4], ['ammoShotgun', 3], ['bandage', 5], ['drink', 3], ['medkit', 1.5], ['helmet1', 4], ['vest1', 4], ['pack1', 3], ['frag', 3], ['smoke', 3], ['attReddot', 3], ['attExtmag', 2.5], ['attComp', 2]];
+    const low: Entry[] = [['pistol', 11], ['smg', 8], ['shotgun', 8], ['rifle', 3], ['knife', 4], ['crowbar', 4], ['pan', 2], ['pack2', 1], ['helmet2', 1], ['vest2', 1]];
+    const medium: Entry[] = [['pistol', 6], ['smg', 9], ['shotgun', 7], ['rifle', 8], ['akm', 5], ['dmr', 2], ['knife', 2], ['crowbar', 2], ['pan', 2], ['pack2', 3], ['helmet2', 3], ['vest2', 3], ['attScope2', 2], ['attSuppressor', 1]];
+    const high: Entry[] = [['smg', 5], ['shotgun', 4], ['rifle', 10], ['akm', 9], ['dmr', 7], ['sniper', 3], ['pan', 2], ['pack2', 4], ['pack3', 2], ['helmet2', 4], ['vest2', 4], ['helmet3', 2], ['vest3', 2], ['attScope2', 3], ['attScope4', 2], ['attSuppressor', 2], ['attExtmag', 2]];
+    const profileBonus: Record<LootProfile, Entry[]> = {
+      urban: [['rifle', 4], ['smg', 4], ['frag', 2], ['attReddot', 2]],
+      arena: [['akm', 5], ['rifle', 4], ['shotgun', 4], ['helmet2', 2], ['vest2', 2]],
+      farm: [['shotgun', 5], ['rifle', 3], ['crowbar', 4], ['bandage', 3]],
+      forest: [['smg', 3], ['pistol', 3], ['knife', 3], ['smoke', 3], ['drink', 2]],
+      ridge: [['dmr', 6], ['sniper', 4], ['attScope4', 3], ['attComp', 2]],
+      harbor: [['smg', 5], ['shotgun', 4], ['pan', 3], ['medkit', 2], ['smoke', 2]],
+    };
+    const entries = [...common, ...(tier === 'high' ? high : tier === 'medium' ? medium : low), ...profileBonus[profile]];
+    if (table === 'premium') entries.push(['dmr', 4], ['sniper', 3], ['helmet3', 2], ['vest3', 2], ['pack3', 2], ['attScope4', 2], ['medkit', 2]);
+    const total = entries.reduce((sum, e) => sum + e[1], 0);
+    let r = Math.random() * total;
+    for (const [kind, weight] of entries) {
+      r -= weight;
+      if (r <= 0) return kind;
     }
-    if (table === 'indoor') {
-      if (r < 0.15) return 'rifle';
-      if (r < 0.26) return 'smg';
-      if (r < 0.35) return 'shotgun';
-      if (r < 0.4) return 'sniper';
-      if (r < 0.47) return 'pistol';
-      if (r < 0.52) return 'knife';
-      if (r < 0.56) return 'frag';
-      if (r < 0.6) return 'smoke';
-      if (r < 0.65) return 'helmet1';
-      if (r < 0.7) return 'vest1';
-      if (r < 0.72) return 'helmet2';
-      if (r < 0.74) return 'vest2';
-      if (r < 0.77) return 'attReddot';
-      if (r < 0.785) return 'attScope2';
-      if (r < 0.79) return 'attScope4';
-      if (r < 0.795) return 'attSuppressor';
-      if (r < 0.815) return 'attExtmag';
-      if (r < 0.83) return 'attComp';
-      if (r < 0.89) return this.rollAmmo();
-      if (r < 0.94) return 'pack1';
-      if (r < 0.96) return 'pack2';
-      if (r < 0.985) return 'bandage';
-      if (r < 0.995) return 'drink';
-      return 'medkit';
-    }
-    if (r < 0.07) return 'rifle';
-    if (r < 0.14) return 'smg';
-    if (r < 0.21) return 'shotgun';
-    if (r < 0.25) return 'sniper';
-    if (r < 0.31) return 'pistol';
-    if (r < 0.37) return 'knife';
-    if (r < 0.42) return 'frag';
-    if (r < 0.47) return 'smoke';
-    if (r < 0.53) return 'helmet1';
-    if (r < 0.59) return 'vest1';
-    if (r < 0.61) return 'helmet2';
-    if (r < 0.63) return 'vest2';
-    if (r < 0.655) return 'attReddot';
-    if (r < 0.665) return 'attScope2';
-    if (r < 0.67) return 'attScope4';
-    if (r < 0.673) return 'attSuppressor';
-    if (r < 0.69) return 'attExtmag';
-    if (r < 0.705) return 'attComp';
-    if (r < 0.82) return this.rollAmmo();
-    if (r < 0.87) return 'pack1';
-    if (r < 0.89) return 'pack2';
-    if (r < 0.95) return 'bandage';
-    if (r < 0.985) return 'drink';
-    return 'medkit';
+    return entries[entries.length - 1]?.[0] ?? 'bandage';
   }
 
   // mag/ammo 仅对枪械有意义; 默认满弹匣 + 少量备弹; att 为枪械自带配件(掉落随枪)
@@ -519,7 +483,7 @@ export class LootManager {
       item.kind = kind;
     }
     item.att = null; // 复用清配件(仅枪械重新赋值)
-    if (kind === 'rifle' || kind === 'smg' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun') {
+    if (isGunKind(kind)) {
       item.mag = Math.max(0, mag); // 地面武器默认空弹匣; 死亡掉落携带剩余弹匣
       item.ammo = Math.max(0, ammo);
       item.att = att ? { sight: att.sight, mag: att.mag, muzzle: att.muzzle } : null;

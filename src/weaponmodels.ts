@@ -3,9 +3,9 @@
 // 约定: 原点 = 握把顶端(右手持握点), 枪管朝 +Z, 上为 +Y; 步枪全长约 0.9m
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import type { GunAttachments, ThrowableId, WeaponId } from './types';
+import type { GunAttachments, MeleeId, ThrowableId, WeaponId } from './types';
 
-export type WeaponModelId = WeaponId | 'knife' | ThrowableId;
+export type WeaponModelId = WeaponId | Exclude<MeleeId, 'fists'> | ThrowableId;
 
 export interface WeaponModel {
   group: THREE.Group;
@@ -15,7 +15,7 @@ export interface WeaponModel {
 
 // 枪口火光缩放(狙击更大, 手枪更小, 霰弹最大)
 export const MUZZLE_SCALE: Record<WeaponId, number> = {
-  pistol: 0.65, smg: 0.85, rifle: 1.0, sniper: 1.5, shotgun: 1.35,
+  pistol: 0.65, smg: 0.85, rifle: 1.0, akm: 1.12, dmr: 1.18, sniper: 1.5, shotgun: 1.35,
 };
 
 // 共享几何: 单位盒 / 单位圆柱(沿 Y, 半径 1 高 1) / 单位球
@@ -111,6 +111,41 @@ function buildRifle(): WeaponModel {
   return { group: g, muzzle: muzzleAt(g, 0, 0.025, 0.7), mag };
 }
 
+// ── AKM: 木质护木与枪托、弯曲弹匣，轮廓和 M416 明显区分 ──
+function buildAkm(): WeaponModel {
+  const g = new THREE.Group();
+  b(g, MAT_DK, 0.058, 0.075, 0.3, 0, 0.02, 0.08);
+  b(g, MAT_LT, 0.052, 0.018, 0.23, 0, 0.072, 0.09);
+  b(g, MAT_TN, 0.057, 0.065, 0.25, 0, 0.015, 0.37);
+  cz(g, MAT_DK, 0.012, 0.24, 0, 0.03, 0.61);
+  cz(g, MAT_LT, 0.018, 0.065, 0, 0.03, 0.76);
+  const mag = b(g, MAT_DK, 0.036, 0.12, 0.06, 0, -0.09, 0.08, 0.34);
+  mag.name = 'mag';
+  b(g, MAT_DK, 0.033, 0.08, 0.052, 0, -0.17, 0.035, 0.56);
+  b(g, MAT_TN, 0.048, 0.075, 0.27, 0, 0.015, -0.22, -0.08);
+  b(g, MAT_TN, 0.05, 0.09, 0.04, 0, 0.005, -0.38);
+  b(g, MAT_TN, 0.034, 0.09, 0.045, 0, -0.055, -0.02, 0.3);
+  b(g, MAT_LT, 0.008, 0.035, 0.008, 0, 0.085, 0.54);
+  b(g, MAT_DK, 0.028, 0.02, 0.018, 0, 0.083, -0.02);
+  return { group: g, muzzle: muzzleAt(g, 0, 0.03, 0.8), mag };
+}
+
+// ── Mini14: 细长枪管、木质枪身和短直弹匣 ──
+function buildDmr(): WeaponModel {
+  const g = new THREE.Group();
+  b(g, MAT_DK, 0.048, 0.068, 0.28, 0, 0.025, 0.08);
+  b(g, MAT_TN, 0.05, 0.055, 0.34, 0, 0.005, 0.19);
+  cz(g, MAT_DK, 0.009, 0.42, 0, 0.038, 0.53);
+  cz(g, MAT_LT, 0.013, 0.04, 0, 0.038, 0.75);
+  const mag = b(g, MAT_DK, 0.028, 0.075, 0.045, 0, -0.065, 0.04);
+  mag.name = 'mag';
+  b(g, MAT_TN, 0.045, 0.07, 0.3, 0, 0.02, -0.22);
+  b(g, MAT_DK, 0.047, 0.085, 0.018, 0, 0.01, -0.39);
+  b(g, MAT_DK, 0.026, 0.017, 0.018, 0, 0.09, -0.02);
+  b(g, MAT_LT, 0.007, 0.03, 0.007, 0, 0.088, 0.6);
+  return { group: g, muzzle: muzzleAt(g, 0, 0.038, 0.78), mag };
+}
+
 // ── UMP 冲锋枪 (~0.62m): 方机匣/短枪管/直弹匣/侧折叠托, 明显短于步枪 ──
 function buildSmg(): WeaponModel {
   const g = new THREE.Group();
@@ -202,6 +237,26 @@ function buildKnife(): WeaponModel {
   return { group: g, muzzle: muzzleAt(g, 0, 0, 0.45), mag: null };
 }
 
+function buildPan(): WeaponModel {
+  const g = new THREE.Group();
+  const pan = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.055, 14), MAT_DK);
+  pan.rotation.x = Math.PI / 2;
+  pan.position.z = 0.2;
+  pan.castShadow = true;
+  g.add(pan);
+  b(g, MAT_LT, 0.018, 0.025, 0.34, 0, 0, -0.02);
+  b(g, MAT_PO, 0.035, 0.04, 0.12, 0, 0, -0.24);
+  return { group: g, muzzle: muzzleAt(g, 0, 0, 0.36), mag: null };
+}
+
+function buildCrowbar(): WeaponModel {
+  const g = new THREE.Group();
+  b(g, MAT_BD, 0.022, 0.022, 0.62, 0, 0, 0.12);
+  b(g, MAT_BD, 0.022, 0.022, 0.18, 0, 0.045, 0.48, -0.5);
+  b(g, MAT_LT, 0.028, 0.012, 0.11, 0, 0.09, 0.55, -0.5);
+  return { group: g, muzzle: muzzleAt(g, 0, 0.11, 0.62), mag: null };
+}
+
 // ── 手雷: 微扁球体 + 菠萝刻槽 + 银色压柄 + 引信座 + 拉环 ──
 function buildFrag(): WeaponModel {
   const g = new THREE.Group();
@@ -280,11 +335,15 @@ function proto(id: WeaponModelId): WeaponModel {
   if (!p) {
     switch (id) {
       case 'rifle': p = buildRifle(); break;
+      case 'akm': p = buildAkm(); break;
       case 'smg': p = buildSmg(); break;
+      case 'dmr': p = buildDmr(); break;
       case 'sniper': p = buildSniper(); break;
       case 'shotgun': p = buildShotgun(); break;
       case 'pistol': p = buildPistol(); break;
       case 'knife': p = buildKnife(); break;
+      case 'pan': p = buildPan(); break;
+      case 'crowbar': p = buildCrowbar(); break;
       case 'frag': p = buildFrag(); break;
       case 'smoke': p = buildSmoke(); break;
     }

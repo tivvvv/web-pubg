@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { Character, SWIM_SPEED, SWIM_SPRINT_SPEED } from './character';
 import type { Input } from './input';
-import { isWeaponKind } from './loot';
+import { isGunKind, isMeleeKind, isWeaponKind } from './loot';
 import { ARMORS, armorFromLoot } from './armor';
 import { MELEE, WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF } from './world';
@@ -31,7 +31,9 @@ interface RecoilFeel {
 const RECOIL_FEEL: Record<WeaponId, RecoilFeel> = {
   pistol: { vertical: 0.95, horizontal: 0.22, bloom: 0.32, gunKick: 0.045 },
   rifle: { vertical: 1.0, horizontal: 0.42, bloom: 0.46, gunKick: 0.055 },
+  akm: { vertical: 1.18, horizontal: 0.5, bloom: 0.52, gunKick: 0.07 },
   smg: { vertical: 0.78, horizontal: 0.5, bloom: 0.52, gunKick: 0.045 },
+  dmr: { vertical: 1.16, horizontal: 0.25, bloom: 0.3, gunKick: 0.085 },
   sniper: { vertical: 1.35, horizontal: 0.16, bloom: 0.2, gunKick: 0.12 },
   shotgun: { vertical: 1.2, horizontal: 0.3, bloom: 0.16, gunKick: 0.1 },
 };
@@ -400,6 +402,7 @@ export class PlayerController {
     game.promptDoor = null;
     game.promptVehicle = null;
     game.promptCrate = null;
+    game.promptDeathCrate = null;
     game.promptAlly = null;
     // 两者同时在场: 看得更正的优先
     if (door && (!item || door.dot >= itemDot)) {
@@ -423,6 +426,12 @@ export class PlayerController {
       game.hud.setPickupPrompt('按 F 打开空投');
       return;
     }
+    const deathCrate = game.deathCrates.nearest(c.pos.x, c.pos.y, c.pos.z, 2.8);
+    if (deathCrate) {
+      game.promptDeathCrate = deathCrate;
+      game.hud.setPickupPrompt(`按 F 搜索 ${deathCrate.owner} 的盒子`);
+      return;
+    }
     // 载具候选: 2.6m 内可驾驶载具
     const veh = game.vehicles.nearest(c.pos.x, c.pos.z, 2.6);
     if (veh) {
@@ -436,9 +445,9 @@ export class PlayerController {
     }
     game.promptItem = item;
     const k = item.kind;
-    if (k === 'knife') {
-      game.hud.setPickupPrompt(`按 F 拾取 ${MELEE.knife.name}`);
-    } else if (isWeaponKind(k)) {
+    if (isMeleeKind(k)) {
+      game.hud.setPickupPrompt(`按 F 拾取 ${MELEE[k].name}`);
+    } else if (isGunKind(k)) {
       const def = WEAPONS[k];
       const state = item.mag > 0 ? `${item.mag} 发` : item.ammo > 0 ? `无弹, 备弹 ${item.ammo}` : '无弹';
       game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${state}）`);
@@ -731,7 +740,7 @@ export class PlayerController {
   private driveCamera(dt: number, game: Game, v: Vehicle): void {
     const dirX = Math.sin(v.yaw);
     const dirZ = Math.cos(v.yaw);
-    const dist = v.kind === 'car' ? 6.2 : 5.0;
+    const dist = v.kind === 'car' ? 6.2 : v.kind === 'buggy' ? 5.7 : 5.0;
     this.pivot.set(v.pos.x, v.pos.y + 1.4, v.pos.z);
     this.camTarget.set(v.pos.x - dirX * dist, v.pos.y + 2.4, v.pos.z - dirZ * dist);
     this.camDir.subVectors(this.camTarget, this.pivot);

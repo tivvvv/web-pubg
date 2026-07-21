@@ -2,18 +2,9 @@
 import { ROAD_PATHS, WORLD_HALF, WATER_Y, riverZAt, type World } from './world';
 import type { Zone } from './zone';
 import type { BombardmentMapState } from './bombardment';
+import { REGIONS } from './regions';
 
 const BASE_RES = 150;
-
-// 区域锚点(与 buildings/world 布点一致)
-const REGION_LABELS: { x: number; z: number; label: string }[] = [
-  { x: 0, z: -200, label: '密林' },
-  { x: -60, z: -20, label: '城区' },
-  { x: 180, z: -40, label: '竞技场' },
-  { x: -40, z: 200, label: '农场' },
-  { x: -220, z: 20, label: '山地' },
-  { x: 200, z: -220, label: '渔村' },
-];
 
 export class Minimap {
   private ctx: CanvasRenderingContext2D;
@@ -79,14 +70,25 @@ export class Minimap {
       else bctx.lineTo(px, py);
     }
     bctx.stroke();
-    // 区域名标注(低透明, 压在最底层)
-    bctx.fillStyle = 'rgba(255,255,255,0.55)';
-    bctx.font = '7px sans-serif';
-    bctx.textAlign = 'center';
-    for (const r of REGION_LABELS) {
+    // 资源区边界与正式名称，高资源区使用暖色强调。
+    bctx.lineWidth = 0.7;
+    for (const r of REGIONS) {
       const px = ((r.x + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
       const py = ((r.z + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
-      bctx.fillText(r.label, px, py);
+      const rr = (r.radius / (WORLD_HALF * 2)) * BASE_RES;
+      bctx.strokeStyle = r.tier === 'high' ? 'rgba(230,126,83,0.42)' : r.tier === 'medium' ? 'rgba(220,190,92,0.34)' : 'rgba(175,205,158,0.25)';
+      bctx.beginPath();
+      bctx.arc(px, py, rr, 0, Math.PI * 2);
+      bctx.stroke();
+    }
+    bctx.font = 'bold 6.5px sans-serif';
+    bctx.textAlign = 'center';
+    for (const r of REGIONS) {
+      const px = ((r.x + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      const py = ((r.z + WORLD_HALF) / (WORLD_HALF * 2)) * BASE_RES;
+      bctx.fillStyle = r.tier === 'high' ? 'rgba(255,220,194,0.82)' : r.tier === 'medium' ? 'rgba(255,239,174,0.72)' : 'rgba(235,244,229,0.58)';
+      const tier = r.tier === 'high' ? '高' : r.tier === 'medium' ? '中' : '低';
+      bctx.fillText(`${r.name} ${tier}`, px, py);
     }
     // 房屋地块标记(含 2m 安全边, 画内圈 footprint)
     bctx.fillStyle = 'rgba(122,110,94,0.95)';

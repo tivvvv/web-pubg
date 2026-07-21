@@ -7,7 +7,7 @@ import type { World } from './world';
 import type { Character } from './character';
 import type { Game } from './game';
 
-export type VehicleKind = 'car' | 'moto';
+export type VehicleKind = 'car' | 'moto' | 'buggy';
 
 export interface VehicleSpec {
   hp: number;
@@ -25,17 +25,21 @@ export interface VehicleSpec {
 export const VEHICLE_SPEC: Record<VehicleKind, VehicleSpec> = {
   car: { hp: 800, seats: 4, radius: 1.4, accel: 9.5, vmax: 22, steer: 1.8, brake: 15, revMax: 7, half: [0.85, 0.8, 1.7], seat: [-0.5, 0.95, 0.15] },
   moto: { hp: 400, seats: 2, radius: 0.9, accel: 12, vmax: 27, steer: 2.5, brake: 17, revMax: 6, half: [0.4, 0.7, 1.05], seat: [0, 0.72, -0.15] },
+  buggy: { hp: 560, seats: 2, radius: 1.15, accel: 11, vmax: 25, steer: 2.15, brake: 16, revMax: 7, half: [0.75, 0.8, 1.35], seat: [-0.28, 0.82, -0.1] },
 };
 
 interface SpawnDef { kind: VehicleKind; x: number; z: number; yaw: number }
-const SPAWNS: SpawnDef[] = [
+export const VEHICLE_SPAWNS: readonly SpawnDef[] = [
   { kind: 'car', x: -52, z: -12, yaw: 0.4 },   // 城区街道
-  { kind: 'car', x: -18, z: 196, yaw: 1.2 },   // 农场
-  { kind: 'car', x: 158, z: -28, yaw: -0.6 },  // 竞技场边
+  { kind: 'car', x: -24, z: 192, yaw: 1.2 },   // 农场
+  { kind: 'car', x: 168, z: -52, yaw: -0.6 },  // 竞技场边
   { kind: 'car', x: 198, z: -212, yaw: 2.4 },  // 渔村
-  { kind: 'moto', x: -70, z: -32, yaw: 0.9 },  // 城区
-  { kind: 'moto', x: -58, z: 212, yaw: -0.3 }, // 农场
+  { kind: 'moto', x: -72, z: -32, yaw: 0.9 },  // 城区
+  { kind: 'moto', x: -56, z: 208, yaw: -0.3 }, // 农场
   { kind: 'moto', x: -52, z: 62, yaw: 1.7 },   // 桥边
+  { kind: 'buggy', x: -216, z: 28, yaw: 0.35 },  // 鹰脊哨站
+  { kind: 'buggy', x: 220, z: -186, yaw: -0.7 }, // 渔港外沿
+  { kind: 'buggy', x: 210, z: -34, yaw: 1.25 }, // 竞技场公路
 ];
 
 const CAR_COLORS = [0x6a7a52, 0x8a4a3a, 0x8a8578, 0x4a5e6e];
@@ -45,6 +49,7 @@ const MOTO_COLORS = [0xa03a30, 0x3a6ea5, 0x555555];
 const SEATS: Record<VehicleKind, [number, number, number][]> = {
   car: [VEHICLE_SPEC.car.seat, [0.5, 0.95, 0.15], [-0.5, 0.95, -0.75], [0.5, 0.95, -0.75]],
   moto: [VEHICLE_SPEC.moto.seat, [0, 0.72, 0.45]],
+  buggy: [VEHICLE_SPEC.buggy.seat, [0.28, 0.82, -0.1]],
 };
 
 // 驾驶座世界坐标(= seatWorldAt idx 0)
@@ -165,7 +170,7 @@ export class Vehicle {
         this.wheels.push(w);
         if (front) this.steerWheels.push(w);
       }
-    } else {
+    } else if (this.kind === 'moto') {
       const bodyC = MOTO_COLORS[Math.floor(Math.random() * MOTO_COLORS.length)] as number;
       const body = this.mat(bodyC);
       const dark = this.mat(0x222222);
@@ -216,6 +221,49 @@ export class Vehicle {
         this.wheels.push(w);
         if (front) this.steerWheels.push(w);
       }
+    } else {
+      const body = this.mat(0xb48a3d);
+      const dark = this.mat(0x26292a);
+      const frame = this.mat(0x4d5556);
+      const hub = this.mat(0x9ca2a2);
+      const add = (geo: THREE.BoxGeometry, mat: THREE.MeshStandardMaterial, x: number, y: number, z: number, rx = 0, rz = 0): THREE.Mesh => {
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(x, y, z);
+        mesh.rotation.set(rx, 0, rz);
+        mesh.castShadow = true;
+        g.add(mesh);
+        return mesh;
+      };
+      // 轻型裸露底盘、前鼻和双座舱。
+      add(new THREE.BoxGeometry(1.35, 0.26, 2.45), body, 0, 0.48, 0);
+      add(new THREE.BoxGeometry(1.08, 0.36, 0.78), body, 0, 0.72, 0.88, -0.12);
+      add(new THREE.BoxGeometry(0.42, 0.4, 0.48), dark, -0.28, 0.8, -0.14);
+      add(new THREE.BoxGeometry(0.42, 0.4, 0.48), dark, 0.28, 0.8, -0.14);
+      // 防滚架和尾部发动机护框。
+      for (const sx of [-0.58, 0.58]) {
+        add(new THREE.BoxGeometry(0.08, 1.0, 0.08), frame, sx, 1.08, -0.35, 0, sx * 0.14);
+        add(new THREE.BoxGeometry(0.08, 0.75, 0.08), frame, sx, 0.93, 0.55, 0, -sx * 0.1);
+      }
+      add(new THREE.BoxGeometry(1.2, 0.08, 0.08), frame, 0, 1.55, -0.35);
+      add(new THREE.BoxGeometry(1.15, 0.5, 0.58), frame, 0, 0.69, -0.95);
+      add(new THREE.BoxGeometry(1.55, 0.1, 0.1), dark, 0, 0.35, 1.32);
+      add(new THREE.BoxGeometry(1.55, 0.1, 0.1), dark, 0, 0.35, -1.32);
+      const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.24, 10);
+      const hubGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.27, 8);
+      for (const [wx, wz, front] of [[-0.72, 0.92, 1], [0.72, 0.92, 1], [-0.72, -0.92, 0], [0.72, -0.92, 0]] as const) {
+        const wheel = new THREE.Group();
+        wheel.position.set(wx, 0.38, wz);
+        const tire = new THREE.Mesh(wheelGeo, dark);
+        tire.rotation.z = Math.PI / 2;
+        tire.castShadow = true;
+        wheel.add(tire);
+        const cap = new THREE.Mesh(hubGeo, hub);
+        cap.rotation.z = Math.PI / 2;
+        wheel.add(cap);
+        g.add(wheel);
+        this.wheels.push(wheel);
+        if (front) this.steerWheels.push(wheel);
+      }
     }
   }
 
@@ -256,7 +304,7 @@ export class VehicleManager {
   populate(world: World): void {
     for (const v of this.list) this.scene.remove(v.group);
     this.list.length = 0;
-    for (const s of SPAWNS) {
+    for (const s of VEHICLE_SPAWNS) {
       const y = world.groundHeight(s.x, s.z, 30);
       const v = new Vehicle(s.kind, new THREE.Vector3(s.x, y, s.z), s.yaw);
       this.list.push(v);

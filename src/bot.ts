@@ -1,10 +1,10 @@
 // Bot AI: 游走/拾取 ↔ 交战 状态机; 赤手空拳开局, 优先找枪, 近身用近战
 import * as THREE from 'three';
 import { Character, moveChar, SWIM_EXIT_DEPTH, SWIM_SPRINT_SPEED } from './character';
-import type { AmmoType, WeaponId } from './types';
+import type { AmmoType, MeleeId, WeaponId } from './types';
 import { WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF, type World } from './world';
-import { isWeaponKind } from './loot';
+import { isMeleeKind, isWeaponKind } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
 import { isPackKind, packLevelFromLoot } from './backpack';
 import { magSizeOf } from './attachments';
@@ -453,9 +453,9 @@ export class BotController {
   }
 
   // 是否想要地上这件武器
-  private wantsWeapon(kind: WeaponId | 'knife'): boolean {
+  private wantsWeapon(kind: WeaponId | Exclude<MeleeId, 'fists'>): boolean {
     const c = this.char;
-    if (kind === 'knife') return !c.hasGun() && c.melee.def.id === 'fists';
+    if (isMeleeKind(kind)) return !c.hasGun() && c.melee.def.id === 'fists';
     if (!c.hasGun()) return true;
     if (kind === 'pistol') return false;
     let minTier = 99;
@@ -554,7 +554,7 @@ export class BotController {
     // 扔雷: 持步枪/冲锋枪, 目标在 8-30m 且几乎静止超过 2.5s, 扔出唯一一颗手雷
     const gunId = c.heldGun()?.def.id;
     if (!this.fragUsed && c.throwables.frag > 0 && this.losOk &&
-      (gunId === 'rifle' || gunId === 'smg') && dist >= 8 && dist <= 30) {
+      (gunId === 'rifle' || gunId === 'akm' || gunId === 'dmr' || gunId === 'smg') && dist >= 8 && dist <= 30) {
       if (t.speed2d < 0.6) this.stillT += dt; else this.stillT = 0;
       if (this.stillT > 2.5) {
         this.throwFrag(t, dist, game);

@@ -64,7 +64,7 @@ export function canAttach(weaponId: WeaponId, attId: AttachmentId): boolean {
 
 // 扩容弹匣增量(各枪)
 const EXTMAG_BONUS: Partial<Record<WeaponId, number>> = {
-  rifle: 10, smg: 10, sniper: 2, pistol: 5,
+  rifle: 10, akm: 10, smg: 10, dmr: 10, sniper: 2, pistol: 5,
 };
 
 // 有效弹匣容量

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Character, moveChar, SWIM_SPRINT_SPEED } from './character';
 import type { Game } from './game';
 import type { PlayerController } from './player';
-import { isWeaponKind } from './loot';
+import { isGunKind, isWeaponKind } from './loot';
 import { armorFromLoot, isArmorKind } from './armor';
 import { isPackKind } from './backpack';
 import { magSizeOf } from './attachments';
@@ -488,7 +488,7 @@ export class TeammateController {
     if (isWeaponKind(k)) {
       const cur = c.bestGunSlot();
       const curTier = cur >= 0 ? (c.guns[cur]?.def.tier ?? 0) : 0;
-      if (!c.hasGun() || (k !== 'knife' && WEAPONS[k].tier > curTier)) {
+      if (!c.hasGun() || (isGunKind(k) && WEAPONS[k].tier > curTier)) {
         game.tryPickupWeapon(c, item);
         return true;
       }

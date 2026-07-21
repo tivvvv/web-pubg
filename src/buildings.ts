@@ -23,13 +23,13 @@ interface HousePlot {
 
 // 原型表: 尺寸范围与村庄放置权重(gym 特殊定点)
 const ARCHS: Record<ArchId, { w: [number, number]; d: [number, number]; weight: number }> = {
-  cottage1: { w: [6.2, 8.6], d: [5.6, 7.6], weight: 26 },
-  cottage2: { w: [6.4, 9.0], d: [5.8, 8.2], weight: 22 },
-  terrace: { w: [7.6, 9.4], d: [6.6, 8.0], weight: 12 },
-  apartment: { w: [8.0, 10.0], d: [7.0, 9.0], weight: 8 },
-  barn: { w: [7.0, 8.5], d: [6.0, 7.5], weight: 8 },
-  shop: { w: [5.0, 6.0], d: [4.0, 5.0], weight: 12 },
-  gym: { w: [38, 40], d: [23, 25], weight: 0 },
+  cottage1: { w: [8.2, 10.8], d: [7.4, 9.6], weight: 26 },
+  cottage2: { w: [8.8, 11.6], d: [7.8, 10.5], weight: 22 },
+  terrace: { w: [10.0, 12.2], d: [8.8, 10.8], weight: 12 },
+  apartment: { w: [11.0, 14.0], d: [9.8, 12.0], weight: 8 },
+  barn: { w: [10.0, 12.5], d: [8.8, 11.0], weight: 8 },
+  shop: { w: [7.2, 9.0], d: [6.0, 7.5], weight: 12 },
+  gym: { w: [40, 43], d: [25, 28], weight: 0 },
 };
 // 调色板: 墙面(白/米/浅红砖/淡蓝/灰绿/原色系), 屋顶(红瓦/灰/锈), 统一装饰色
 const WALL_COLORS = [0xe8e4da, 0xd8cbb0, 0xc08a6e, 0xa8bcc8, 0x9aa88e, 0xc9b18a, 0xd3b9a0, 0xc7c3b5];
@@ -48,10 +48,10 @@ const CRATE_C = 0x9a7f56;
 const WT = 0.26;            // 外墙厚
 const WT2 = 0.14;           // 上层墙厚
 const SLAB_T = 0.24;        // 楼板厚
-const WALL_H = 2.7;         // 层高(地板面→墙顶)
-const DOOR_W = 1.2, DOOR_H = 2.1;
-const WIN_W = 1.05, WIN_SILL = 1.0, WIN_H = 1.0;
-const STAIR_STEPS = 9, STAIR_W = 1.35;
+const WALL_H = 2.9;         // 层高(地板面→墙顶)
+const DOOR_W = 1.3, DOOR_H = 2.2;
+const WIN_W = 1.15, WIN_SILL = 1.05, WIN_H = 1.05;
+const STAIR_STEPS = 9, STAIR_W = 1.5;
 const BOUND = 265;
 const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
 const DOOR_TWEEN = 0.3;                   // 开关门动画时长(秒)
@@ -206,7 +206,8 @@ export class Buildings {
     for (const arch of townArchs) {
       // 双街布局: x≈-82 或 x≈-38 两排, z 散开
       const streetX = rng() < 0.5 ? -82 : -38;
-      tryPlace(arch, streetX + (rng() * 2 - 1) * 14, -20 + (rng() * 2 - 1) * 60, 26, 4.5, 5);
+      const placed = tryPlace(arch, streetX + (rng() * 2 - 1) * 14, -20 + (rng() * 2 - 1) * 60, 26, 4.5, 5);
+      if (!placed) tryPlace(arch, -60, -20, 82, 4.8, 3.5);
     }
 
     // 东部竞技场 (+180,-40): 体育馆地标 + 2 民居
@@ -275,7 +276,11 @@ export class Buildings {
         case 'shop': this.addShop(world, plot, palette, box); break;
         case 'gym': this.addGym(world, plot, palette, box); break;
       }
+      if (plot.arch !== 'gym') this.addInteriorDetails(world, plot, box, idx);
+      this.addYardCover(plot, box, idx);
     });
+
+    this.sanitizeLootSpots(world);
 
     // 合并实例化为一个 InstancedMesh
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -349,12 +354,154 @@ export class Buildings {
       const z0 = Math.min(zFrom + i * run, zFrom + (i + 1) * run);
       const z1 = Math.max(zFrom + i * run, zFrom + (i + 1) * run);
       box('floor', x0, f1, z0, x1, f1 + rise * (i + 1), z1, c, { collider: false, platform: true });
+      if (i === 1 || i === 4 || i === 7) {
+        const zm = (z0 + z1) / 2;
+        const top = f1 + rise * (i + 1);
+        box('wall', x1 - 0.05, top, zm - 0.04, x1 + 0.05, top + 0.82, zm + 0.04, RAIL_C, { collider: false });
+      }
     }
   }
 
   // 矮护栏(阻挡移动, 上方子弹可过)
   private rail(box: BoxFn, x0: number, z0: number, x1: number, z1: number, y: number, h: number): void {
     box('wall', x0, y, z0, x1, y + h, z1, RAIL_C);
+  }
+
+  // 房间隔断和家具都参与碰撞，既让室内更像正式空间，也形成可利用的近战掩体。
+  private addInteriorDetails(world: World, plot: HousePlot, box: BoxFn, idx: number): void {
+    const ix0 = plot.minX + 2, ix1 = plot.maxX - 2, iz0 = plot.minZ + 2, iz1 = plot.maxZ - 2;
+    const w = ix1 - ix0, d = iz1 - iz0;
+    const f1 = plot.flatH + 0.28;
+    const household = plot.arch === 'cottage1' || plot.arch === 'cottage2' || plot.arch === 'terrace' || plot.arch === 'apartment';
+    const multistory = plot.arch === 'cottage2' || plot.arch === 'terrace' || plot.arch === 'apartment';
+    let lootX = (ix0 + ix1) / 2;
+    let lootZ = (iz0 + iz1) / 2;
+
+    // 一层隔间为西侧楼梯保留完整通道，隔墙不再横穿踏步。
+    if (household) {
+      const splitZ = iz0 + d * 0.58;
+      const wallX0 = multistory ? ix0 + STAIR_W + 0.72 : ix0;
+      const doorX = wallX0 + (ix1 - wallX0) * 0.48;
+      this.wallRun(world, box, 'x', splitZ, wallX0, ix1, f1, f1 + WALL_H - 0.28, [
+        { a0: doorX - DOOR_W / 2, a1: doorX + DOOR_W / 2, y0: f1, y1: f1 + DOOR_H, door: true },
+      ], 0xd2c6af, WT2, -1);
+    }
+
+    // 多层建筑的箱堆按楼梯井方向分开放置，避免压住上下楼出口。
+    if (multistory) {
+      const floors = plot.arch === 'apartment' ? 2 : 1;
+      for (let floor = 1; floor <= floors; floor++) {
+        const fy = f1 + floor * (WALL_H + SLAB_T);
+        const cx = plot.arch === 'apartment'
+          ? (floor === 1 ? ix0 + w * 0.48 : ix0 + w * 0.34)
+          : ix1 - 1.15;
+        const cz = iz0 + (floor === 1 ? 1.35 : 1.5);
+        box('wall', cx - 0.45, fy, cz - 0.45, cx + 0.45, fy + 0.78, cz + 0.45, CRATE_C);
+        if (floor === floors) {
+          box('wall', cx - 0.28, fy + 0.78, cz - 0.28, cx + 0.36, fy + 1.34, cz + 0.36, CRATE_C);
+        }
+      }
+    }
+
+    if (household) {
+      // 餐桌固定在入口房的东北角，与门、楼梯和隔墙均保持通行距离。
+      const tx = ix1 - 1.55;
+      const tz = iz0 + 1.55;
+      box('wall', tx - 0.72, f1 + 0.68, tz - 0.44, tx + 0.72, f1 + 0.8, tz + 0.44, 0x806548);
+      for (const sx of [-0.57, 0.57]) for (const sz of [-0.31, 0.31]) {
+        box('wall', tx + sx - 0.045, f1, tz + sz - 0.045, tx + sx + 0.045, f1 + 0.68, tz + sz + 0.045, 0x554334, { collider: false });
+      }
+      // 南侧房间的置物架贴东墙布置，不再与餐桌或楼梯重叠。
+      const shelfX = ix1 - 0.48;
+      const shelfZ = iz1 - 1.35;
+      box('wall', shelfX - 0.32, f1, shelfZ - 0.78, shelfX + 0.32, f1 + 1.75, shelfZ + 0.78, 0x71604c);
+      for (const sy of [0.42, 0.92, 1.42]) {
+        box('wall', shelfX - 0.4, f1 + sy, shelfZ - 0.84, shelfX + 0.4, f1 + sy + 0.06, shelfZ + 0.84, 0x9b815e, { collider: false });
+      }
+      // 平房偶数编号增加床铺；多层房西侧必须完整留给楼梯。
+      if (plot.arch === 'cottage1' && idx % 2 === 0) {
+        const bedZ = iz1 - 1.8;
+        box('wall', ix0 + 0.65, f1, bedZ - 0.9, ix0 + 1.9, f1 + 0.48, bedZ + 0.9, 0x726957);
+        box('wall', ix0 + 0.68, f1 + 0.48, bedZ - 0.88, ix0 + 1.87, f1 + 0.62, bedZ + 0.88, 0x9b8f73, { collider: false });
+      }
+      lootX = tx - 1.05;
+      lootZ = tz + 0.85;
+    } else if (plot.arch === 'shop') {
+      // 商店保留原有柜台，只在后墙增加货架，避免重复家具穿插。
+      const sx0 = ix1 - 2.35;
+      box('wall', sx0, f1, iz1 - 0.5, ix1 - 0.45, f1 + 1.65, iz1 - 0.18, 0x71604c);
+      for (const sy of [0.45, 0.95, 1.45]) {
+        box('wall', sx0 - 0.06, f1 + sy, iz1 - 0.56, ix1 - 0.39, f1 + sy + 0.06, iz1 - 0.12, 0x9b815e, { collider: false });
+      }
+      lootX = sx0 - 0.55;
+      lootZ = iz1 - 1.0;
+    } else if (plot.arch === 'barn') {
+      // 谷仓西后侧为工具台，东后侧继续保留原有干草垛。
+      box('wall', ix0 + 0.5, f1 + 0.7, iz1 - 0.7, ix0 + 2.75, f1 + 0.84, iz1 - 0.28, 0x806548);
+      for (const x of [ix0 + 0.68, ix0 + 2.57]) {
+        box('wall', x - 0.06, f1, iz1 - 0.58, x + 0.06, f1 + 0.7, iz1 - 0.4, 0x554334, { collider: false });
+      }
+      lootX = ix0 + 3.35;
+      lootZ = iz1 - 1.0;
+    }
+    // 家具旁追加一个拾取点，让新增房间真正参与搜刮路线。
+    this.lootSpots.push({ x: lootX, y: f1, z: lootZ, premium: false });
+  }
+
+  // 家具和隔墙生成后统一校正拾取点，避免物资刷进实体或门板中。
+  private sanitizeLootSpots(world: World): void {
+    const radius = 0.2;
+    const offsets: ReadonlyArray<readonly [number, number]> = [
+      [0, 0], [0.75, 0], [-0.75, 0], [0, 0.75], [0, -0.75],
+      [1.1, 1.1], [-1.1, 1.1], [1.1, -1.1], [-1.1, -1.1],
+      [1.5, 0], [-1.5, 0], [0, 1.5], [0, -1.5],
+    ];
+    const blocked = (x: number, y: number, z: number): boolean => world.aabbs.some((c) => {
+      if (c.off || c.tag === 'floor' || c.tag === 'roof') return false;
+      if (y + 0.8 < c.minY || y > c.maxY) return false;
+      const dx = Math.max(c.minX - x, 0, x - c.maxX);
+      const dz = Math.max(c.minZ - z, 0, z - c.maxZ);
+      return dx * dx + dz * dz < radius * radius;
+    });
+    const accepted: LootSpot[] = [];
+    for (const spot of this.lootSpots) {
+      const plot = this.plots.find((p) => (
+        spot.x > p.minX + 2 && spot.x < p.maxX - 2
+        && spot.z > p.minZ + 2 && spot.z < p.maxZ - 2
+      ));
+      if (!plot) continue;
+      for (const [dx, dz] of offsets) {
+        const x = spot.x + dx;
+        const z = spot.z + dz;
+        if (x < plot.minX + 2.5 || x > plot.maxX - 2.5 || z < plot.minZ + 2.5 || z > plot.maxZ - 2.5) continue;
+        if (blocked(x, spot.y, z)) continue;
+        if (accepted.some((p) => Math.abs(p.y - spot.y) < 0.9 && Math.hypot(p.x - x, p.z - z) < 0.65)) continue;
+        accepted.push({ ...spot, x, z });
+        break;
+      }
+    }
+    this.lootSpots = accepted;
+  }
+
+  // 院墙、围栏和外部箱堆为房屋之间补充连续掩体，并在入口方向留出明确缺口。
+  private addYardCover(plot: HousePlot, box: BoxFn, idx: number): void {
+    const y = plot.flatH;
+    if (plot.arch === 'barn') {
+      box('wall', plot.minX + 0.3, y, plot.maxZ - 0.55, plot.maxX - 0.3, y + 0.9, plot.maxZ - 0.35, 0x80633f);
+      for (let x = plot.minX + 0.5; x < plot.maxX - 0.4; x += 2.2) {
+        box('wall', x, y, plot.maxZ - 0.68, x + 0.12, y + 1.25, plot.maxZ - 0.22, 0x57432c, { collider: false });
+      }
+    } else if (idx % 3 === 0) {
+      const c = plot.arch === 'apartment' ? 0x77746b : 0x8b806b;
+      box('wall', plot.minX + 0.35, y, plot.maxZ - 0.55, plot.minX + (plot.maxX - plot.minX) * 0.43, y + 0.82, plot.maxZ - 0.3, c);
+      box('wall', plot.minX + (plot.maxX - plot.minX) * 0.62, y, plot.maxZ - 0.55, plot.maxX - 0.35, y + 0.82, plot.maxZ - 0.3, c);
+      box('wall', plot.maxX - 0.55, y, plot.minZ + 0.5, plot.maxX - 0.3, y + 0.82, plot.maxZ - 0.3, c);
+    }
+    // 外墙角箱堆，保持离正门至少 2m。
+    const cx = plot.minX + 0.55;
+    const cz = plot.minZ + 0.7;
+    box('wall', cx, y, cz, cx + 0.9, y + 0.72, cz + 0.9, CRATE_C);
+    if (idx % 2 === 1) box('wall', cx + 0.18, y + 0.72, cz + 0.15, cx + 0.86, y + 1.32, cz + 0.83, CRATE_C);
   }
 
   // 阶梯坡屋顶(3 级: 檐口→中段→脊, ridge 沿 x 走向) + 屋脊压条
@@ -383,6 +530,12 @@ export class Buildings {
     }
     if (p.ac) {
       box('wall', ix1 + 0.02, roofY - 1.6, iz0 + 1.1, ix1 + 0.3, roofY - 1.28, iz0 + 1.5, 0xb8bcc0, { collider: false });
+    }
+    // 屋顶通风帽、检修箱和宽楼的储水箱，形成更丰富的天际线。
+    box('wall', ix0 + w * 0.28, roofY, iz0 + 0.65, ix0 + w * 0.28 + 0.28, roofY + 0.42, iz0 + 0.93, 0x737b79, { collider: false });
+    box('wall', ix0 + w * 0.44, roofY, iz0 + 0.78, ix0 + w * 0.44 + 0.42, roofY + 0.28, iz0 + 1.18, 0x909795, { collider: false });
+    if (w > 8) {
+      box('wall', ix0 + w * 0.58, roofY, iz0 + 0.55, ix0 + w * 0.58 + 0.82, roofY + 0.72, iz0 + 1.35, 0x667579, { collider: false });
     }
   }
 
@@ -554,7 +707,7 @@ export class Buildings {
       { x: ix1 - w * 0.22, y: f2, z: iz1 - d * 0.2, premium: true },
     );
     this.rail(box, stairX1, holeZ0, stairX1 + 0.08, iz1, f2, 0.95);
-    const uwt = f2 + 2.5;
+    const uwt = f2 + WALL_H - 0.15;
     const win2 = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f2 + 0.9, y1: f2 + 0.9 + WIN_H });
     this.wallRun(world, box, 'x', iz0, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.35)], p.wall, WT2, 1);
     this.wallRun(world, box, 'x', iz1, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.55)], p.wall, WT2, -1);
@@ -598,7 +751,7 @@ export class Buildings {
 
     // 二层房间占北 55%: 房间南墙(zRoom)开门通向露台
     const zRoom = iz0 + d * 0.55;
-    const uwt = f2 + 2.5;
+    const uwt = f2 + WALL_H - 0.15;
     const win2 = (a0: number): Op => ({ a0, a1: a0 + WIN_W, y0: f2 + 0.9, y1: f2 + 0.9 + WIN_H });
     // 房间北墙(外墙延伸) + 东西墙(北段) + 房间南墙(带门)
     this.wallRun(world, box, 'x', iz0, ix0, ix1, f2, uwt, [win2(ix0 + w * 0.4)], p.wall, WT2, 1);

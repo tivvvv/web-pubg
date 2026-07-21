@@ -6,3 +6,4 @@ const container = document.getElementById('game-container');
 if (!container) throw new Error('缺少 #game-container');
 
 new Game(container);
+document.body.classList.add('app-ready');

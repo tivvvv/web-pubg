@@ -761,6 +761,7 @@ export class World {
     // ---- 地标与场景道具(观景台/风车/山地遗迹/码头/围栏/电杆/沿岸芦苇) ----
     this.addScenicLandmarks(scene);
     this.addEnvironmentProps(scene);
+    this.addRegionalTacticalProps(scene);
     this.addShoreDetails(scene);
 
     // ---- 双桥(木板面+护栏+桥墩, 可走平台) ----
@@ -906,16 +907,20 @@ export class World {
       g.add(m);
       return m;
     };
+    const deckTop = 5.6;
     for (const [x, z] of [[-2.35, -2.35], [2.35, -2.35], [-2.35, 2.35], [2.35, 2.35]] as const) {
-      const leg = box(0.34, 5.6, 0.34, x, 2.8, z, woodDark);
+      const footY = this.getHeight(site.x + x, site.z + z) - h;
+      const legH = Math.max(0.7, deckTop - footY);
+      const leg = box(0.34, legH, 0.34, x, footY + legH / 2, z, woodDark);
       leg.rotation.z = x > 0 ? -0.035 : 0.035;
-      this.addCollider({ kind: 'cyl', x: site.x + x, z: site.z + z, r: 0.3, y0: h, y1: h + 5.7, tag: 'rock' });
+      this.addCollider({ kind: 'cyl', x: site.x + x, z: site.z + z, r: 0.3, y0: h + footY, y1: h + deckTop, tag: 'rock' });
     }
     box(5.8, 0.28, 5.8, 0, 5.55, 0);
-    for (const z of [-2.7, 2.7]) {
-      box(5.8, 0.12, 0.12, 0, 6.4, z, woodDark);
-      for (const x of [-2.7, 0, 2.7]) box(0.12, 0.9, 0.12, x, 6.0, z, woodDark);
-    }
+    // 北侧护栏完整保留，南侧中央为楼梯入口留出 1.8m 缺口。
+    box(5.8, 0.12, 0.12, 0, 6.4, -2.7, woodDark);
+    for (const x of [-2.7, 0, 2.7]) box(0.12, 0.9, 0.12, x, 6.0, -2.7, woodDark);
+    for (const [x, w] of [[-1.9, 2], [1.9, 2]] as const) box(w, 0.12, 0.12, x, 6.4, 2.7, woodDark);
+    for (const x of [-2.7, -0.9, 0.9, 2.7]) box(0.12, 0.9, 0.12, x, 6.0, 2.7, woodDark);
     for (const x of [-2.7, 2.7]) {
       box(0.12, 0.12, 5.4, x, 6.4, 0, woodDark);
       for (const z of [-1.5, 1.5]) box(0.12, 0.9, 0.12, x, 6.0, z, woodDark);
@@ -928,14 +933,23 @@ export class World {
     roof.castShadow = true;
     g.add(roof);
     this.addCollider({ kind: 'aabb', minX: site.x - 2.9, minY: h + 5.32, minZ: site.z - 2.9, maxX: site.x + 2.9, maxY: h + 5.6, maxZ: site.z + 2.9, tag: 'floor' });
-    this.platforms.push({ minX: site.x - 2.9, minZ: site.z - 2.9, maxX: site.x + 2.9, maxZ: site.z + 2.9, top: h + 5.6 });
-    for (let i = 0; i < 12; i++) {
-      const top = (i + 1) * 0.45;
-      const z = 6.2 - i * 0.47;
-      box(1.4, 0.18, 0.62, 0, top - 0.09, z);
+    this.platforms.push({ minX: site.x - 2.9, minZ: site.z - 2.9, maxX: site.x + 2.9, maxZ: site.z + 2.9, top: h + deckTop });
+    // 楼梯从南侧地面连续抬升到平台边缘，最上一级与楼板重叠，避免悬空或钻入亭底。
+    const stairOuterZ = 8.4;
+    const stairInnerZ = 2.72;
+    const stairBottomGround = this.getHeight(site.x, site.z + stairOuterZ - 0.2) - h;
+    const stairBottomTop = stairBottomGround + 0.22;
+    const stairCount = Math.max(15, Math.ceil((deckTop - stairBottomTop) / 0.38) + 1);
+    const stairRun = (stairOuterZ - stairInnerZ) / stairCount;
+    for (let i = 0; i < stairCount; i++) {
+      const zFar = stairOuterZ - i * stairRun;
+      const zNear = stairOuterZ - (i + 1) * stairRun;
+      const top = stairBottomTop + (deckTop - stairBottomTop) * (i / (stairCount - 1));
+      const z = (zFar + zNear) / 2;
+      box(1.65, 0.2, zFar - zNear + 0.04, 0, top - 0.1, z);
       this.platforms.push({
-        minX: site.x - 0.7, minZ: site.z + z - 0.31,
-        maxX: site.x + 0.7, maxZ: site.z + z + 0.31, top: h + top,
+        minX: site.x - 0.825, minZ: site.z + zNear,
+        maxX: site.x + 0.825, maxZ: site.z + zFar, top: h + top,
       });
     }
     scene.add(g);
@@ -1169,6 +1183,64 @@ export class World {
     scene.add(postMesh, railMesh);
   }
 
+  private addRegionalTacticalProps(scene: THREE.Scene): void {
+    const mats = {
+      concrete: new THREE.MeshStandardMaterial({ color: 0x777974, roughness: 0.95 }),
+      wood: new THREE.MeshStandardMaterial({ color: 0x806344, roughness: 0.94 }),
+      hay: new THREE.MeshStandardMaterial({ color: 0xc6a84f, roughness: 1 }),
+      metal: new THREE.MeshStandardMaterial({ color: 0x58656a, roughness: 0.72, metalness: 0.22 }),
+      sand: new THREE.MeshStandardMaterial({ color: 0x9b865b, roughness: 1 }),
+    };
+    const box = (x: number, z: number, w: number, h: number, d: number, mat: THREE.Material, yaw = 0, block = true): void => {
+      if (this.inPlot(x, z, Math.hypot(w, d) * 0.5 + 0.8)) return;
+      const y = this.getHeight(x, z);
+      if (y < WATER_Y + 0.12) return;
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      mesh.position.set(x, y + h / 2, z);
+      mesh.rotation.y = yaw;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      if (block) {
+        // 碰撞使用旋转后的保守 AABB，轻微放宽转角但不产生穿透。
+        const cw = Math.abs(Math.cos(yaw)) * w + Math.abs(Math.sin(yaw)) * d;
+        const cd = Math.abs(Math.sin(yaw)) * w + Math.abs(Math.cos(yaw)) * d;
+        this.addCollider({ kind: 'aabb', minX: x - cw / 2, minY: y, minZ: z - cd / 2, maxX: x + cw / 2, maxY: y + h, maxZ: z + cd / 2, tag: 'wall' });
+      }
+    };
+    // 磐石城: 混凝土路障和沙袋交错，形成可推进的街巷掩体。
+    for (const [x, z, a] of [[-73, -8, 0.15], [-48, -38, -0.2], [-92, 12, 0.3], [-28, -3, -0.15]] as const) {
+      box(x, z, 4.2, 0.9, 0.7, mats.concrete, a);
+      box(x + 2.5, z + 1.2, 1.8, 0.65, 0.75, mats.sand, a + 0.25);
+    }
+    // 铁环竞技场: 场馆外围集装箱和拒马，适合绕侧与近距突击。
+    for (const [x, z, a] of [[151, -60, 0], [208, -58, Math.PI / 2], [153, -14, 0.1], [211, -20, Math.PI / 2]] as const) {
+      box(x, z, 5.4, 2.25, 2.15, mats.metal, a);
+      box(x + Math.cos(a) * 3.7, z - Math.sin(a) * 3.7, 2.2, 0.8, 0.65, mats.concrete, a);
+    }
+    // 丰禾农场: 成组草垛和矮木栏，掩体高度支持蹲姿交火。
+    for (const [x, z] of [[-82, 174], [-5, 176], [-76, 232], [-14, 246], [-102, 208]] as const) {
+      box(x, z, 1.7, 1.25, 1.55, mats.hay, 0.2);
+      box(x + 1.45, z + 0.55, 1.25, 0.9, 1.2, mats.hay, -0.15);
+      box(x - 2.4, z - 0.8, 3.2, 0.8, 0.22, mats.wood, 0.1);
+    }
+    // 雾松林场: 原木堆和伐木箱，打断林下过长视线。
+    for (const [x, z, a] of [[-34, -184, 0.4], [42, -218, -0.3], [-12, -256, 0.15], [66, -164, 0.8]] as const) {
+      for (let i = 0; i < 3; i++) box(x, z + i * 0.48, 3.8, 0.42, 0.38, mats.wood, a);
+      box(x + 2.8, z, 1.1, 0.95, 1.1, mats.wood, a);
+    }
+    // 鹰脊哨站: 岩灰胸墙与沙袋观察位，强调制高点防守。
+    for (const [x, z, a] of [[-257, 15, 0.1], [-223, -12, -0.3], [-198, 39, 0.35], [-238, 58, -0.15]] as const) {
+      box(x, z, 4.4, 0.95, 0.72, mats.concrete, a);
+      box(x + 1.5, z + 1.1, 2.2, 0.62, 0.75, mats.sand, a + 0.45);
+    }
+    // 潮汐渔港: 防水货箱和鱼篓堆，沿岸形成短距离折线掩体。
+    for (const [x, z, a] of [[176, -236, 0.25], [205, -250, -0.2], [232, -218, 0.4], [184, -198, -0.3]] as const) {
+      box(x, z, 1.5, 1.2, 1.45, mats.wood, a);
+      box(x + 1.3, z + 0.7, 1.05, 0.82, 1.0, mats.metal, -a);
+    }
+  }
+
   private addShoreDetails(scene: THREE.Scene): void {
     const rng = mulberry32(77119);
     const stemMat = new THREE.MeshLambertMaterial({ color: 0x738b42 });
@@ -1266,7 +1338,8 @@ export class World {
     for (const pz of [z0 + 4.5, z1 - 4.5]) {
       for (const px of [bx - 1.5, bx + 1.5]) {
         const bedH = this.getHeight(px, pz);
-        box('wall', px - 0.18, bedH - 0.5, pz - 0.18, px + 0.18, deckY - 0.2, pz + 0.18);
+        const pierBottom = Math.min(bedH - 0.5, deckY - 0.45);
+        box('wall', px - 0.18, pierBottom, pz - 0.18, px + 0.18, deckY - 0.2, pz + 0.18);
       }
     }
   }
