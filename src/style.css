@@ -895,12 +895,35 @@ body {
   letter-spacing: 4px;
 }
 
-/* AWM 瞄准镜 overlay: 圆形视野 + 黑色遮罩 + 十字线 */
+#test-scenario-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: min(560px, calc(100vw - 32px));
+  padding: 9px 14px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 211, 73, 0.6);
+  border-radius: 7px;
+  background: rgba(11, 14, 9, 0.88);
+  color: #e7eadf;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+#test-scenario-panel strong {
+  color: #ffd349;
+  letter-spacing: 1px;
+}
+
+/* 独立瞄具 overlay: 红点无黑边, 2 倍保留宽视野, 4 倍强化镜筒遮罩 */
 #scope {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(circle at 50% 50%, transparent 24%, rgba(2, 3, 2, 0.985) 26%);
   z-index: 12;
 }
 
@@ -936,6 +959,79 @@ body {
   transform: translate(-50%, -50%);
   border: 2px solid rgba(8, 10, 8, 0.9);
   border-radius: 50%;
+}
+
+.sc-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #ff3a2f;
+  box-shadow: 0 0 7px rgba(255, 45, 35, 0.9);
+}
+
+.sc-tick {
+  position: absolute;
+  top: calc(50% + 6vmin);
+  width: 4vmin;
+  height: 1px;
+  background: rgba(8, 10, 8, 0.82);
+}
+
+.sc-tick-l { right: calc(50% + 1vmin); }
+.sc-tick-r { left: calc(50% + 1vmin); }
+
+.sc-range {
+  position: absolute;
+  left: calc(50% + 1vmin);
+  top: calc(50% + 7vmin);
+  color: rgba(8, 10, 8, 0.82);
+  font: 700 10px monospace;
+}
+
+#scope[data-mode='reddot'] {
+  background: none;
+}
+
+#scope[data-mode='reddot'] .sc-ring {
+  width: 12vmin;
+  height: 12vmin;
+  border: 5px solid rgba(25, 28, 24, 0.88);
+  box-shadow: 0 0 0 2px rgba(130, 140, 125, 0.35), inset 0 0 12px rgba(120, 150, 150, 0.12);
+}
+
+#scope[data-mode='reddot'] .sc-line,
+#scope[data-mode='reddot'] .sc-tick,
+#scope[data-mode='reddot'] .sc-range {
+  display: none;
+}
+
+#scope[data-mode='scope2'] {
+  background: radial-gradient(circle at 50% 50%, transparent 35%, rgba(3, 5, 3, 0.72) 38%);
+}
+
+#scope[data-mode='scope2'] .sc-ring {
+  width: 70vmin;
+  height: 70vmin;
+}
+
+#scope[data-mode='scope2'] .sc-h { left: 15%; right: 15%; }
+#scope[data-mode='scope2'] .sc-v { top: 15%; bottom: 15%; }
+#scope[data-mode='scope2'] .sc-range { display: none; }
+#scope[data-mode='scope2'] .sc-dot { width: 3px; height: 3px; }
+
+#scope[data-mode='scope4'] {
+  background: radial-gradient(circle at 50% 50%, transparent 24%, rgba(2, 3, 2, 0.985) 26%);
+}
+
+#scope[data-mode='scope4'] .sc-dot {
+  width: 3px;
+  height: 3px;
+  background: rgba(12, 14, 12, 0.95);
+  box-shadow: none;
 }
 
 /* 交互提示 kbd 芯片 */

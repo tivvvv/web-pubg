@@ -4,6 +4,7 @@ import type { ArmorState, GameStats } from './types';
 import { ARMORS, type ArmorKind } from './armor';
 import type { HealId } from './heals';
 import type { WeatherKind } from './environment';
+import type { ScopeMode } from './gunplay';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -49,6 +50,7 @@ export class Hud {
   private locationFeature = el('location-feature');
   private killfeed = el('killfeed');
   private crosshair = el('crosshair');
+  private scopeMode: ScopeMode = 'none';
   private hitmarkerEl = el('hitmarker');
   private dmgArc = el('dmg-arc');
   private toastEl = el('toast');
@@ -407,9 +409,13 @@ export class Hud {
     this.crosshair.classList.toggle('hidden', !visible);
   }
 
-  // AWM ADS 全屏瞄准镜
-  setScope(on: boolean): void {
-    el('scope').classList.toggle('hidden', !on);
+  // 按瞄具显示独立准镜, 模式变化时才更新 DOM。
+  setScope(mode: ScopeMode): void {
+    if (mode === this.scopeMode) return;
+    this.scopeMode = mode;
+    const scope = el('scope');
+    scope.classList.toggle('hidden', mode === 'none');
+    scope.dataset.mode = mode;
   }
 
   setZoneTint(on: boolean): void {

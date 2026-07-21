@@ -11,9 +11,12 @@ import { WATER_Y, WORLD_HALF } from './world';
 import { VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { clamp, lerp, turnToward } from './utils';
-import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, recoilFactorOf, sightZoomOf, spreadFactorOf } from './attachments';
+import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, recoilFactorOf, sightZoomOf } from './attachments';
 import type { Game } from './game';
 import type { WeaponId } from './types';
+import {
+  aimBlend, baseWeaponSpread, calculateAimSway, calculateWeaponSpread, scopeModeOf, smoothAimProgress,
+} from './gunplay';
 
 const BASE_FOV = 75;
 const THROW_SPEED = 15; // 满蓄力投掷速度
@@ -58,6 +61,9 @@ export class PlayerController {
   private recoilChain = 0;
   private recoilRestT = 0;
   private shotBloom = 0;
+  private aimF = 0;
+  private aimTime = 0;
+  private aimSway = { pitch: 0, yaw: 0 };
   private fireTimer = 0;
   private reloadT = 0;
   private camDist = 3.4;
@@ -97,8 +103,18 @@ export class PlayerController {
     return this.char.alive;
   }
 
+  get aimProgress(): number {
+    return this.aimF;
+  }
+
   update(dt: number, input: Input, game: Game): void {
     const c = this.char;
+    // 进入空降, 载具, 翻越或死亡时立即退出镜轴, 防止上一帧 ADS 覆盖层残留。
+    if (!c.alive || this.descent || this.driving || c.vault) {
+      this.aiming = false;
+      this.aimF = 0;
+      c.setFirstPerson(false);
+    }
     if (!c.alive) {
       if (this.driving) this.exitVehicle(game, false);
       this.updateCamera(dt, game);
@@ -148,6 +164,9 @@ export class PlayerController {
 
     const gun = c.heldGun();
     this.aiming = input.rmb && !this.reloading && gun !== null && !c.swimming && !c.knocked;
+    if (gun) this.aimF = smoothAimProgress(this.aimF, this.aiming, gun.def.id, dt);
+    else this.aimF = lerp(this.aimF, 0, 1 - Math.exp(-16 * dt));
+    this.aimTime += dt;
 
     // ---- 移动 ----
     const fwdX = Math.sin(this.yaw);
@@ -342,7 +361,7 @@ export class PlayerController {
           this.fireTimer = gun.def.fireInterval;
           const feel = RECOIL_FEEL[gun.def.id];
           const stanceControl = c.stance === 'crouch' ? 0.82 : c.stance === 'prone' ? 0.62 : 1;
-          const aimControl = this.aiming ? 0.88 : 1;
+          const aimControl = lerp(1, 0.88, aimBlend(this.aimF));
           const chainF = 1 + Math.min(this.recoilChain, 10) * 0.025;
           const recoil = gun.def.recoil * recoilFactorOf(gun) * stanceControl * aimControl;
           const verticalKick = recoil * feel.vertical * chainF;
@@ -354,18 +373,20 @@ export class PlayerController {
           this.yaw += horizontalKick * 0.12;
           this.recoilChain++;
           this.recoilRestT = Math.max(0.2, gun.def.fireInterval * 1.7);
-          const baseSpread = this.aiming ? gun.def.spreadAim : gun.def.spreadHip;
+          const baseSpread = baseWeaponSpread(gun, this.aimF);
           this.shotBloom = Math.min(0.032, this.shotBloom + baseSpread * feel.bloom);
-          c.gunKick = Math.max(c.gunKick, feel.gunKick * (this.aiming ? 0.8 : 1));
+          c.gunKick = Math.max(c.gunKick, feel.gunKick * lerp(1, 0.8, aimBlend(this.aimF)));
           acted = true;
         }
       }
-      // 散布(供射击与准星); 蹲 -20% / 趴 -40%
-      const stanceAcc = c.stance === 'crouch' ? 0.8 : c.stance === 'prone' ? 0.6 : 1;
-      const base = (this.aiming ? gun.def.spreadAim : gun.def.spreadHip) * stanceAcc * spreadFactorOf(gun);
-      const move01 = clamp(c.speed2d / 6.9, 0, 1);
-      const moveF = 1 + move01 * move01 * 1.15 + (c.grounded ? 0 : 0.8);
-      this.spreadRad = lerp(this.spreadRad, base * moveF + this.shotBloom, Math.min(1, dt * 13));
+      this.spreadRad = lerp(this.spreadRad, calculateWeaponSpread({
+        gun,
+        aimProgress: this.aimF,
+        stance: c.stance,
+        speed: c.speed2d,
+        grounded: c.grounded,
+        bloom: this.shotBloom,
+      }), Math.min(1, dt * 13));
     }
 
     // ---- 包扎打断(快于爬行的移动/跳跃/开火) ----
@@ -797,8 +818,14 @@ export class PlayerController {
 
   // 当前视线方向(含后坐力)
   getViewDir(out: THREE.Vector3): THREE.Vector3 {
-    const p = this.pitch + this.recoilP;
-    const y = this.yaw + this.recoilY;
+    const gun = this.char.heldGun();
+    if (gun) calculateAimSway(this.aimSway, gun.def.id, this.aimF, this.char.stance, this.char.speed2d, this.aimTime);
+    else {
+      this.aimSway.pitch = 0;
+      this.aimSway.yaw = 0;
+    }
+    const p = this.pitch + this.recoilP + this.aimSway.pitch;
+    const y = this.yaw + this.recoilY + this.aimSway.yaw;
     const cp = Math.cos(p);
     out.set(Math.sin(y) * cp, Math.sin(p), Math.cos(y) * cp);
     return out;
@@ -833,8 +860,9 @@ export class PlayerController {
     const c = this.char;
     const dir = this.getViewDir(this.viewDir);
     const gun = c.heldGun();
-    const zoom = this.aiming && gun ? sightZoomOf(gun) : 1;
-    const fpp = game.viewFpp;
+    const zoom = gun ? lerp(1, sightZoomOf(gun), aimBlend(this.aimF)) : 1;
+    // 装配瞄具完成开镜后让相机真正进入镜轴, 避免第三人称角色遮挡镜内视野。
+    const fpp = game.viewFpp || scopeModeOf(gun, this.aimF) !== 'none';
     c.setFirstPerson(fpp);
 
     // 陆地脚步轻微起伏, 游泳随划水节奏浮动, 侧移产生小幅镜头侧倾
@@ -875,8 +903,10 @@ export class PlayerController {
         this.pivot.z -= this.hv.y * 0.07;
       }
 
-      const targetDist = this.aiming ? (gun?.def === WEAPONS.sniper ? 1.5 : 1.9) : 3.4;
-      const shoulder = this.aiming ? 0.55 : 0.5;
+      const ads = aimBlend(this.aimF);
+      const adsDist = gun?.def === WEAPONS.sniper ? 1.5 : 1.9;
+      const targetDist = lerp(3.4, adsDist, ads);
+      const shoulder = lerp(0.5, 0.55, ads);
 
       // 期望机位
       this.camDir.copy(dir).multiplyScalar(-1);

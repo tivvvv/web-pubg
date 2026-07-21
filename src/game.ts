@@ -88,6 +88,7 @@ import { buildTransportPlane } from './planemodel';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
 import { regionOrWilderness } from './regions';
+import { scopeModeOf } from './gunplay';
 
 const TOTAL = 24;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
@@ -1496,7 +1497,7 @@ export class Game {
     this.hud.setWin(stats);
     this.hud.showScreen('win');
     this.hud.setCrosshair(0, false);
-    this.hud.setScope(false);
+    this.hud.setScope('none');
     this.hud.setZoneTint(false);
     this.hud.setPickupPrompt(null);
     this.audio.kill();
@@ -1518,7 +1519,7 @@ export class Game {
     this.hud.setKnocked(false);
     this.hud.showScreen('death');
     this.hud.setCrosshair(0, false);
-    this.hud.setScope(false);
+    this.hud.setScope('none');
     this.hud.setZoneTint(false);
     this.hud.setPickupPrompt(null);
     this.promptDoor = null;
@@ -1931,13 +1932,16 @@ export class Game {
     const region = regionOrWilderness(c.pos.x, c.pos.z);
     this.hud.setLocation(region.name, region.tier, region.feature);
 
-    // 准星: 弧度→像素; AWM 开镜时换全屏瞄准镜
+    // 准星: 弧度→像素; 装配瞄具后按类型切换独立准镜。
     const sizeH = this.renderer.domElement.height / this.renderer.getPixelRatio();
     const focal = sizeH / 2 / Math.tan((player.camera.fov * Math.PI) / 360);
     const px = Math.tan(player.spreadRad) * focal;
-    const scoped = this.state === 'playing' && c.alive && player.aiming && (gun?.def.id === 'sniper' || gun?.att.sight === 'scope4');
-    this.hud.setScope(scoped);
-    this.hud.setCrosshair(this.state === 'playing' && c.alive ? px + 6 : 0, this.state === 'playing' && c.alive && !scoped);
+    const scopeMode = this.state === 'playing' && c.alive ? scopeModeOf(gun, player.aimProgress) : 'none';
+    this.hud.setScope(scopeMode);
+    this.hud.setCrosshair(
+      this.state === 'playing' && c.alive ? px + 6 : 0,
+      this.state === 'playing' && c.alive && scopeMode === 'none',
+    );
   }
 
   private refreshMinimap(): void {
