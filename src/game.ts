@@ -955,7 +955,6 @@ export class Game {
     } else {
       const standH = this.world.groundHeight(x, z, c.pos.y + 0.3);
       if (depth > SWIM_EXIT_DEPTH && standH < WATER_Y - SWIM_EXIT_DEPTH) return;
-      if (c.pos.y < standH - 0.08) return;
       c.swimming = false;
       c.swimDip = 0;
       c.pos.y = Math.max(c.pos.y, standH);
@@ -1036,7 +1035,11 @@ export class Game {
   playerShot(): boolean {
     const player = this.player as PlayerController;
     this.tmpOrigin.copy(player.camera.position);
-    player.camera.getWorldDirection(this.tmpDir); // 屏幕正中心, 含肩部视差修正
+    player.getViewDir(this.tmpDir);
+    player.char.eyePos(this.tmpEnd);
+    if (!this.viewFpp) this.tmpEnd.y -= 0.04;
+    this.tmpEnd.addScaledVector(this.tmpDir, 14);
+    this.tmpDir.subVectors(this.tmpEnd, this.tmpOrigin).normalize(); // 本帧准星方向 + 第三人称肩部视差
     return this.fireWeapon(player.char, this.tmpOrigin, this.tmpDir, player.spreadRad);
   }
 

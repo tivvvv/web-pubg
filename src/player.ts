@@ -8,9 +8,10 @@ import { MELEE, WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF } from './world';
 import { VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
-import { clamp, lerp } from './utils';
+import { clamp, lerp, turnToward } from './utils';
 import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, recoilFactorOf, sightZoomOf, spreadFactorOf } from './attachments';
 import type { Game } from './game';
+import type { WeaponId } from './types';
 
 const BASE_FOV = 75;
 const THROW_SPEED = 15; // 满蓄力投掷速度
@@ -19,6 +20,21 @@ const FREEFALL_STEER_RESPONSE = 5; // 自由落体转向响应
 const CANOPY_STEER_SPEED = 12;
 const CANOPY_STEER_RESPONSE = 1.6;
 const AIR_STEER_DRAG = 1.2; // 松开方向键后保留少量惯性
+
+interface RecoilFeel {
+  vertical: number;
+  horizontal: number;
+  bloom: number;
+  gunKick: number;
+}
+
+const RECOIL_FEEL: Record<WeaponId, RecoilFeel> = {
+  pistol: { vertical: 0.95, horizontal: 0.22, bloom: 0.32, gunKick: 0.045 },
+  rifle: { vertical: 1.0, horizontal: 0.42, bloom: 0.46, gunKick: 0.055 },
+  smg: { vertical: 0.78, horizontal: 0.5, bloom: 0.52, gunKick: 0.045 },
+  sniper: { vertical: 1.35, horizontal: 0.16, bloom: 0.2, gunKick: 0.12 },
+  shotgun: { vertical: 1.2, horizontal: 0.3, bloom: 0.16, gunKick: 0.1 },
+};
 
 export class PlayerController {
   readonly char: Character;
@@ -34,16 +50,28 @@ export class PlayerController {
   driving: Vehicle | null = null; // 驾驶中的载具
 
   private recoilP = 0;
+  private recoilY = 0;
+  private recoilChain = 0;
+  private recoilRestT = 0;
+  private shotBloom = 0;
   private fireTimer = 0;
   private reloadT = 0;
   private camDist = 3.4;
   private fov = BASE_FOV;
   private hv = new THREE.Vector2(); // 空降水平速度
+  private moveVel = new THREE.Vector2(); // 玩家地面/游泳水平惯性
   private stepAcc = 0;
   private swimAcc = 0;      // 游泳划水距离累计
   private swimToastT = 0;   // '游泳中无法攻击'提示节流
   private throwHold = false; // 正在按住左键蓄力瞄准
   private holdT = 0;         // 蓄力时长
+  private jumpHeld = false;
+  private jumpBufferT = 0;
+  private coyoteT = 0;
+  private camBobPhase = 0;
+  private camBob = 0;
+  private camRoll = 0;
+  private landDip = 0;
   spreadRad = 0.004;
 
   private viewDir = new THREE.Vector3();
@@ -78,11 +106,17 @@ export class PlayerController {
     const zoomScale = this.fov / BASE_FOV;
     this.yaw -= dx * 0.0021 * zoomScale;
     this.pitch = clamp(this.pitch - dy * 0.0021 * zoomScale, -1.25, 1.35);
-    this.recoilP *= Math.exp(-8 * dt);
+    this.recoilP *= Math.exp(-9 * dt);
+    this.recoilY *= Math.exp(-12 * dt);
+    this.shotBloom *= Math.exp(-(this.aiming ? 8.5 : 6) * dt);
+    this.recoilRestT = Math.max(0, this.recoilRestT - dt);
+    if (this.recoilRestT <= 0) this.recoilChain = Math.max(0, this.recoilChain - dt * 10);
+    this.landDip *= Math.exp(-11 * dt);
 
     // ---- 空降阶段: 舱内/自由落体/开伞滑翔(全程禁射击/道具/姿态) ----
     if (this.descent) {
       this.updateDescent(dt, input, game);
+      this.jumpHeld = input.keys.has('Space');
       if (this.descent === 'plane') this.planeCamera(dt, dx, dy, game);
       else this.updateCamera(dt, game);
       return;
@@ -123,38 +157,63 @@ export class PlayerController {
     if (input.keys.has('KeyD')) { wx += rightX; wz += rightZ; }
     if (input.keys.has('KeyA')) { wx -= rightX; wz -= rightZ; }
     const wlen = Math.hypot(wx, wz);
-    let vx = 0;
-    let vz = 0;
     const sprint = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
     // 疾跑/跳跃自动站起(仅站立可疾跑, 站/蹲可跳)
     if (sprint && wlen > 0.001 && !c.knocked && !c.swimming && c.stance !== 'stand') c.setStance('stand');
+    let targetVx = 0;
+    let targetVz = 0;
+    let sprintActive = false;
     let jumped = false;
     if (wlen > 0.001) {
       wx /= wlen;
       wz /= wlen;
-      const forwardish = (wx * fwdX + wz * fwdZ) > 0.3;
-      let speed = 4.3;
+      const forwardDot = wx * fwdX + wz * fwdZ;
+      const strafeDot = wx * rightX + wz * rightZ;
+      let speed = 4.55;
       if (c.knocked) speed = 0.6; // 倒地爬行(仅移动, 无其他动作)
-      else if (c.swimming) speed = sprint ? SWIM_SPRINT_SPEED : SWIM_SPEED;
+      else if (c.swimming) {
+        sprintActive = sprint && forwardDot > -0.15;
+        speed = sprintActive ? SWIM_SPRINT_SPEED : SWIM_SPEED;
+        speed *= forwardDot < -0.2 ? 0.72 : 1 - Math.abs(strafeDot) * 0.1;
+      }
       else if (this.aiming) speed = 2.7;
-      else if (sprint && forwardish && c.stance === 'stand') speed = 6.6;
+      else if (sprint && forwardDot > 0.35 && c.stance === 'stand') {
+        speed = 6.9;
+        sprintActive = true;
+      } else {
+        speed *= forwardDot < -0.2 ? 0.78 : 1 - Math.abs(strafeDot) * 0.08;
+      }
       if (!c.swimming && !c.knocked) {
         speed *= c.stance === 'crouch' ? 0.5 : c.stance === 'prone' ? 0.25 : 1; // 蹲 50% / 趴 25% 爬行
         const groundH = game.world.getHeight(c.pos.x, c.pos.z);
-        if (c.pos.y < WATER_Y + 0.15 && groundH < WATER_Y) speed *= 0.55; // 涉水
-      }
-      vx = wx * speed;
-      vz = wz * speed;
-      // 脚步声(趴下显著变轻)
-      if (c.grounded && !c.swimming) {
-        this.stepAcc += speed * dt;
-        if (this.stepAcc > 2.7) {
-          this.stepAcc = 0;
-          game.audio.step(c.stance === 'prone' ? 0.35 : c.stance === 'crouch' ? 0.6 : 1);
+        const wadeDepth = WATER_Y - groundH;
+        if (c.pos.y < WATER_Y + 0.15 && wadeDepth > 0) {
+          speed *= lerp(0.84, 0.55, clamp(wadeDepth / 0.85, 0, 1));
         }
       }
+      targetVx = wx * speed;
+      targetVz = wz * speed;
     }
-    if (input.keys.has('Space') && c.grounded && !c.swimming && !c.knocked && c.vaultCd <= 0) {
+    // 地面起步快, 收步更利落; 空中和水中保留可控惯性
+    const hasMoveInput = wlen > 0.001;
+    const response = c.swimming
+      ? hasMoveInput ? 5.2 : 3.8
+      : c.knocked
+        ? hasMoveInput ? 9 : 12
+        : c.grounded
+          ? hasMoveInput ? (sprintActive ? 10 : 14) : 18
+          : hasMoveInput ? 3.6 : 1.2;
+    const moveBlend = 1 - Math.exp(-response * dt);
+    this.moveVel.x = lerp(this.moveVel.x, targetVx, moveBlend);
+    this.moveVel.y = lerp(this.moveVel.y, targetVz, moveBlend);
+    if (!hasMoveInput && this.moveVel.lengthSq() < 0.0025) this.moveVel.set(0, 0);
+
+    const jumpDown = input.keys.has('Space');
+    if (jumpDown && !this.jumpHeld) this.jumpBufferT = 0.12;
+    this.jumpHeld = jumpDown;
+    this.jumpBufferT = Math.max(0, this.jumpBufferT - dt);
+    this.coyoteT = c.grounded ? 0.1 : Math.max(0, this.coyoteT - dt);
+    if (this.jumpBufferT > 0 && this.coyoteT > 0 && !c.swimming && !c.knocked && c.vaultCd <= 0) {
       // 先尝试翻越: 站/蹲朝可翻越障碍(趴下/恢复读条中不可翻越)
       let vaulted = false;
       if (c.stance !== 'prone' && wlen > 0.001 && game.healT <= 0) {
@@ -162,6 +221,7 @@ export class PlayerController {
         if (probe) {
           if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
           startVault(c, probe);
+          this.moveVel.set(0, 0);
           game.audio.vault();
           vaulted = true;
         }
@@ -172,24 +232,54 @@ export class PlayerController {
         c.grounded = false;
         jumped = true;
       }
+      this.jumpBufferT = 0;
+      this.coyoteT = 0;
     }
+    const wasSwimming = c.swimming;
     const wasAir = !c.grounded;
+    const fallSpeed = c.vy;
     if (c.swimming) {
-      c.applySwim(vx, vz, dt, game.world);
+      c.applySwim(this.moveVel.x, this.moveVel.y, dt, game.world);
       // 划水声 + 小水花(按划水距离节流)
       this.swimAcc += c.speed2d * dt;
-      const strokeDist = sprint ? 1.15 : 1.7;
+      const strokeDist = sprintActive ? 1.05 : 1.65;
       if (this.swimAcc > strokeDist) {
         this.swimAcc = 0;
         game.audio.swimStroke();
         game.effects.splashSmall(this.tmpSwim.set(c.pos.x, WATER_Y + 0.04, c.pos.z));
       }
     } else {
-      c.applyMove(vx, vz, dt, game.world);
-      if (wasAir && c.grounded) game.audio.jumpLand();
+      c.applyMove(this.moveVel.x, this.moveVel.y, dt, game.world);
+      if (wasAir && c.grounded) {
+        game.audio.jumpLand();
+        this.landDip = Math.max(this.landDip, clamp(Math.abs(fallSpeed) * 0.012, 0.035, 0.14));
+      }
     }
     game.updateSwim(c);
-    c.yaw = this.yaw;
+    if (!wasSwimming && c.swimming) {
+      this.moveVel.multiplyScalar(0.55);
+      this.swimAcc = 0;
+    } else if (wasSwimming && !c.swimming) {
+      this.moveVel.multiplyScalar(0.65);
+      this.swimAcc = 0;
+      this.landDip = Math.max(this.landDip, 0.045);
+    }
+    if (c.swimming && c.speed2d > 0.15) {
+      c.yaw = turnToward(c.yaw, Math.atan2(this.moveVel.x, this.moveVel.y), dt * 4.8);
+    } else {
+      c.yaw = this.yaw;
+    }
+    const lateralSpeed = this.moveVel.x * rightX + this.moveVel.y * rightZ;
+    c.moveLean = lerp(c.moveLean, c.swimming ? 0 : clamp(lateralSpeed / 6.9, -1, 1), Math.min(1, dt * 9));
+    // 脚步按真实位移累计, 撞墙和加速阶段不会播放虚假高频脚步
+    if (c.grounded && !c.swimming && c.speed2d > 0.15) {
+      this.stepAcc += c.speed2d * dt;
+      const stepDist = sprintActive ? 2.2 : c.stance === 'prone' ? 1.65 : c.stance === 'crouch' ? 2.1 : 2.55;
+      if (this.stepAcc > stepDist) {
+        this.stepAcc -= stepDist;
+        game.audio.step(c.stance === 'prone' ? 0.35 : c.stance === 'crouch' ? 0.6 : sprintActive ? 1.12 : 1);
+      }
+    }
     // ADS: 枪械随视线俯仰(平滑); 换弹进度供模型下沉/弹匣脱落动画
     c.aimPitch = lerp(c.aimPitch, this.aiming ? this.pitch : 0, Math.min(1, dt * 12));
 
@@ -246,17 +336,32 @@ export class PlayerController {
           this.startReload(game);
         } else if (game.playerShot()) {
           this.fireTimer = gun.def.fireInterval;
-          const recoil = gun.def.recoil * recoilFactorOf(gun);
-          this.recoilP += recoil * (c.stance === 'crouch' ? 0.85 : c.stance === 'prone' ? 0.65 : 1);
-          this.pitch = clamp(this.pitch + recoil * 0.3, -1.25, 1.35);
+          const feel = RECOIL_FEEL[gun.def.id];
+          const stanceControl = c.stance === 'crouch' ? 0.82 : c.stance === 'prone' ? 0.62 : 1;
+          const aimControl = this.aiming ? 0.88 : 1;
+          const chainF = 1 + Math.min(this.recoilChain, 10) * 0.025;
+          const recoil = gun.def.recoil * recoilFactorOf(gun) * stanceControl * aimControl;
+          const verticalKick = recoil * feel.vertical * chainF;
+          const horizontalKick = (Math.random() * 2 - 1) * recoil * feel.horizontal * (0.75 + chainF * 0.25);
+          this.recoilP += verticalKick;
+          this.recoilY += horizontalKick;
+          // 少量永久枪口上跳需要玩家压枪, 大部分瞬时反馈会自动回正
+          this.pitch = clamp(this.pitch + verticalKick * 0.2, -1.25, 1.35);
+          this.yaw += horizontalKick * 0.12;
+          this.recoilChain++;
+          this.recoilRestT = Math.max(0.2, gun.def.fireInterval * 1.7);
+          const baseSpread = this.aiming ? gun.def.spreadAim : gun.def.spreadHip;
+          this.shotBloom = Math.min(0.032, this.shotBloom + baseSpread * feel.bloom);
+          c.gunKick = Math.max(c.gunKick, feel.gunKick * (this.aiming ? 0.8 : 1));
           acted = true;
         }
       }
       // 散布(供射击与准星); 蹲 -20% / 趴 -40%
       const stanceAcc = c.stance === 'crouch' ? 0.8 : c.stance === 'prone' ? 0.6 : 1;
       const base = (this.aiming ? gun.def.spreadAim : gun.def.spreadHip) * stanceAcc * spreadFactorOf(gun);
-      const moveF = 1 + (c.speed2d / 6.6) * 0.9 + (c.grounded ? 0 : 0.7);
-      this.spreadRad = lerp(this.spreadRad, base * moveF, Math.min(1, dt * 12));
+      const move01 = clamp(c.speed2d / 6.9, 0, 1);
+      const moveF = 1 + move01 * move01 * 1.15 + (c.grounded ? 0 : 0.8);
+      this.spreadRad = lerp(this.spreadRad, base * moveF + this.shotBloom, Math.min(1, dt * 13));
     }
 
     // ---- 包扎打断(快于爬行的移动/跳跃/开火) ----
@@ -422,12 +527,15 @@ export class PlayerController {
     c.vy = 0;
     this.vy = 0;
     this.hv.set(0, 0);
+    this.moveVel.set(0, 0);
+    this.landDip = 0.08;
     this.descent = null;
     c.airPose = null;
     c.airSteerRight = 0;
     c.airSteerForward = 0;
     c.stance = 'stand';
     c.stanceF = 0;
+    c.moveLean = 0;
     c.removeCanopy();
     game.audio.windStop();
     game.audio.jumpLand();
@@ -510,6 +618,8 @@ export class PlayerController {
     c.airPose = 'sit';
     c.stance = 'stand';
     c.stanceF = 0;
+    c.moveLean = 0;
+    this.moveVel.set(0, 0);
     seatWorld(v, c.pos);
     c.yaw = v.yaw;
     this.yaw = v.yaw;
@@ -541,6 +651,8 @@ export class PlayerController {
     c.stance = 'stand';
     c.stanceF = 0;
     c.vy = 0;
+    c.moveLean = 0;
+    this.moveVel.set(0, 0);
     v.driver = null;
     this.driving = null;
     game.audio.engineStop();
@@ -675,8 +787,9 @@ export class PlayerController {
   // 当前视线方向(含后坐力)
   getViewDir(out: THREE.Vector3): THREE.Vector3 {
     const p = this.pitch + this.recoilP;
+    const y = this.yaw + this.recoilY;
     const cp = Math.cos(p);
-    out.set(Math.sin(this.yaw) * cp, Math.sin(p), Math.cos(this.yaw) * cp);
+    out.set(Math.sin(y) * cp, Math.sin(p), Math.cos(y) * cp);
     return out;
   }
 
@@ -713,9 +826,28 @@ export class PlayerController {
     const fpp = game.viewFpp;
     c.setFirstPerson(fpp);
 
+    // 陆地脚步轻微起伏, 游泳随划水节奏浮动, 侧移产生小幅镜头侧倾
+    let targetBob = 0;
+    if (c.swimming) {
+      const swimMoveF = clamp(c.speed2d / SWIM_SPRINT_SPEED, 0, 1);
+      targetBob = Math.sin(c.swimT * 3.6) * (0.008 + swimMoveF * 0.025);
+    } else if (c.grounded && c.speed2d > 0.2 && !c.knocked) {
+      const speedF = clamp(c.speed2d / 6.9, 0, 1);
+      this.camBobPhase += dt * (6.5 + c.speed2d * 1.05);
+      targetBob = Math.sin(this.camBobPhase * 2) * (0.006 + speedF * 0.025);
+    }
+    this.camBob = lerp(this.camBob, targetBob, Math.min(1, dt * 12));
+    const swimRoll = c.swimming
+      ? Math.sin(c.swimT * 1.8) * clamp(c.speed2d / SWIM_SPRINT_SPEED, 0, 1) * 0.012
+      : 0;
+    const targetRoll = swimRoll - c.moveLean * (fpp ? 0.018 : 0.009);
+    this.camRoll = lerp(this.camRoll, targetRoll, Math.min(1, dt * 9));
+    const verticalFeel = this.camBob - this.landDip;
+
     if (fpp) {
       // 第一人称: 相机即眼位(随姿态 1.62/1.1/0.35), 直接看向, 无防穿拉近(camDist 保留供 TPP 恢复)
       this.camera.position.set(c.pos.x, c.pos.y + c.eyeHeight(), c.pos.z);
+      this.camera.position.y += verticalFeel;
       if (game.shakeAmp > 0.002) {
         this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
         this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
@@ -725,6 +857,7 @@ export class PlayerController {
       this.camera.lookAt(this.lookAt);
     } else {
       this.pivot.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.04, c.pos.z);
+      this.pivot.y += verticalFeel * 0.42;
       if (this.descent === 'freefall') {
         // 保留少量相机滞后以呈现水平位移
         this.pivot.x -= this.hv.x * 0.07;
@@ -779,12 +912,16 @@ export class PlayerController {
       this.lookAt.copy(this.pivot).addScaledVector(dir, 14);
       this.camera.lookAt(this.lookAt);
     }
+    this.camera.rotateZ(this.camRoll);
 
     // FOV 缩放
     const swimSprintF = c.swimming
       ? clamp((c.speed2d - SWIM_SPEED) / (SWIM_SPRINT_SPEED - SWIM_SPEED), 0, 1)
       : 0;
-    const targetFov = (BASE_FOV + swimSprintF * 4) / zoom;
+    const groundSprintF = !c.swimming && !this.aiming && c.stance === 'stand'
+      ? clamp((c.speed2d - 4.8) / (6.9 - 4.8), 0, 1)
+      : 0;
+    const targetFov = (BASE_FOV + groundSprintF * 2.8 + swimSprintF * 5) / zoom;
     this.fov = lerp(this.fov, targetFov, Math.min(1, dt * 10));
     if (Math.abs(this.fov - this.camera.fov) > 0.05) {
       this.camera.fov = this.fov;

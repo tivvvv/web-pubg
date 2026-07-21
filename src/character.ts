@@ -12,8 +12,8 @@ import { clamp } from './utils';
 
 export type Stance = 'stand' | 'crouch' | 'prone';
 const STANCE_TARGET: Record<Stance, number> = { stand: 0, crouch: 1, prone: 2 };
-export const SWIM_SPEED = 2.2;
-export const SWIM_SPRINT_SPEED = 3.6;
+export const SWIM_SPEED = 2.6;
+export const SWIM_SPRINT_SPEED = 4.8;
 export const SWIM_ENTER_DEPTH = 1.1;
 export const SWIM_EXIT_DEPTH = 0.45;
 
@@ -314,9 +314,12 @@ export class Character {
   kills = 0;
   reload01 = 0;        // 换弹进度 0..1(0=未换弹), 玩家控制器每帧写入
   aimPitch = 0;        // ADS 时枪械俯仰(玩家控制器写入), bot 恒 0
+  gunKick = 0;         // 开枪瞬间的枪身后坐位移
+  moveLean = 0;        // 左右移动时的身体侧倾 -1..1
 
   private heldKey = '';               // 已同步的持械外观(模型 id + 配件)
   private armorKey = 0;              // 已同步的护具外观(helmetLvl*100+vestLvl*10+packLvl)
+  private firstPerson = false;
   private helmetMesh: THREE.Group | null = null;
   private vestMesh: THREE.Group | null = null;
   private packMesh: THREE.Group | null = null;
@@ -438,6 +441,7 @@ export class Character {
 
   // 第一人称切换: 隐藏头部+头盔防穿模, 武器锚点上抬靠向视线中心(每帧幂等调用, 零分配)
   setFirstPerson(fpp: boolean): void {
+    this.firstPerson = fpp;
     this.parts.head.visible = !fpp;
     if (this.helmetMesh) this.helmetMesh.visible = !fpp;
     this.parts.gun.position.set(fpp ? 0.14 : 0.19, fpp ? 1.38 : 1.26, 0.34);
@@ -492,20 +496,24 @@ export class Character {
     }
   }
 
-  // 游泳位移: 水平限速由调用方保证; Y 锁定水面浮沉, 高处落水先下潜再浮起
+  // 游泳位移: 水平限速由调用方保证; Y 锁定水面浮沉, 岸边保留少量推进避免突然刹停
   applySwim(vx: number, vz: number, dt: number, world: World): void {
+    const oldX = this.pos.x;
+    const oldZ = this.pos.z;
     const startDepth = WATER_Y - world.getHeight(this.pos.x, this.pos.z);
     const startStandH = world.groundHeight(this.pos.x, this.pos.z, this.pos.y + 0.3);
     if (startDepth <= SWIM_EXIT_DEPTH || startStandH >= WATER_Y - SWIM_EXIT_DEPTH) {
-      vx = 0;
-      vz = 0;
+      vx *= 0.35;
+      vz *= 0.35;
     }
     this.pos.x += vx * dt;
     this.pos.z += vz * dt;
     world.resolveCollision(this.pos, this.radius);
-    const speed = Math.hypot(vx, vz);
-    this.swimT += dt * clamp(speed / SWIM_SPEED, 0.65, 1.7);
-    const bob = Math.sin(this.swimT * 2.3) * 0.045;
+    const speed = Math.hypot(this.pos.x - oldX, this.pos.z - oldZ) / Math.max(dt, 1e-4);
+    const speedF = clamp(speed / SWIM_SPEED, 0, 1);
+    const sprintF = clamp((speed - SWIM_SPEED) / (SWIM_SPRINT_SPEED - SWIM_SPEED), 0, 1);
+    this.swimT += dt * (0.45 + speedF * 0.65 + sprintF * 0.55);
+    const bob = Math.sin(this.swimT * 2.5) * (0.025 + speedF * 0.018 + sprintF * 0.012);
     const groundY = world.groundHeight(this.pos.x, this.pos.z, this.pos.y + 0.3);
     const depth = WATER_Y - groundY;
     const shoreF = clamp((0.8 - depth) / (0.8 - SWIM_EXIT_DEPTH), 0, 1);
@@ -516,7 +524,8 @@ export class Character {
       const p = 1 - this.swimDip / 0.4; // 0→1
       targetY -= Math.sin(p * Math.PI) * 0.55; // 下潜再弹回
     }
-    this.pos.y += (targetY - this.pos.y) * Math.min(1, dt * 5);
+    const buoyancy = shoreF > 0 ? 9 : 6;
+    this.pos.y += (targetY - this.pos.y) * (1 - Math.exp(-dt * buoyancy));
     this.vy = 0;
     this.grounded = false;
     this.groundH = WATER_Y - 0.03 + (groundY - (WATER_Y - 0.03)) * shoreF;
@@ -525,6 +534,8 @@ export class Character {
 
   // 通用位移: 水平速度 + 重力 + 地面/碰撞
   applyMove(vx: number, vz: number, dt: number, world: World): void {
+    const oldX = this.pos.x;
+    const oldZ = this.pos.z;
     this.pos.x += vx * dt;
     this.pos.z += vz * dt;
     this.vy -= 22 * dt;
@@ -539,7 +550,7 @@ export class Character {
     } else {
       this.grounded = this.pos.y - ground < 0.05;
     }
-    this.speed2d = Math.sqrt(vx * vx + vz * vz);
+    this.speed2d = Math.hypot(this.pos.x - oldX, this.pos.z - oldZ) / Math.max(dt, 1e-4);
   }
 
   // 模型同步: 位置/朝向/持械模型/挥击/走路摆动/倒地/姿态
@@ -554,6 +565,7 @@ export class Character {
       if (Math.abs(this.stanceF - stTarget) < 0.03) this.stanceF = stTarget;
     }
     const p = this.parts;
+    this.gunKick *= Math.exp(-dt * 15);
     // 持械模型切换(仅在栏位/武器变化时克隆)
     const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
     const wantId: WeaponModelId | null = this.airPose || this.swimming || this.knocked
@@ -572,7 +584,12 @@ export class Character {
     }
     // 枪姿态: ADS 俯仰 + 换弹下压; 弹匣中段脱落/回装
     const reloadDip = this.reload01 > 0 ? Math.sin(Math.min(1, this.reload01) * Math.PI) * 0.55 : 0;
-    p.gun.rotation.x = -this.aimPitch + reloadDip;
+    p.gun.position.set(
+      this.firstPerson ? 0.14 : 0.19,
+      (this.firstPerson ? 1.38 : 1.26) - this.gunKick * 0.12,
+      0.34 - this.gunKick,
+    );
+    p.gun.rotation.x = -this.aimPitch + reloadDip - this.gunKick * 0.55;
     if (p.held?.mag) {
       p.held.mag.visible = this.reload01 < 0.4 || this.reload01 > 0.68;
     }
@@ -657,19 +674,20 @@ export class Character {
       return;
     }
     // 游泳姿势: 水平俯身贴水面 + 交替划臂打水(swimF 平滑进出)
-    this.swimF = clamp(this.swimF + (this.swimming ? 3.4 : -6.5) * dt, 0, 1);
+    this.swimF = clamp(this.swimF + (this.swimming ? 4.2 : -7.5) * dt, 0, 1);
     if (this.swimF > 0.001) {
       const f = this.swimF;
-      const ph = this.swimT * 3.4;
+      const ph = this.swimT * 3.6;
       const sL = Math.sin(ph);
       const sR = Math.sin(ph + Math.PI);
+      const motionF = clamp(this.speed2d / SWIM_SPEED, 0, 1);
       const sprintF = this.swimming
         ? clamp((this.speed2d - SWIM_SPEED) / (SWIM_SPRINT_SPEED - SWIM_SPEED), 0, 1)
         : 0;
-      const armStroke = 0.5 + sprintF * 0.4;
-      const legKick = 0.18 + sprintF * 0.2;
+      const armStroke = 0.14 + motionF * 0.38 + sprintF * 0.38;
+      const legKick = 0.06 + motionF * 0.14 + sprintF * 0.22;
       p.inner.rotation.x = f * (Math.PI / 2 - 0.22 + sprintF * 0.08); // 加速时更水平
-      p.inner.rotation.z = Math.sin(ph * 0.5) * sprintF * 0.09 * f;
+      p.inner.rotation.z = Math.sin(ph * 0.5) * (0.012 + motionF * 0.02 + sprintF * 0.065) * f;
       p.inner.rotation.y = 0;
       p.inner.position.y = f * (0.6 + sprintF * 0.04);
       p.inner.position.z = 0;
@@ -746,6 +764,7 @@ export class Character {
     // 移动前倾(速度越大越前倾, 趴下不再加)
     const lean = Math.min(1, this.speed2d / 6.6) * 0.18 * (1 - fP);
     p.inner.rotation.x = 0.2 * fC + lean + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);
+    p.inner.rotation.z = this.moveLean * 0.075 * (1 - fP);
   }
 
   // 解析命中: 头部球体 + 身体有向盒(随 yaw 旋转), 命中填充 res 并返回 true

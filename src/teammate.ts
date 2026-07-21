@@ -2,7 +2,7 @@
 // teammate.ts - 队友 AI: 跟随/交战/乘车/跳伞; 与 enemy BotController 共享战斗原语
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { Character, moveChar } from './character';
+import { Character, moveChar, SWIM_SPRINT_SPEED } from './character';
 import type { Game } from './game';
 import type { PlayerController } from './player';
 import { isWeaponKind } from './loot';
@@ -124,7 +124,8 @@ export class TeammateController {
       const dz = p.z - c.pos.z;
       const d = Math.hypot(dx, dz) || 1;
       c.yaw = turnToward(c.yaw, Math.atan2(dx, dz), 4 * dt);
-      moveChar(c, (dx / d) * 2.2, (dz / d) * 2.2, dt, game.world);
+      const speed = Math.min(SWIM_SPRINT_SPEED, Math.max(2.8, d * 0.45));
+      moveChar(c, (dx / d) * speed, (dz / d) * speed, dt, game.world, SWIM_SPRINT_SPEED);
       c.swimAcc += c.speed2d * dt;
       if (c.swimAcc > 1.7) {
         c.swimAcc = 0;
