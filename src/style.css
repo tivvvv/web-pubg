@@ -1285,3 +1285,15 @@ body {
   0%, 100% { background: rgba(10, 12, 10, 0.5); }
   50% { background: rgba(120, 50, 10, 0.65); }
 }
+/* 启动失败兜底: 保持深色背景并给出明确恢复提示. */
+.boot-error {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #e8dfc4;
+  background: #0c0f0a;
+  font: 600 16px/1.5 system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  z-index: 9999;
+}

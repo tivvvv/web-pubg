@@ -7,10 +7,15 @@ import { Sky } from './sky';
 import type { Collider, DestructibleLike, SurfaceKind } from './types';
 import { clamp, mulberry32, smoothstep } from './utils';
 import { TACTICAL_ROUTES, type TacticalCoverKind } from './tactics';
+import { SpatialPointGrid } from './spatialgrid';
+
+type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
+type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
 
 export const WORLD_SIZE = 700;
 export const WORLD_HALF = 350;
 export const WATER_Y = 0.9;
+export const SUN_SHADOW_MAP_SIZE = 2048;
 
 // 河流中心线: z ≈ +80, 正弦蜿蜒 ±22
 export function riverZAt(x: number): number {
@@ -19,6 +24,8 @@ export function riverZAt(x: number): number {
 
 const GRID = 150; // 地形网格分段
 const CELL = WORLD_SIZE / GRID;
+const COLLISION_GRID_CELL = 20;
+const COLLISION_QUERY_PADDING = 3;
 
 export interface StaticHit {
   t: number;
@@ -67,6 +74,17 @@ export class World {
   private elapsed = 0;
   private scenicSites: ScenicSite[] = [];
   private shadowAnchor = new THREE.Vector3();
+  private readonly cylinderGrid = new SpatialPointGrid<CylinderCollider>(
+    -WORLD_HALF, -WORLD_HALF, WORLD_HALF, WORLD_HALF, COLLISION_GRID_CELL,
+  );
+  private readonly aabbGrid = new SpatialPointGrid<BoxCollider>(
+    -WORLD_HALF, -WORLD_HALF, WORLD_HALF, WORLD_HALF, COLLISION_GRID_CELL,
+  );
+  private readonly platformGrid = new SpatialPointGrid<Platform>(
+    -WORLD_HALF, -WORLD_HALF, WORLD_HALF, WORLD_HALF, COLLISION_GRID_CELL,
+  );
+  private readonly rayCylinderCandidates: CylinderCollider[] = [];
+  private readonly rayBoxCandidates: BoxCollider[] = [];
 
   get landmarks(): readonly ScenicSite[] {
     return this.scenicSites;
@@ -220,7 +238,7 @@ export class World {
     scene.add(hemi);
     this.sun = new THREE.DirectionalLight(0xffddb0, 2.5);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
     this.sun.shadow.camera.left = -60;
     this.sun.shadow.camera.right = 60;
     this.sun.shadow.camera.top = 60;
@@ -235,6 +253,9 @@ export class World {
     this.environment = new EnvironmentSystem(scene, this.sky, this.sun, hemi, fog, terrainMat, waterMat);
 
     this.buildStatics(scene);
+    for (const platform of this.platforms) {
+      this.platformGrid.insert(platform, platform.minX, platform.minZ, platform.maxX, platform.maxZ);
+    }
   }
 
   // 把矩形内地形压平到 h, 边缘 margin 内平滑过渡(作用于高度栅格)
@@ -283,8 +304,20 @@ export class World {
 
   addCollider(c: Collider): void {
     this.colliders.push(c);
-    if (c.kind === 'cyl') this.cyls.push(c);
-    else this.aabbs.push(c);
+    if (c.kind === 'cyl') {
+      this.cyls.push(c);
+      this.cylinderGrid.insert(
+        c,
+        c.x - c.r,
+        c.z - c.r,
+        c.x + c.r,
+        c.z + c.r,
+        COLLISION_QUERY_PADDING,
+      );
+    } else {
+      this.aabbs.push(c);
+      this.aabbGrid.insert(c, c.minX, c.minZ, c.maxX, c.maxZ, COLLISION_QUERY_PADDING);
+    }
   }
 
   // 点是否落在任一房屋地块内(含 margin)
@@ -1475,6 +1508,20 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     return this.environment.consumeThunder();
   }
 
+  collisionIndexStatsAt(x: number, z: number): {
+    localCylinders: number;
+    totalCylinders: number;
+    localBoxes: number;
+    totalBoxes: number;
+  } {
+    return {
+      localCylinders: this.cylinderGrid.at(x, z).length,
+      totalCylinders: this.cyls.length,
+      localBoxes: this.aabbGrid.at(x, z).length,
+      totalBoxes: this.aabbs.length,
+    };
+  }
+
   // 每帧视觉更新: 水波/植被/天空/昼夜/天气(暂停时仅保留视觉动画)
   updateVisuals(dt: number, camPos: THREE.Vector3, advanceEnvironment = false): void {
     this.elapsed += dt;
@@ -1494,12 +1541,12 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
   // 站立高度: 地形 + 可站立 AABB 顶面 + 平台(楼梯踏步), 仅取 ≤ feetY+0.45 的台阶容忍内
   groundHeight(x: number, z: number, feetY: number): number {
     let g = this.getHeight(x, z);
-    for (const b of this.aabbs) {
+    for (const b of this.aabbGrid.at(x, z)) {
       if (b.off) continue;
       if (x < b.minX - 0.06 || x > b.maxX + 0.06 || z < b.minZ - 0.06 || z > b.maxZ + 0.06) continue;
       if (b.maxY <= feetY + 0.45 && b.maxY > g) g = b.maxY;
     }
-    for (const p of this.platforms) {
+    for (const p of this.platformGrid.at(x, z)) {
       if (x < p.minX - 0.06 || x > p.maxX + 0.06 || z < p.minZ - 0.06 || z > p.maxZ + 0.06) continue;
       if (p.top <= feetY + 0.45 && p.top > g) g = p.top;
     }
@@ -1509,7 +1556,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
   // 载具碰撞: 大圆 vs 静态碰撞体推出, 返回是否发生碰撞(墙/树/岩/桥栏)
   resolveVehicle(p: THREE.Vector3, r: number): boolean {
     let hit = false;
-    for (const c of this.cyls) {
+    for (const c of this.cylinderGrid.at(p.x, p.z)) {
       if (p.y > c.y1 - 0.05) continue;
       const dx = p.x - c.x;
       const dz = p.z - c.z;
@@ -1525,7 +1572,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
       }
       hit = true;
     }
-    for (const b of this.aabbs) {
+    for (const b of this.aabbGrid.at(p.x, p.z)) {
       if (b.off) continue;
       if (b.tag === 'floor' || b.tag === 'roof') continue;
       if (p.y >= b.maxY - 0.02 || p.y + 1.4 <= b.minY) continue;
@@ -1555,7 +1602,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
 
   // 2D 圆 vs 静态碰撞体推出(仅竖直障碍: 墙/门/窗; 地板屋顶只作站立面不参与推挤)
   resolveCollision(p: THREE.Vector3, r: number): void {
-    for (const c of this.cyls) {
+    for (const c of this.cylinderGrid.at(p.x, p.z)) {
       if (p.y > c.y1 - 0.05) continue;
       const dx = p.x - c.x;
       const dz = p.z - c.z;
@@ -1570,7 +1617,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
         p.z = c.z + (dz / d) * rr;
       }
     }
-    for (const b of this.aabbs) {
+    for (const b of this.aabbGrid.at(p.x, p.z)) {
       if (b.off) continue;
       if (b.tag === 'floor' || b.tag === 'roof') continue;
       if (p.y >= b.maxY - 0.02 || p.y + 1.7 <= b.minY) continue;
@@ -1637,7 +1684,14 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     let best = maxT;
     let kind: SurfaceKind | null = null;
     let destruct: DestructibleLike | undefined;
-    for (const c of this.cyls) {
+    const endX = o.x + d.x * maxT;
+    const endZ = o.z + d.z * maxT;
+    const minX = Math.min(o.x, endX);
+    const minZ = Math.min(o.z, endZ);
+    const maxX = Math.max(o.x, endX);
+    const maxZ = Math.max(o.z, endZ);
+    const cylinders = this.cylinderGrid.queryBounds(minX, minZ, maxX, maxZ, this.rayCylinderCandidates);
+    for (const c of cylinders) {
       const ox = o.x - c.x;
       const oz = o.z - c.z;
       const a = d.x * d.x + d.z * d.z;
@@ -1656,7 +1710,8 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
       kind = c.tag;
       destruct = undefined;
     }
-    for (const b of this.aabbs) {
+    const boxes = this.aabbGrid.queryBounds(minX, minZ, maxX, maxZ, this.rayBoxCandidates);
+    for (const b of boxes) {
       if (b.off) continue;
       const t = rayAABB(o, d, b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ);
       if (t >= 0 && t < best) {
@@ -1679,7 +1734,14 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     if (len < 0.001) return false;
     tmpDir.divideScalar(len);
     if (this.raycastTerrain(a, tmpDir, len) < len) return true;
-    for (const box of this.aabbs) {
+    const boxes = this.aabbGrid.queryBounds(
+      Math.min(a.x, b.x),
+      Math.min(a.z, b.z),
+      Math.max(a.x, b.x),
+      Math.max(a.z, b.z),
+      this.rayBoxCandidates,
+    );
+    for (const box of boxes) {
       if (box.off) continue;
       const t = rayAABB(a, tmpDir, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
       if (t >= 0 && t < len) return true;
@@ -1691,13 +1753,13 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
   pointFree(x: number, z: number, r: number, minH = WATER_Y + 0.7, maxH = 14): boolean {
     const h = this.getHeight(x, z);
     if (h < minH || h > maxH) return false;
-    for (const c of this.cyls) {
+    for (const c of this.cylinderGrid.at(x, z)) {
       const dx = x - c.x;
       const dz = z - c.z;
       const rr = r + c.r;
       if (dx * dx + dz * dz < rr * rr) return false;
     }
-    for (const b of this.aabbs) {
+    for (const b of this.aabbGrid.at(x, z)) {
       if (b.off) continue;
       const cx = clamp(x, b.minX, b.maxX);
       const cz = clamp(z, b.minZ, b.maxZ);
@@ -1724,14 +1786,14 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     if (deepWater && !allowWater) return false;
     if (!deepWater && !swimExitApproach && (standY > feetY + 0.62 || standY < feetY - 1.45)) return false;
     const bodyY = deepWater ? WATER_Y - 0.78 : standY;
-    for (const c of this.cyls) {
+    for (const c of this.cylinderGrid.at(x, z)) {
       if (bodyY >= c.y1 - 0.05 || bodyY + 1.65 <= c.y0) continue;
       const dx = x - c.x;
       const dz = z - c.z;
       const rr = r + c.r;
       if (dx * dx + dz * dz < rr * rr) return false;
     }
-    for (const b of this.aabbs) {
+    for (const b of this.aabbGrid.at(x, z)) {
       if (b.off || b.tag === 'floor' || b.tag === 'roof' || b.tag === 'door') continue;
       if (bodyY >= b.maxY - 0.02 || bodyY + 1.65 <= b.minY) continue;
       const cx = clamp(x, b.minX, b.maxX);

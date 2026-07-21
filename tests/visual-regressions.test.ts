@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ownModelVisibility } from '../src/character';
 import { environmentLighting } from '../src/environment';
+import { RENDER_QUALITY } from '../src/rendering';
+import { SUN_SHADOW_MAP_SIZE } from '../src/world';
 
 describe('画面回归保护', () => {
   it('第一人称趴下隐藏会穿入相机的自身模型', () => {
@@ -22,5 +24,15 @@ describe('画面回归保护', () => {
     expect(clearNight.exposure).toBeCloseTo(1.35, 5);
     expect(rainyNight.hemiIntensity).toBeGreaterThan(clearNight.hemiIntensity);
     expect(rainyNight.exposure).toBeGreaterThan(clearNight.exposure);
+  });
+
+  it('性能优化不能降低核心渲染质量基线', () => {
+    expect(RENDER_QUALITY).toEqual({
+      antialias: true,
+      maxPixelRatio: 1.5,
+      shadows: true,
+      baseExposure: 1.08,
+    });
+    expect(SUN_SHADOW_MAP_SIZE).toBe(2048);
   });
 });

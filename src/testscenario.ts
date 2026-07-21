@@ -38,6 +38,12 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.id = 'test-scenario-panel';
   panel.dataset.scenario = id;
   panel.dataset.tacticalCoverCount = String(game.world.tacticalCoverCount);
+  const player = game.playerCtl?.char;
+  if (player) {
+    const stats = game.world.collisionIndexStatsAt(player.pos.x, player.pos.z);
+    panel.dataset.localCollisionCandidates = String(stats.localCylinders + stats.localBoxes);
+    panel.dataset.totalCollisionObjects = String(stats.totalCylinders + stats.totalBoxes);
+  }
   panel.innerHTML = `<strong>TEST / ${id.toUpperCase()}</strong><span>${SCENARIO_TEXT[id]}</span>`;
   document.body.appendChild(panel);
 }

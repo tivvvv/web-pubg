@@ -71,7 +71,7 @@ import type { Destructible } from './buildings';
 import { Character, BOT_SHIRTS, shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH } from './character';
 import { Effects } from './effects';
 import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathcrate';
-import { Hud, type BackpackData } from './hud';
+import { Hud, type BackpackData, type SquadHudRow } from './hud';
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
 import { Input, type Action } from './input';
 import { LootManager, isGunKind, isMeleeKind, type LootItem } from './loot';
@@ -89,6 +89,7 @@ import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
 import { regionOrWilderness } from './regions';
 import { scopeModeOf } from './gunplay';
+import { GameRenderer } from './rendering';
 
 const TOTAL = 24;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
@@ -130,7 +131,7 @@ export class Game {
   zoneArmed = false;                    // 跳伞后才启动毒圈计时
   shakeAmp = 0;                          // 相机震动幅度(爆炸)
 
-  private renderer: THREE.WebGLRenderer;
+  private graphics: GameRenderer;
   readonly scene = new THREE.Scene();
   private minimap: Minimap;
   private charsGroup = new THREE.Group();
@@ -158,6 +159,13 @@ export class Game {
   private shotDots: { x: number; z: number }[] = [];
   private mapVehicles: { x: number; z: number; dead: boolean }[] = [];
   private mapSquad: { x: number; z: number }[] = [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }];
+  private readonly hudSquadRows: SquadHudRow[] = [
+    { name: '你', hp: 100, alive: true, isPlayer: true, knocked: false },
+    { name: MATE_NAMES[0] as string, hp: 100, alive: true, isPlayer: false, knocked: false },
+    { name: MATE_NAMES[1] as string, hp: 100, alive: true, isPlayer: false, knocked: false },
+    { name: MATE_NAMES[2] as string, hp: 100, alive: true, isPlayer: false, knocked: false },
+  ];
+  private readonly hudSlotNames: (string | null)[] = [null, null, null, '拳头', '手雷×0'];
 
   private shotRes = makeShotResult();
   private tmpDir = new THREE.Vector3();
@@ -178,15 +186,7 @@ export class Game {
   private tmpS = new THREE.Vector3();
 
   constructor(container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    container.appendChild(this.renderer.domElement);
+    this.graphics = new GameRenderer(container);
 
     this.world = new World(this.scene);
     this.scene.add(this.charsGroup);
@@ -251,7 +251,7 @@ export class Game {
     this.hud = new Hud();
     this.minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, this.world);
     this.input = new Input(
-      this.renderer.domElement,
+      this.graphics.domElement,
       (a) => this.onAction(a),
       (locked) => this.onLockChange(locked),
     );
@@ -270,7 +270,7 @@ export class Game {
     window.addEventListener('resize', () => this.onResize());
     this.onResize();
     this.hud.showScreen('start');
-    this.renderer.setAnimationLoop(() => this.frame());
+    this.graphics.setAnimationLoop(() => this.frame());
     (window as unknown as { __game?: Game }).__game = this;
   }
 
@@ -280,6 +280,10 @@ export class Game {
 
   get stateStr(): string {
     return this.state;
+  }
+
+  get performanceStats() {
+    return this.graphics.stats;
   }
 
   get aliveCount(): number {
@@ -296,7 +300,7 @@ export class Game {
   private onResize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.renderer.setSize(w, h);
+    this.graphics.resize(w, h);
     this.menuCam.aspect = w / h;
     this.menuCam.updateProjectionMatrix();
     if (this.player) {
@@ -763,15 +767,12 @@ export class Game {
     this.hud.update(dt);
     const cam = this.state === 'menu' || !this.player ? this.menuCam : this.player.camera;
     const environmentActive = this.state === 'playing';
-    this.world.updateVisuals(dt, cam.position, environmentActive);
-    const env = this.world.environmentState;
-    this.renderer.toneMappingExposure = env.exposure;
+    const env = this.graphics.renderFrame(dt, this.scene, cam, this.world, environmentActive);
     this.hud.setEnvironment(env.timeText, env.phaseLabel, env.weatherLabel, env.weather);
     this.audio.setRain(env.rainIntensity);
     const environmentNotice = this.world.consumeEnvironmentNotice();
     if (environmentNotice && environmentActive) this.hud.toast(environmentNotice);
     if (this.world.consumeThunder()) this.audio.thunder();
-    this.renderer.render(this.scene, cam);
   }
 
   // 贴地阴影跟随(单个 InstancedMesh 每帧重排, 零分配)
@@ -1870,10 +1871,18 @@ export class Game {
       this.hud.setHealCast(-1);
     }
     // 小队面板(玩家高亮, 倒地橙色, 变化才刷新)
-    this.hud.setSquad([
-      { name: '你', hp: c.hp, alive: c.alive, isPlayer: true, knocked: c.knocked },
-      ...this.mates.map((m) => ({ name: m.char.name, hp: m.char.hp, alive: m.char.alive, isPlayer: false, knocked: m.char.knocked })),
-    ]);
+    const playerRow = this.hudSquadRows[0] as SquadHudRow;
+    playerRow.hp = c.hp;
+    playerRow.alive = c.alive;
+    playerRow.knocked = c.knocked;
+    for (let i = 0; i < this.mates.length; i++) {
+      const mate = (this.mates[i] as TeammateController).char;
+      const row = this.hudSquadRows[i + 1] as SquadHudRow;
+      row.hp = mate.hp;
+      row.alive = mate.alive;
+      row.knocked = mate.knocked;
+    }
+    this.hud.setSquad(this.hudSquadRows);
     // 载具仪表(驾驶中显示)
     if (player.driving) {
       const v = player.driving;
@@ -1890,8 +1899,9 @@ export class Game {
       const td = THROWABLES[c.throwKind];
       this.hud.setWeapon(td.name, `×${c.throwables[c.throwKind]}`, '', '按住左键蓄力');
     } else if (gun) {
+      const attachments = attachmentSummary(gun.att);
       this.hud.setWeapon(
-        `${gun.def.name}${attachmentSummary(gun.att) ? ` [${attachmentSummary(gun.att)}]` : ''}`,
+        `${gun.def.name}${attachments ? ` [${attachments}]` : ''}`,
         player.reloading ? '--' : String(gun.mag),
         noAmmo ? '无弹' : `/ ${c.ammo[gun.def.ammo]}`,
         player.reloading ? '换弹中…' : gun.def.auto ? '全自动' : '半自动',
@@ -1900,13 +1910,12 @@ export class Game {
       this.hud.setWeapon('空', '—', '', '');
     }
 
-    const names: (string | null)[] = [
-      c.guns[0]?.def.name.split(' ')[0] ?? null,
-      c.guns[1]?.def.name.split(' ')[0] ?? null,
-      c.guns[2]?.def.name.split(' ')[0] ?? null,
-      c.melee.def.name,
-      `${THROWABLES[c.throwKind].name}×${c.throwables[c.throwKind]}`,
-    ];
+    const names = this.hudSlotNames;
+    names[0] = c.guns[0]?.def.name.split(' ')[0] ?? null;
+    names[1] = c.guns[1]?.def.name.split(' ')[0] ?? null;
+    names[2] = c.guns[2]?.def.name.split(' ')[0] ?? null;
+    names[3] = c.melee.def.name;
+    names[4] = `${THROWABLES[c.throwKind].name}×${c.throwables[c.throwKind]}`;
     const key = `${names.join(',')}|${c.curSlot}`;
     if (key !== this.hudSlotsKey) {
       this.hudSlotsKey = key;
@@ -1936,7 +1945,7 @@ export class Game {
     this.hud.setLocation(region.name, region.tier, region.feature);
 
     // 准星: 弧度→像素; 装配瞄具后按类型切换独立准镜。
-    const sizeH = this.renderer.domElement.height / this.renderer.getPixelRatio();
+    const sizeH = this.graphics.cssHeight();
     const focal = sizeH / 2 / Math.tan((player.camera.fov * Math.PI) / 360);
     const px = Math.tan(player.spreadRad) * focal;
     const scopeMode = this.state === 'playing' && c.alive ? scopeModeOf(gun, player.aimProgress) : 'none';

@@ -24,6 +24,14 @@ export interface BackpackData {
   heals: { id: HealId; name: string; count: number }[];
 }
 
+export interface SquadHudRow {
+  name: string;
+  hp: number;
+  alive: boolean;
+  isPlayer: boolean;
+  knocked?: boolean;
+}
+
 export class Hud {
   private hpFill = el('hp-fill');
   private hpText = el('hp-text');
@@ -88,6 +96,22 @@ export class Hud {
   private environmentKey = '';
   private bombardmentKey = '';
   private locationKey = '';
+  private hpKey = '';
+  private swimmingKey: boolean | null = null;
+  private weaponKey = '';
+  private noAmmoKey: boolean | null = null;
+  private countsKey = '';
+  private zoneKey = '';
+  private pickupKey: string | null | undefined;
+  private altitudeKey = '';
+  private knockedKey: boolean | null = null;
+  private knockBleedKey = '';
+  private knockSubKey = '';
+  private vehicleKey = '';
+  private healCastKey = '';
+  private drinkBuffKey = '';
+  private crosshairKey = '';
+  private zoneTintKey: boolean | null = null;
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
@@ -129,14 +153,19 @@ export class Hud {
 
   setHP(hp: number): void {
     const pct = Math.max(0, Math.min(100, hp));
-    this.hpFill.style.width = `${pct}%`;
+    const visualPct = pct.toFixed(2);
+    if (visualPct === this.hpKey) return;
+    this.hpKey = visualPct;
+    this.hpFill.style.width = `${visualPct}%`;
     this.hpText.textContent = String(Math.ceil(pct));
     const hue = (pct / 100) * 115; // 绿→红
-    this.hpFill.style.backgroundColor = `hsl(${hue}, 75%, 45%)`;
+    this.hpFill.style.backgroundColor = `hsl(${hue.toFixed(2)}, 75%, 45%)`;
   }
 
   // '游泳中'状态标
   setSwimming(on: boolean): void {
+    if (on === this.swimmingKey) return;
+    this.swimmingKey = on;
     this.swimTag.classList.toggle('show', on);
   }
 
@@ -161,6 +190,9 @@ export class Hud {
 
   // 武器面板(字符串化, 枪械/近战通用)
   setWeapon(name: string, mag: string, reserve: string, mode: string): void {
+    const key = `${name}|${mag}|${reserve}|${mode}`;
+    if (key === this.weaponKey) return;
+    this.weaponKey = key;
     this.weaponName.textContent = name;
     this.ammoMag.textContent = mag;
     this.ammoReserve.textContent = reserve;
@@ -169,6 +201,8 @@ export class Hud {
 
   // 弹匣空且无备弹: 弹药计数标红
   setNoAmmo(on: boolean): void {
+    if (on === this.noAmmoKey) return;
+    this.noAmmoKey = on;
     this.ammoMag.classList.toggle('noammo', on);
     this.ammoReserve.classList.toggle('noammo', on);
   }
@@ -184,11 +218,17 @@ export class Hud {
   }
 
   setCounts(alive: number, kills: number): void {
+    const key = `${alive}|${kills}`;
+    if (key === this.countsKey) return;
+    this.countsKey = key;
     this.aliveEl.textContent = `剩余 ${alive}`;
     this.killsEl.textContent = `击杀 ${kills}`;
   }
 
   setZoneStatus(text: string, urgent: boolean): void {
+    const key = `${text}|${urgent ? 1 : 0}`;
+    if (key === this.zoneKey) return;
+    this.zoneKey = key;
     this.zoneStatus.textContent = text;
     this.zoneStatus.classList.toggle('urgent', urgent);
   }
@@ -226,6 +266,8 @@ export class Hud {
   }
 
   setPickupPrompt(text: string | null): void {
+    if (text === this.pickupKey) return;
+    this.pickupKey = text;
     if (text) {
       // 键位名渲染为 kbd 芯片
       this.pickupPrompt.innerHTML = text.replace(/ F /, ' <span class="kbd">F</span> ');
@@ -247,17 +289,23 @@ export class Hud {
   // 空降仪表(高度+垂直速度; alt<0 隐藏)
   setAltitude(alt: number, vy: number): void {
     if (alt < 0) {
+      if (this.altitudeKey === 'hidden') return;
+      this.altitudeKey = 'hidden';
       this.altMeter.classList.remove('show');
       return;
     }
+    const text = `高度 ${Math.max(0, Math.round(alt))}m · 下降 ${Math.round(Math.abs(vy))} m/s`;
+    if (text === this.altitudeKey) return;
+    this.altitudeKey = text;
     this.altMeter.classList.add('show');
-    this.altMeter.textContent = `高度 ${Math.max(0, Math.round(alt))}m · 下降 ${Math.round(Math.abs(vy))} m/s`;
+    this.altMeter.textContent = text;
   }
 
   // 小队面板(玩家高亮, 变化才写 DOM)
   private squadKey = '';
-  setSquad(rows: { name: string; hp: number; alive: boolean; isPlayer: boolean; knocked?: boolean }[]): void {
-    const key = rows.map((r) => `${Math.ceil(r.hp)}${r.alive ? 1 : 0}${r.knocked ? 1 : 0}`).join('|');
+  setSquad(rows: readonly SquadHudRow[]): void {
+    let key = '';
+    for (const row of rows) key += `${Math.ceil(row.hp)}${row.alive ? 1 : 0}${row.knocked ? 1 : 0}|`;
     if (key === this.squadKey) return;
     this.squadKey = key;
     this.squadPanel.innerHTML = rows
@@ -273,34 +321,53 @@ export class Hud {
 
   // 击倒横幅(玩家): 显隐 + 流血条 + 副标题
   setKnocked(on: boolean): void {
+    if (on === this.knockedKey) return;
+    this.knockedKey = on;
     this.knockBanner.classList.toggle('show', on);
   }
 
   setKnockBleed(frac: number): void {
-    this.knockBleedFill.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+    const key = (Math.max(0, Math.min(1, frac)) * 100).toFixed(1);
+    if (key === this.knockBleedKey) return;
+    this.knockBleedKey = key;
+    this.knockBleedFill.style.width = `${key}%`;
   }
 
   setKnockSub(text: string): void {
+    if (text === this.knockSubKey) return;
+    this.knockSubKey = text;
     this.knockSub.textContent = text;
   }
 
   // 载具仪表(速度 km/h + 车况条; kmh<0 隐藏)
   setVehicle(kmh: number, hpFrac: number): void {
     if (kmh < 0) {
+      if (this.vehicleKey === 'hidden') return;
+      this.vehicleKey = 'hidden';
       this.vehiclePanel.classList.remove('show');
       return;
     }
+    const speed = Math.round(kmh);
+    const hp = Math.round(Math.max(0, Math.min(1, hpFrac)) * 100);
+    const key = `${speed}|${hp}`;
+    if (key === this.vehicleKey) return;
+    this.vehicleKey = key;
     this.vehiclePanel.classList.add('show');
-    this.vehicleSpeed.textContent = `${Math.round(kmh)} km/h`;
-    this.vehicleHpFill.style.width = `${Math.round(Math.max(0, Math.min(1, hpFrac)) * 100)}%`;
+    this.vehicleSpeed.textContent = `${speed} km/h`;
+    this.vehicleHpFill.style.width = `${hp}%`;
   }
 
   // frac in [0,1] 显示包扎进度, 其他值隐藏
   setHealCast(frac: number): void {
     if (frac >= 0 && frac <= 1) {
+      const key = (frac * 100).toFixed(0);
+      if (key === this.healCastKey) return;
+      this.healCastKey = key;
       this.healCast.classList.add('show');
-      this.healFill.style.width = `${(frac * 100).toFixed(0)}%`;
+      this.healFill.style.width = `${key}%`;
     } else {
+      if (this.healCastKey === 'hidden') return;
+      this.healCastKey = 'hidden';
       this.healCast.classList.remove('show');
     }
   }
@@ -315,9 +382,14 @@ export class Hud {
   // 饮料 buff 指示: frac∈[0,1] 显示剩余进度, 其他值隐藏
   setDrinkBuff(frac: number): void {
     if (frac >= 0 && frac <= 1.001) {
+      const key = (Math.min(1, frac) * 100).toFixed(0);
+      if (key === this.drinkBuffKey) return;
+      this.drinkBuffKey = key;
       this.drinkBuff.classList.add('show');
-      this.drinkBuffFill.style.width = `${(Math.min(1, frac) * 100).toFixed(0)}%`;
+      this.drinkBuffFill.style.width = `${key}%`;
     } else {
+      if (this.drinkBuffKey === 'hidden') return;
+      this.drinkBuffKey = 'hidden';
       this.drinkBuff.classList.remove('show');
     }
   }
@@ -405,7 +477,11 @@ export class Hud {
   }
 
   setCrosshair(spreadPx: number, visible: boolean): void {
-    this.crosshair.style.setProperty('--gap', `${spreadPx.toFixed(1)}px`);
+    const gap = spreadPx.toFixed(1);
+    const key = `${gap}|${visible ? 1 : 0}`;
+    if (key === this.crosshairKey) return;
+    this.crosshairKey = key;
+    this.crosshair.style.setProperty('--gap', `${gap}px`);
     this.crosshair.classList.toggle('hidden', !visible);
   }
 
@@ -419,6 +495,8 @@ export class Hud {
   }
 
   setZoneTint(on: boolean): void {
+    if (on === this.zoneTintKey) return;
+    this.zoneTintKey = on;
     this.zoneTint.classList.toggle('on', on);
   }
 
