@@ -46,6 +46,7 @@ export interface VaultState {
 
 export interface HumanParts {
   inner: THREE.Group;   // 模型根(bob/倒地旋转)
+  body: THREE.Group;    // 躯干/头腿及细节件(FPP 统一隐藏，避免遗漏穿模)
   torso: THREE.Mesh;
   head: THREE.Mesh;
   armL: THREE.Group;
@@ -116,13 +117,15 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   const group = new THREE.Group();
   const inner = new THREE.Group();
   group.add(inner);
+  const body = new THREE.Group();
+  inner.add(body);
   const shirt = shirtMat(shirtColor);
   const pants = shirtMat(PANTS_COLORS[variant % PANTS_COLORS.length] as number);
 
   const torso = new THREE.Mesh(GEO.torso, shirt);
   torso.position.set(0, 1.05, 0);
   torso.castShadow = true;
-  inner.add(torso);
+  body.add(torso);
   for (const side of [-1, 1] as const) {
     const pocket = new THREE.Mesh(GEO_D.pocket, shirt);
     pocket.position.set(0.11 * side, -0.02, 0.15);
@@ -131,29 +134,29 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   // 腰带/裤腰色块
   const waist = new THREE.Mesh(GEO.waist, pants);
   waist.position.set(0, 0.79, 0);
-  inner.add(waist);
+  body.add(waist);
   // ---- 细节: 颈部/领口/肩垫/胸挂带/腰带扣 ----
   const neck = new THREE.Mesh(GEO_D.neck, MAT.skin);
   neck.position.set(0, 1.38, 0);
-  inner.add(neck);
+  body.add(neck);
   const collar = new THREE.Mesh(GEO_D.collar, shirt);
   collar.position.set(0, 1.33, 0);
-  inner.add(collar);
+  body.add(collar);
   for (const side of [-1, 1] as const) {
     const pad = new THREE.Mesh(GEO_D.shoulder, shirt);
     pad.position.set(0.25 * side, 1.365, 0);
     pad.castShadow = true;
-    inner.add(pad);
+    body.add(pad);
   }
   const strap = new THREE.Mesh(GEO_D.strap, MAT.strap);
   strap.position.set(0.09, 1.05, 0.15);
-  inner.add(strap);
+  body.add(strap);
   const belt = new THREE.Mesh(GEO_D.belt, MAT.strap);
   belt.position.set(0, 0.88, 0);
-  inner.add(belt);
+  body.add(belt);
   const buckle = new THREE.Mesh(GEO_D.buckle, MAT.dark);
   buckle.position.set(0, 0.88, 0.15);
-  inner.add(buckle);
+  body.add(buckle);
 
   const head = new THREE.Mesh(GEO.head, MAT.skin);
   head.position.set(0, 1.53, 0);
@@ -173,7 +176,7 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     ear.position.set(0.17 * side, -0.01, 0);
     head.add(ear);
   }
-  inner.add(head);
+  body.add(head);
 
   // 手臂: 肩部枢轴 → 上臂 → 肘部枢轴 → 前臂 + 手(肘/手暗示)
   const mkArm = (side: 1 | -1): THREE.Group => {
@@ -245,9 +248,9 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     return leg;
   };
   const legL = mkLeg(-1);
-  inner.add(legL);
+  body.add(legL);
   const legR = mkLeg(1);
-  inner.add(legR);
+  body.add(legR);
 
   // 手部锚点(武器模型挂载点, 模型原点=握把, 指向 +Z 前方)
   const gun = new THREE.Group();
@@ -257,12 +260,24 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   gun.add(muzzleFallback);
   inner.add(gun);
 
-  return { group, parts: { inner, torso, head, armL, armR, legL, legR, gun, held: null, muzzleFallback } };
+  return { group, parts: { inner, body, torso, head, armL, armR, legL, legR, gun, held: null, muzzleFallback } };
 }
 
 export interface HitTestResult {
   t: number;
   head: boolean;
+}
+
+export interface OwnModelVisibility {
+  head: boolean;
+  body: boolean;
+  hands: boolean;
+}
+
+// 第一人称不渲染自身躯干和腿，避免低机位穿模；趴姿时连同手臂和武器一起收起。
+export function ownModelVisibility(firstPerson: boolean, stanceF: number): OwnModelVisibility {
+  if (!firstPerson) return { head: true, body: true, hands: true };
+  return { head: false, body: false, hands: stanceF <= 1.05 };
 }
 
 export class Character {
@@ -453,12 +468,27 @@ export class Character {
     return m.getWorldPosition(out);
   }
 
-  // 第一人称切换: 隐藏头部+头盔防穿模, 武器锚点上抬靠向视线中心(每帧幂等调用, 零分配)
+  // 第一人称切换: 仅保留不会穿入相机的手臂和武器，趴姿低机位完全隐藏自身模型。
   setFirstPerson(fpp: boolean): void {
     this.firstPerson = fpp;
-    this.parts.head.visible = !fpp;
-    if (this.helmetMesh) this.helmetMesh.visible = !fpp;
+    this.syncOwnModelVisibility();
     this.parts.gun.position.set(fpp ? 0.14 : 0.19, fpp ? 1.38 : 1.26, 0.34);
+  }
+
+  private syncOwnModelVisibility(): void {
+    const visible = ownModelVisibility(this.firstPerson, this.stanceF);
+    const p = this.parts;
+    p.body.visible = visible.body;
+    p.head.visible = visible.head;
+    p.torso.visible = visible.body;
+    p.legL.visible = visible.body;
+    p.legR.visible = visible.body;
+    p.armL.visible = visible.hands;
+    p.armR.visible = visible.hands;
+    p.gun.visible = visible.hands;
+    if (this.helmetMesh) this.helmetMesh.visible = visible.head;
+    if (this.vestMesh) this.vestMesh.visible = visible.body;
+    if (this.packMesh) this.packMesh.visible = visible.body;
   }
 
   // 护具外观同步(装备变化时重建挂载, 平时零分配)
@@ -596,6 +626,8 @@ export class Character {
       this.armorKey = aKey;
       this.swapArmor();
     }
+    // 姿态插值和装备重建都可能改变可见性，每帧统一收敛，避免趴下过渡或换装时短暂穿模。
+    this.syncOwnModelVisibility();
     // 枪姿态: ADS 俯仰 + 换弹下压; 弹匣中段脱落/回装
     const reloadDip = this.reload01 > 0 ? Math.sin(Math.min(1, this.reload01) * Math.PI) * 0.55 : 0;
     p.gun.position.set(

@@ -26,6 +26,32 @@ interface WeatherProfile {
   storm: number;
 }
 
+export interface EnvironmentLighting {
+  hemiIntensity: number;
+  moonIntensity: number;
+  exposure: number;
+}
+
+export function environmentLighting(
+  daylight: number,
+  light: number,
+  rain: number,
+  storm: number,
+): EnvironmentLighting {
+  const rainFill = rain * (0.13 + daylight * 0.18) + storm * 0.06;
+  return {
+    // 白天亮度维持原水平，夜间增加冷色环境补光，避免地形和角色压成纯黑剪影。
+    hemiIntensity: 0.85 + daylight * 0.29 * light + rainFill,
+    moonIntensity: 0.58 * light,
+    exposure: clamp(
+      1.17 - daylight * 0.09 + (1 - light) * 0.08 + rain * 0.16 + storm * 0.06
+        + (1 - daylight) * 0.18,
+      1.06,
+      1.45,
+    ),
+  };
+}
+
 const WEATHER: Record<WeatherKind, WeatherProfile> = {
   clear: { cloud: 0.18, rain: 0, fogNear: 185, fogFar: 690, light: 1, wind: 0.75, wet: 0, storm: 0 },
   cloudy: { cloud: 0.72, rain: 0, fogNear: 140, fogFar: 545, light: 0.8, wind: 1.25, wet: 0.08, storm: 0 },
@@ -106,9 +132,10 @@ export class EnvironmentSystem {
   private readonly cloudFog = new THREE.Color(0x68737a);
   private readonly warmSun = new THREE.Color(0xffa268);
   private readonly daySun = new THREE.Color(0xffefcf);
-  private readonly dayHemi = new THREE.Color(0xddebf8);
+  private readonly dayHemi = new THREE.Color(0x7cafdd);
+  private readonly nightHemi = new THREE.Color(0x9aabc4);
   private readonly dayGround = new THREE.Color(0x68704d);
-  private readonly nightGround = new THREE.Color(0x263041);
+  private readonly nightGround = new THREE.Color(0x5c6779);
   private readonly stormWater = new THREE.Color(0x294b5b);
   private current = copyProfile(WEATHER.clear);
   private target = copyProfile(WEATHER.clear);
@@ -283,18 +310,19 @@ export class EnvironmentSystem {
     );
     this.sun.target.position.set(anchor.x, 0, anchor.z);
     this.sun.target.updateMatrixWorld();
+    const lighting = environmentLighting(
+      daylight, this.current.light, this.current.rain, this.current.storm,
+    );
     if (moon) {
       this.sun.color.setHex(0x9ab8e6);
-      this.sun.intensity = 0.32 * this.current.light + this.flash * 2.6;
+      this.sun.intensity = lighting.moonIntensity + this.flash * 2.6;
     } else {
       this.sun.color.copy(this.warmSun).lerp(this.daySun, smoothstep(0.04, 0.58, sunY));
       this.sun.intensity = (0.16 + daylight * 2.38) * this.current.light + this.flash * 2.8;
     }
-    this.hemi.color.copy(this.zenith).lerp(this.dayHemi, daylight * 0.28);
+    this.hemi.color.copy(this.nightHemi).lerp(this.dayHemi, daylight);
     this.hemi.groundColor.copy(this.nightGround).lerp(this.dayGround, daylight);
-    // 阴雨天用柔和天空光补足被云层削弱的直射光，室内和建筑背阴面仍保持可辨识。
-    const rainFill = this.current.rain * (0.13 + daylight * 0.18) + this.current.storm * 0.06;
-    this.hemi.intensity = 0.46 + daylight * 0.68 * this.current.light + rainFill + this.flash * 1.7;
+    this.hemi.intensity = lighting.hemiIntensity + this.flash * 1.7;
 
     const groundDay = lerp(0.76, 1, daylight) * lerp(0.86, 1, this.current.light);
     this.terrainMat.color.setRGB(groundDay * (0.9 + daylight * 0.1), groundDay * (0.94 + daylight * 0.06), groundDay);
@@ -305,11 +333,7 @@ export class EnvironmentSystem {
     this.waterMat.opacity = 0.73 + this.current.rain * 0.045;
 
     this.snapshot.daylight = daylight;
-    this.snapshot.exposure = clamp(
-      1.17 - daylight * 0.09 + (1 - this.current.light) * 0.08 + this.current.rain * 0.16 + this.current.storm * 0.06,
-      1.06,
-      1.4,
-    );
+    this.snapshot.exposure = lighting.exposure;
   }
 
   private updateRain(dt: number, camPos: THREE.Vector3): void {
