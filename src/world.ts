@@ -14,7 +14,7 @@ import {
   type MapContentKind,
   type ResolvedMapContentSite,
 } from './mapcontent';
-import { regionAt, type RegionId } from './regions';
+import { regionAt, regionById, type RegionId } from './regions';
 
 type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
 type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
@@ -1595,12 +1595,12 @@ export class World {
   }
 
   private addMapContentLootSpots(site: ResolvedMapContentSite): void {
-    const maxSpots = 4;
+    const maxSpots = regionById(site.region).landmarkLootSpots;
     for (let i = 0; i < maxSpots; i++) {
       let found = false;
-      for (let step = 0; step < 4; step++) {
-        const angle = i / maxSpots * Math.PI * 2 + 0.55 + step * 0.38;
-        const distance = 6.2 + step * 1.25;
+      for (let step = 0; step < 8; step++) {
+        const angle = i * 2.399963 + 0.55 + step * 0.31;
+        const distance = 6.2 + (i % 2) * 2.35 + step * 1.15;
         const x = site.resolvedX + Math.cos(angle) * distance;
         const z = site.resolvedZ + Math.sin(angle) * distance;
         if (!this.pointFree(x, z, 0.42, WATER_Y + 0.25, 17)) continue;

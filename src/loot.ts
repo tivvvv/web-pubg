@@ -9,7 +9,7 @@ import { attachWeaponMods, buildWeaponModel } from './weaponmodels';
 import { isAttachKind } from './attachments';
 import type { GunAttachments } from './types';
 import { WATER_Y, riverZAt, type World } from './world';
-import { regionOrWilderness, type LootProfile, type LootTier } from './regions';
+import { REGIONS, regionOrWilderness, type LootProfile, type LootTier, type RegionDef } from './regions';
 import { random } from './random';
 
 export interface LootItem {
@@ -25,6 +25,7 @@ export interface LootItem {
 }
 
 export const LOOT_CAP = 240; // 室内配对 + 野外补齐 + 野外武器/弹药 + 空投内容物
+export const CORE_LOOT_TARGET = 206; // 24 人轻量局的地图初始物资总量, 为死亡盒和空投保留对象池余量
 
 // 共享几何/材质
 const GEO = {
@@ -256,42 +257,96 @@ export class LootManager {
   populate(world: World): void {
     this.clear();
     let count = 0;
+    const armedSites = new Set<string>();
     // 六区主地标使用稳定室外锚点, 确保地标不只是装饰而是真正的争夺目标.
     for (const s of world.mapLootSpots) {
       if (count >= LOOT_CAP) break;
       const region = regionOrWilderness(s.x, s.z);
-      const kind = this.rollKind(s.premium ? 'premium' : 'indoor', region.tier, region.profile);
+      // 每个正式地标至少提供一把符合区域特色的武器, 避免建筑稀少区名义高资源却无法开战.
+      const signature = !armedSites.has(s.siteId);
+      const kind = signature
+        ? region.signatureWeapon
+        : this.rollKind(s.premium ? 'premium' : 'indoor', region.tier, region.profile);
       const item = this.spawn(kind, s.x, s.y, s.z);
       if (!item) break;
+      armedSites.add(s.siteId);
       item.outdoor = true;
       count++;
-      count += this.pairAmmo(world, kind, s.x, s.y, s.z, 0.82, true);
+      count += this.pairAmmo(world, kind, s.x, s.y, s.z, signature ? 1 : 0.82, true);
     }
     // 室内点位(一层普通表, 二层 premium 高级枪表)
     for (const s of world.buildings.lootSpots) {
       if (count >= LOOT_CAP) break;
       const region = regionOrWilderness(s.x, s.z);
-      const emptyChance = region.tier === 'high' ? 0.04 : region.tier === 'medium' ? 0.13 : 0.27;
-      if (random() < emptyChance) continue;
+      if (this.activeCountInRegion(region.id) >= region.lootBudget) continue;
+      if (random() < region.emptyChance) continue;
       const kind = this.rollKind(s.premium ? 'premium' : 'indoor', region.tier, region.profile);
-      this.spawn(kind, s.x, s.y, s.z);
+      const item = this.spawn(kind, s.x, s.y, s.z);
+      if (!item) break;
       count++;
       count += this.pairAmmo(world, kind, s.x, s.y, s.z, 0.8);
     }
-    // 野外散布补齐
-    for (let t = 0; t < 1200 && count < 138; t++) {
+
+    // 战术锚点武器优先于通用散布, 确保桥头/村边/高地有明确争夺价值.
+    count += this.spawnOutdoorGuns(world);
+
+    // 建筑稀少区补到各自预算的约八成, 资源等级决定品质, 建筑数量不再决定全部数量.
+    for (const region of REGIONS) count += this.fillRegionToFloor(world, region);
+
+    // 全图散布补到固定总量, 同时遵守区域预算, 为死亡盒和空投预留对象池空间.
+    for (let t = 0; t < 1800 && count < CORE_LOOT_TARGET; t++) {
       const x = rand(-320, 320);
       const z = rand(-320, 320);
       if (!world.pointFree(x, z, 0.4, WATER_Y + 0.5, 14)) continue;
       const region = regionOrWilderness(x, z);
+      if (this.activeCountInRegion(region.id) >= region.lootBudget) continue;
       const kind = this.rollKind('wild', region.tier, region.profile);
       const y = world.getHeight(x, z);
-      this.spawn(kind, x, y, z);
+      const item = this.spawn(kind, x, y, z);
+      if (!item) break;
       count++;
       count += this.pairAmmo(world, kind, x, y, z, 0.6);
     }
-    // 野外武器/弹药锚点(纯补充, 不挤占室内与野外通用刷量)
-    count += this.spawnOutdoorGuns(world);
+  }
+
+  private activeCountInRegion(id: RegionDef['id']): number {
+    let count = 0;
+    for (const item of this.items) {
+      if (!item.active) continue;
+      if (regionOrWilderness(item.group.position.x, item.group.position.z).id === id) count++;
+    }
+    return count;
+  }
+
+  private fillRegionToFloor(world: World, region: RegionDef): number {
+    const target = Math.floor(region.lootBudget * 0.8);
+    let current = this.activeCountInRegion(region.id);
+    let spawned = 0;
+    for (let attempt = 0; attempt < 900 && current < target; attempt++) {
+      const angle = random() * Math.PI * 2;
+      const distance = Math.sqrt(random()) * region.radius * 0.86;
+      const x = region.x + Math.cos(angle) * distance;
+      const z = region.z + Math.sin(angle) * distance;
+      if (world.inPlot(x, z, 1.2) || !world.pointFree(x, z, 0.42, WATER_Y + 0.35, 15)) continue;
+      let separated = true;
+      for (const item of this.items) {
+        if (!item.active) continue;
+        if (Math.hypot(x - item.group.position.x, z - item.group.position.z) < 2.8) {
+          separated = false;
+          break;
+        }
+      }
+      if (!separated) continue;
+      const kind = this.rollKind('wild', region.tier, region.profile);
+      const item = this.spawn(kind, x, world.getHeight(x, z), z);
+      if (!item) break;
+      spawned++;
+      current++;
+      const paired = this.pairAmmo(world, kind, x, item.baseY - 1, z, 0.5, true);
+      spawned += paired;
+      current += paired;
+    }
+    return spawned;
   }
 
   // 地面武器按概率在 1~2m 内配一盒匹配弹药(返回生成数)
@@ -416,6 +471,7 @@ export class LootManager {
       if (guns >= 16) break;
       if (!anchorOk(a, 6)) continue;
       const region = regionOrWilderness(a.x, a.z);
+      if (this.activeCountInRegion(region.id) >= region.lootBudget) continue;
       const kind = this.rollOutdoorGun(region.tier, region.profile);
       const y = world.getHeight(a.x, a.z);
       const it = this.spawn(kind, a.x, y, a.z);
@@ -430,6 +486,8 @@ export class LootManager {
     for (const a of anchors) {
       if (packs >= 10) break;
       if (!anchorOk(a, 2)) continue;
+      const region = regionOrWilderness(a.x, a.z);
+      if (this.activeCountInRegion(region.id) >= region.lootBudget) continue;
       const kind = this.rollAmmo();
       const y = world.getHeight(a.x, a.z);
       const it = this.spawn(kind, a.x, y, a.z);

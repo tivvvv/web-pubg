@@ -20,6 +20,87 @@ const SWIM_DIRS = Array.from({ length: 32 }, (_, i) => {
 const SWIM_RADII = [3, 5, 8, 12, 18, 26, 38, 52] as const;
 
 type SwimBankWorld = Pick<World, 'getHeight' | 'pointFree'>;
+type EscapeWorld = Pick<World, 'navPointFree'>;
+
+// 长途目标反复被同一组建筑阻断时, 先选择一段逐点可达的局部逃生线, 再重新规划全程路径.
+export function findLocalEscape(
+  out: THREE.Vector2,
+  x: number,
+  z: number,
+  feetY: number,
+  goalX: number,
+  goalZ: number,
+  world: EscapeWorld,
+  allowDrop = false,
+): boolean {
+  const baseAngle = Math.atan2(goalX - x, goalZ - z);
+  const startRemain = Math.hypot(goalX - x, goalZ - z);
+  const offsets = [0, 0.52, -0.52, 1.05, -1.05, 1.57, -1.57, Math.PI] as const;
+  let bestScore = -Infinity;
+  let bestX = x;
+  let bestZ = z;
+  for (const radius of [1.4, 2.2, 3.2, 5.2, 7.2] as const) {
+    for (const offset of offsets) {
+      const angle = baseAngle + offset;
+      let clear = true;
+      for (let distance = 0.45; distance <= radius + 0.01; distance += 0.45) {
+        const probeDistance = Math.min(radius, distance);
+        const probeX = x + Math.sin(angle) * probeDistance;
+        const probeZ = z + Math.cos(angle) * probeDistance;
+        if (world.navPointFree(probeX, probeZ, feetY, 0.5, false, false, allowDrop)) continue;
+        clear = false;
+        break;
+      }
+      if (!clear) continue;
+      const candidateX = x + Math.sin(angle) * radius;
+      const candidateZ = z + Math.cos(angle) * radius;
+      const progress = startRemain - Math.hypot(goalX - candidateX, goalZ - candidateZ);
+      const score = progress * 1.4 + radius * 0.08 - Math.abs(offset) * 0.12;
+      if (score <= bestScore) continue;
+      bestScore = score;
+      bestX = candidateX;
+      bestZ = candidateZ;
+    }
+  }
+  if (bestScore === -Infinity) return false;
+  out.set(bestX, bestZ);
+  return true;
+}
+
+// 角色极少数情况下会落进门框/家具复合碰撞的狭小缝隙. 连续移动线不存在时,
+// 只向最近的合法站立点做一次短距离脱困, 避免整局在同一位置重复规划.
+export function findEmergencyNavPoint(
+  out: THREE.Vector2,
+  x: number,
+  z: number,
+  feetY: number,
+  goalX: number,
+  goalZ: number,
+  world: EscapeWorld,
+  allowDrop = false,
+): boolean {
+  const startRemain = Math.hypot(goalX - x, goalZ - z);
+  for (const radius of [1.2, 1.8, 2.6, 3.6] as const) {
+    let bestScore = -Infinity;
+    let bestX = x;
+    let bestZ = z;
+    for (let i = 0; i < 24; i++) {
+      const angle = i / 24 * Math.PI * 2;
+      const candidateX = x + Math.sin(angle) * radius;
+      const candidateZ = z + Math.cos(angle) * radius;
+      if (!world.navPointFree(candidateX, candidateZ, feetY, 0.5, false, false, allowDrop)) continue;
+      const progress = startRemain - Math.hypot(goalX - candidateX, goalZ - candidateZ);
+      if (progress <= bestScore) continue;
+      bestScore = progress;
+      bestX = candidateX;
+      bestZ = candidateZ;
+    }
+    if (bestScore === -Infinity) continue;
+    out.set(bestX, bestZ);
+    return true;
+  }
+  return false;
+}
 
 const BRIDGE_X = [-50, 170] as const;
 

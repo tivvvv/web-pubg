@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { findBridgeExit, findSwimBank, findVehicleRiverWaypoint } from '../src/botnav';
+import {
+  findBridgeExit, findEmergencyNavPoint, findLocalEscape, findSwimBank, findVehicleRiverWaypoint,
+} from '../src/botnav';
 import {
   shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
 } from '../src/character';
@@ -38,6 +40,27 @@ describe('游泳上岸点搜索', () => {
 
   it('加速游泳速度明显高于普通划水', () => {
     expect(SWIM_SPRINT_SPEED).toBeGreaterThanOrEqual(SWIM_SPEED * 1.8);
+  });
+});
+
+describe('长途转移恢复', () => {
+  it('正前方被阻挡时选择一段连续可达的局部逃生线', () => {
+    const out = new THREE.Vector2();
+    const world = {
+      navPointFree: (_x: number, z: number) => z > 0.15,
+    };
+    expect(findLocalEscape(out, 0, 0, 1, 20, 0, world as never)).toBe(true);
+    expect(out.length()).toBeGreaterThan(1.2);
+    expect(out.y).toBeGreaterThan(0.15);
+  });
+
+  it('碰撞缝隙没有连续路线时选择最近合法站立点', () => {
+    const out = new THREE.Vector2();
+    const world = {
+      navPointFree: (x: number, z: number) => Math.hypot(x, z) >= 1.7,
+    };
+    expect(findEmergencyNavPoint(out, 0, 0, 1, 20, 0, world as never)).toBe(true);
+    expect(out.length()).toBeCloseTo(1.8, 5);
   });
 });
 

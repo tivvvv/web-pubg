@@ -41,6 +41,7 @@ export const VEHICLE_SPAWNS: readonly SpawnDef[] = [
   { kind: 'buggy', x: -216, z: 28, yaw: 0.35 },  // 鹰脊哨站
   { kind: 'buggy', x: 220, z: -186, yaw: -0.7 }, // 渔港外沿
   { kind: 'buggy', x: 210, z: -34, yaw: 1.25 }, // 竞技场公路
+  { kind: 'moto', x: 18, z: -150, yaw: 2.7 }, // 林场南侧转移线
 ];
 
 const CAR_COLORS = [0x6a7a52, 0x8a4a3a, 0x8a8578, 0x4a5e6e];
@@ -401,8 +402,22 @@ export class VehicleManager {
     for (const v of this.list) this.scene.remove(v.group);
     this.list.length = 0;
     for (const s of VEHICLE_SPAWNS) {
-      const y = world.groundHeight(s.x, s.z, 30);
-      const v = new Vehicle(s.kind, new THREE.Vector3(s.x, y, s.z), s.yaw);
+      const spec = VEHICLE_SPEC[s.kind];
+      let x = s.x;
+      let z = s.z;
+      for (let attempt = 0; attempt < 24; attempt++) {
+        const ring = attempt === 0 ? 0 : 2.5 + Math.floor((attempt - 1) / 8) * 2.5;
+        const angle = attempt * 2.399963;
+        const candidateX = s.x + Math.cos(angle) * ring;
+        const candidateZ = s.z + Math.sin(angle) * ring;
+        if (world.inPlot(candidateX, candidateZ, 0.8) ||
+          !world.pointFree(candidateX, candidateZ, spec.radius + 0.2, WATER_Y + 0.2, 18)) continue;
+        x = candidateX;
+        z = candidateZ;
+        break;
+      }
+      const y = world.groundHeight(x, z, 30);
+      const v = new Vehicle(s.kind, new THREE.Vector3(x, y, z), s.yaw);
       this.list.push(v);
       this.scene.add(v.group);
     }

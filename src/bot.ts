@@ -13,7 +13,10 @@ import { magSizeOf } from './attachments';
 import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import type { Game } from './game';
-import { AgentNavigator, findBridgeExit, findCoverPoint, findSwimBank, findVehicleRiverWaypoint } from './botnav';
+import {
+  AgentNavigator, findBridgeExit, findCoverPoint, findEmergencyNavPoint, findLocalEscape, findSwimBank,
+  findVehicleRiverWaypoint,
+} from './botnav';
 import {
   chooseCombatMode, chooseStrategicMode, preferredCombatRange, selectCombatGunSlot,
   shouldDeploySmoke, shouldExitVehicle, shouldSeekVehicle, shouldTacticalReload, zoneRotationUrgency,
@@ -1066,7 +1069,8 @@ export class BotController {
     // 战术移动按毒圈, 视野, 血量, 换弹和武器射程选择稳定目标点.
     // 目标点短时间保持, 避免逐帧左右翻转.
     const rotation = this.rotationUrgency(game);
-    if (shouldDeploySmoke({
+    const terminalDuel = game.zone.state === 'done' && game.aliveCount <= 3;
+    if (!terminalDuel && shouldDeploySmoke({
       hasSmoke: c.throwables.smoke > 0,
       alreadyUsed: this.smokeUsed,
       hp: c.hp,
@@ -1092,6 +1096,7 @@ export class BotController {
       }
       this.tacticMode = chooseCombatMode({
         rotation,
+        terminalDuel,
         hp: c.hp,
         reloading: this.reloadT > 0,
         hasLineOfSight: this.losOk,
@@ -1559,6 +1564,35 @@ export class BotController {
         this.strategicProgressT = 0;
       }
       if (this.strategicStuckT >= 4) {
+        const allowDrop = c.pos.y - game.world.getHeight(c.pos.x, c.pos.z) > 1.6;
+        const localEscape = findLocalEscape(
+          this.tacticPoint,
+          c.pos.x,
+          c.pos.z,
+          c.pos.y,
+          navGoalX,
+          navGoalZ,
+          game.world,
+          allowDrop,
+        );
+        const emergencyEscape = !localEscape && !c.swimming && !c.vault && findEmergencyNavPoint(
+          this.tacticPoint,
+          c.pos.x,
+          c.pos.z,
+          c.pos.y,
+          navGoalX,
+          navGoalZ,
+          game.world,
+          allowDrop,
+        );
+        if (emergencyEscape) {
+          c.pos.x = this.tacticPoint.x;
+          c.pos.z = this.tacticPoint.y;
+          c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y + 0.4);
+          c.groundH = c.pos.y;
+          c.grounded = true;
+          c.speed2d = 0;
+        }
         this.strategicStuckT = 0;
         this.strategicProgressT = 0;
         if (this.strategicMode === 'loot' && this.lootTarget) {
@@ -1566,8 +1600,13 @@ export class BotController {
           this.blockedLootT = 18;
         }
         this.lootTarget = null;
-        this.hasMoveTarget = false;
-        this.repathT = 0;
+        this.hasMoveTarget = localEscape && !emergencyEscape;
+        if (localEscape) {
+          this.moveTarget.set(this.tacticPoint.x, 0, this.tacticPoint.y);
+          this.repathT = 1.25;
+        } else {
+          this.repathT = 0;
+        }
         this.lootScanT = Math.max(this.lootScanT, 4);
         this.routeSide *= -1;
         this.rotationAttempt = (this.rotationAttempt + 1) % 8;

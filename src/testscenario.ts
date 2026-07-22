@@ -8,6 +8,7 @@ import { VEHICLE_SPEC } from './vehicles';
 import { MELEE, WEAPONS } from './weapons';
 import { riverZAt, WATER_Y } from './world';
 import { parseRandomSeed, setRandomSeed } from './random';
+import { REGIONS, regionOrWilderness } from './regions';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
@@ -54,6 +55,28 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.tacticalCoverCount = String(game.world.tacticalCoverCount);
   panel.dataset.mapSiteCount = String(game.world.mapSites.length);
   panel.dataset.mapLootSpotCount = String(game.world.mapLootSpots.length);
+  const regionIds = [...REGIONS.map((region) => region.id), 'wilderness'];
+  const countByRegion = (points: readonly { x: number; z: number }[]): string => JSON.stringify(
+    Object.fromEntries(regionIds.map((id) => [
+      id,
+      points.filter((point) => regionOrWilderness(point.x, point.z).id === id).length,
+    ])),
+  );
+  panel.dataset.regionLootCounts = countByRegion(
+    game.loot.items.filter((item) => item.active).map((item) => ({
+      x: item.group.position.x,
+      z: item.group.position.z,
+    })),
+  );
+  panel.dataset.regionDropCounts = countByRegion(
+    game.bots.map((bot) => ({ x: bot.dropTarget.x, z: bot.dropTarget.z })),
+  );
+  panel.dataset.botDropTargets = JSON.stringify(
+    game.bots.map((bot) => ({ x: Number(bot.dropTarget.x.toFixed(1)), z: Number(bot.dropTarget.z.toFixed(1)) })),
+  );
+  panel.dataset.regionVehicleCounts = countByRegion(
+    game.vehicles.list.map((vehicle) => ({ x: vehicle.pos.x, z: vehicle.pos.z })),
+  );
   if (id === 'maptour') {
     const requested = new URLSearchParams(window.location.search).get('region');
     const site = game.world.mapSites.find((candidate) => candidate.region === requested) ?? game.world.mapSites[0];

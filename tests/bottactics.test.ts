@@ -84,6 +84,9 @@ describe('机器人战术决策', () => {
     expect(chooseCombatMode({ ...base, distance: 50 })).toBe('advance');
     expect(chooseCombatMode({ ...base, distance: 12 })).toBe('retreat');
     expect(chooseCombatMode(base)).toBe('strafe');
+    expect(chooseCombatMode({ ...base, terminalDuel: true, hp: 8, distance: 10 })).toBe('strafe');
+    expect(chooseCombatMode({ ...base, terminalDuel: true, hp: 8, distance: 40 })).toBe('advance');
+    expect(chooseCombatMode({ ...base, terminalDuel: true, hp: 8, hasLineOfSight: false })).toBe('search');
   });
 
   it('按战斗距离选择武器而不只比品级', () => {

@@ -88,6 +88,15 @@ import { buildTransportPlane } from './planemodel';
 import { WATER_Y, World, type StaticHit } from './world';
 import { Zone } from './zone';
 import { regionOrWilderness } from './regions';
+import {
+  DROP_MAX_FLIGHT_DISTANCE,
+  DROP_MIN_SEPARATION,
+  MATCH_PLAYER_COUNT,
+  SQUAD_SIZE,
+  emptyDropRegionCounts,
+  flightLineDistance,
+  selectDropRegion,
+} from './matchbalance';
 import { scopeModeOf } from './gunplay';
 import { GameRenderer } from './rendering';
 import { random } from './random';
@@ -96,7 +105,7 @@ import {
   squadAimScore, SquadCommandSystem, SQUAD_ORDER_LABELS, type SquadOrder, type SquadOrderKind,
 } from './squadcommands';
 
-const TOTAL = 24;
+const TOTAL = MATCH_PLAYER_COUNT;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
 const SLOT_LABELS = ['主武器1', '主武器2', '手枪', '近战'];
 
@@ -709,37 +718,58 @@ export class Game {
     }
     this.player = new PlayerController(0x3a6ea5);
 
-    // 出生点: 拒绝采样, 最小间距(偏向航线两侧 150m 内, 便于滑翔到达)
+    // 敌方落点: 按区域收益和承载人数分配, 同时受航线可达距离约束.
+    // 相比全图均匀散点, 这里会形成可预期但不固定的早期争夺, 又不会把所有人堆在同一栋房内.
     this.flightAngle = rand(0, Math.PI * 2);
     const dirX = Math.cos(this.flightAngle);
     const dirZ = Math.sin(this.flightAngle);
-    const lineDist = (x: number, z: number): number => Math.abs(x * dirZ - z * dirX);
-    const pts: { x: number; z: number }[] = [];
+    const pts: { x: number; z: number }[] = Array.from({ length: SQUAD_SIZE }, () => ({ x: 0, z: 0 }));
+    const dropCounts = emptyDropRegionCounts();
     let guard = 0;
-    while (pts.length < TOTAL && guard++ < 6000) {
+    while (pts.length < TOTAL && guard++ < 5000) {
+      const region = selectDropRegion(this.flightAngle, dropCounts, random());
+      if (!region) break;
       let x = 0;
       let z = 0;
-      for (let retry = 0; retry < 6; retry++) {
-        x = rand(-300, 300);
-        z = rand(-300, 300);
-        if (lineDist(x, z) < 150 || retry === 5) break;
+      let sampled = false;
+      for (let retry = 0; retry < 18; retry++) {
+        const angle = random() * Math.PI * 2;
+        const distance = Math.sqrt(random()) * region.radius * 0.76;
+        x = region.x + Math.cos(angle) * distance;
+        z = region.z + Math.sin(angle) * distance;
+        if (flightLineDistance(x, z, this.flightAngle) > DROP_MAX_FLIGHT_DISTANCE) continue;
+        if (regionOrWilderness(x, z).id !== region.id) continue;
+        if (!this.world.pointFree(x, z, 0.5, WATER_Y + 0.7, 12)) continue;
+        sampled = true;
+        break;
       }
-      if (!this.world.pointFree(x, z, 0.5, WATER_Y + 0.7, 12)) continue;
+      if (!sampled) continue;
       let ok = true;
-      for (const p of pts) {
-        if (dist2D(p.x, p.z, x, z) < 52) {
+      for (let i = SQUAD_SIZE; i < pts.length; i++) {
+        const p = pts[i] as { x: number; z: number };
+        if (dist2D(p.x, p.z, x, z) < DROP_MIN_SEPARATION) {
           ok = false;
           break;
         }
       }
-      if (ok) pts.push({ x, z });
+      if (!ok) continue;
+      pts.push({ x, z });
+      dropCounts[region.id as keyof typeof dropCounts]++;
     }
-    // 兜底: 放宽间距
+    // 极端地形/航线组合兜底: 仍限制航线距离和落点合法性, 仅放宽区域承载.
     guard = 0;
     while (pts.length < TOTAL && guard++ < 6000) {
       const x = rand(-320, 320);
       const z = rand(-320, 320);
-      if (this.world.pointFree(x, z, 0.5, WATER_Y + 0.4, 13)) pts.push({ x, z });
+      if (flightLineDistance(x, z, this.flightAngle) > DROP_MAX_FLIGHT_DISTANCE) continue;
+      if (!this.world.pointFree(x, z, 0.5, WATER_Y + 0.4, 13)) continue;
+      const fallbackRegion = regionOrWilderness(x, z);
+      if (fallbackRegion.id !== 'wilderness') {
+        const id = fallbackRegion.id as keyof typeof dropCounts;
+        if (dropCounts[id] >= fallbackRegion.dropCapacity) continue;
+        dropCounts[id]++;
+      }
+      pts.push({ x, z });
     }
     // 极端兜底(几乎不可能触发)
     while (pts.length < TOTAL) pts.push({ x: rand(-60, 60), z: rand(-60, 60) });

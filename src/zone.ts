@@ -10,14 +10,15 @@ export interface ZonePhase {
 }
 
 export const ZONE_PHASES: readonly ZonePhase[] = [
-  { wait: 22, shrink: 26, radius: 195 },
-  { wait: 20, shrink: 24, radius: 120 },
-  { wait: 18, shrink: 22, radius: 72 },
-  { wait: 16, shrink: 20, radius: 40 },
-  { wait: 14, shrink: 16, radius: 20 },
-  { wait: 12, shrink: 14, radius: 9 },
+  // 首圈给落地搜索留出完整窗口, 中后期逐段提速并保持整局约四分钟.
+  { wait: 34, shrink: 30, radius: 210 },
+  { wait: 24, shrink: 25, radius: 132 },
+  { wait: 18, shrink: 22, radius: 78 },
+  { wait: 13, shrink: 18, radius: 44 },
+  { wait: 9, shrink: 13, radius: 22 },
+  { wait: 7, shrink: 10, radius: 9 },
 ];
-const DPS = [1, 2, 4, 7, 10, 14];
+const DPS = [1, 2, 4, 7, 11, 16];
 const WALL_H = 90;
 
 export type ZoneState = 'wait' | 'shrink' | 'done';
@@ -29,7 +30,7 @@ export class Zone {
   nextRadius = 310;
   phase = 0;              // 已完成缩圈次数
   state: ZoneState = 'wait';
-  timer = ZONE_PHASES[0]?.wait ?? 22;
+  timer = ZONE_PHASES[0]?.wait ?? 34;
   justBeganShrink = false;
 
   private startCenter = new THREE.Vector2();

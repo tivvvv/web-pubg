@@ -58,6 +58,7 @@ export function preferredCombatRange(id: WeaponId | null): number {
 
 export interface CombatDecisionInput {
   rotation: ZoneRotationUrgency;
+  terminalDuel?: boolean;
   hp: number;
   reloading: boolean;
   hasLineOfSight: boolean;
@@ -69,6 +70,12 @@ export interface CombatDecisionInput {
 
 export function chooseCombatMode(input: CombatDecisionInput): BotCombatMode {
   if (input.rotation === 'immediate') return 'rotate';
+  // 最终圈只剩少量角色时停止无限后撤, 无视野主动搜索, 有视野则压到武器有效距离决胜.
+  if (input.terminalDuel) {
+    if (!input.hasLineOfSight) return 'search';
+    if (input.meleeOnly || input.distance > input.preferredRange * 0.9) return 'advance';
+    return 'strafe';
+  }
   if (input.rotation === 'prepare' && (!input.hasLineOfSight || input.distance > Math.max(30, input.preferredRange * 1.35))) {
     return 'rotate';
   }
