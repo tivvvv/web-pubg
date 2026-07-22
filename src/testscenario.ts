@@ -8,7 +8,7 @@ import { MELEE, WEAPONS } from './weapons';
 import { riverZAt, WATER_Y } from './world';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'combat', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
+  'stairs', 'swim', 'combat', 'bottactics', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -16,6 +16,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   stairs: '楼梯回归: 检查楼层接缝, 楼梯净空和上下楼碰撞',
   swim: '游泳回归: 检查入水姿态, Shift 加速和连续上岸',
   combat: '枪战回归: M416 + 全套配件, 检查 ADS, 后坐和命中反馈',
+  bottactics: '机器人战术: 同时检查交战, 恢复, 搜索和圈外转移',
   parachute: '空降回归: 玩家和队友同高度自由落体, 检查速度和开伞时机',
   vehicle: '载具回归: F 上车, WASD 驾驶, 低速 F 下车并检查碰撞和仪表',
   deathcrate: '死亡盒回归: F 搜索盒子, 自动装备武器护具并遵守负重上限',
@@ -61,6 +62,25 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   }
   panel.innerHTML = `<strong>TEST / ${id.toUpperCase()}</strong><span>${SCENARIO_TEXT[id]}</span>`;
   document.body.appendChild(panel);
+  if (id === 'bottactics') {
+    const stateHistory = game.bots.slice(0, 4).map(() => new Set<string>());
+    const publishTactics = (): void => {
+      if (!panel.isConnected) return;
+      const bots = game.bots.slice(0, 4);
+      for (let i = 0; i < bots.length; i++) {
+        const bot = bots[i];
+        if (bot) stateHistory[i]?.add(bot.tacticalState);
+      }
+      panel.dataset.botStates = bots.map((bot) => bot.tacticalState).join('|');
+      panel.dataset.botStateHistory = stateHistory.map((states) => [...states].join(',')).join('|');
+      panel.dataset.botHealth = bots.map((bot) => Math.round(bot.char.hp)).join('|');
+      panel.dataset.botPositions = bots.map((bot) => `${bot.char.pos.x.toFixed(1)},${bot.char.pos.z.toFixed(1)}`).join('|');
+      panel.dataset.botSpeeds = bots.map((bot) => bot.char.speed2d.toFixed(2)).join('|');
+      panel.dataset.botSmoke = bots.map((bot) => bot.char.throwables.smoke).join('|');
+      window.requestAnimationFrame(publishTactics);
+    };
+    window.requestAnimationFrame(publishTactics);
+  }
 }
 
 function parkEnemies(game: Game): void {
@@ -216,6 +236,51 @@ function setupCombat(game: Game): void {
     target.char.pos.y + target.char.chestHeight() - (c.pos.y + c.eyeHeight()),
     Math.hypot(targetX - playerX, targetZ - playerZ),
   );
+}
+
+function setupBotTactics(game: Game): void {
+  setGroundPlayer(game, 0, 180);
+  const player = game.playerCtl;
+  if (player) {
+    player.yaw = Math.PI;
+    player.pitch = 0.04;
+  }
+  game.zone.center.set(0, 0);
+  game.zone.nextCenter.set(0, 0);
+  game.zone.radius = 200;
+  game.zone.nextRadius = 200;
+  game.zone.state = 'done';
+  game.zoneArmed = true;
+
+  const placements = [
+    [-100, -100],
+    [-80, -100],
+    [100, 100],
+    [220, 0],
+  ] as const;
+  for (let i = 0; i < placements.length; i++) {
+    const bot = game.bots[i];
+    const placement = placements[i];
+    if (!bot || !placement) continue;
+    const [x, z] = placement;
+    bot.jumpS = -1;
+    bot.descent = null;
+    bot.trainingIdle = false;
+    bot.char.alive = true;
+    bot.char.hp = i === 0 ? 37 : i === 2 ? 40 : 100;
+    bot.char.airPose = null;
+    bot.char.group.visible = true;
+    bot.char.pos.set(x, game.world.groundHeight(x, z, 30), z);
+    bot.char.groundH = bot.char.pos.y;
+    bot.char.grounded = true;
+    bot.char.guns[0] = { def: WEAPONS.rifle, mag: 30, att: emptyAttachments() };
+    bot.char.ammo.rifle = 90;
+    bot.char.curSlot = 0;
+  }
+  const recovering = game.bots[2];
+  if (recovering) recovering.char.heals.bandage = 2;
+  const smokeCover = game.bots[0];
+  if (smokeCover) smokeCover.char.throwables.smoke = 1;
 }
 
 function setupVehicle(game: Game): void {
@@ -444,6 +509,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   if (id === 'stairs') setupStairs(game);
   else if (id === 'swim') setupSwim(game);
   else if (id === 'combat') setupCombat(game);
+  else if (id === 'bottactics') setupBotTactics(game);
   else if (id === 'parachute') setupParachute(game);
   else if (id === 'vehicle') setupVehicle(game);
   else if (id === 'deathcrate') setupDeathCrate(game);

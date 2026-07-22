@@ -603,6 +603,42 @@ export class LootManager {
     return best;
   }
 
+  // 最近的背包, bot 会主动补齐负重能力
+  nearestPack(x: number, y: number, z: number, maxDist: number): LootItem | null {
+    let best: LootItem | null = null;
+    let bestD = maxDist * maxDist;
+    for (const it of this.items) {
+      if (!it.active || !isPackKind(it.kind)) continue;
+      const dx = it.group.position.x - x;
+      const dy = it.group.position.y - y - 1;
+      const dz = it.group.position.z - z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = it;
+      }
+    }
+    return best;
+  }
+
+  // 最近的恢复品, 供低血量 bot 规划补给路线
+  nearestRecovery(x: number, y: number, z: number, maxDist: number): LootItem | null {
+    let best: LootItem | null = null;
+    let bestD = maxDist * maxDist;
+    for (const it of this.items) {
+      if (!it.active || (it.kind !== 'bandage' && it.kind !== 'medkit' && it.kind !== 'drink')) continue;
+      const dx = it.group.position.x - x;
+      const dy = it.group.position.y - y - 1;
+      const dz = it.group.position.z - z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = it;
+      }
+    }
+    return best;
+  }
+
   // 最近的匹配类型弹药包(bot 寻弹用)
   nearestAmmoOfType(x: number, y: number, z: number, maxDist: number, t: AmmoType): LootItem | null {
     const kind = AMMO_LOOT_KIND[t];

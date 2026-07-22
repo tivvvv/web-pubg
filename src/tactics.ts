@@ -1,4 +1,5 @@
 import type { RegionId } from './regions';
+import type * as THREE from 'three';
 
 export type TacticalCoverKind = 'barrier' | 'crate' | 'hay' | 'logs' | 'breastwork';
 
@@ -47,3 +48,39 @@ export const TACTICAL_ROUTES: readonly TacticalRoute[] = [
     points: [[166, -237], [184, -228], [202, -239], [219, -228], [235, -239]],
   },
 ];
+
+export function findTacticalRouteWaypoint(
+  out: THREE.Vector2,
+  x: number,
+  z: number,
+  role: TacticalRoute['role'] | null,
+  side = 1,
+  maxDistance = 110,
+): boolean {
+  let bestRoute: TacticalRoute | null = null;
+  let bestIndex = -1;
+  let bestDistance = maxDistance;
+  for (const route of TACTICAL_ROUTES) {
+    if (role && route.role !== role) continue;
+    for (let i = 0; i < route.points.length; i++) {
+      const point = route.points[i] as readonly [number, number];
+      const distance = Math.hypot(point[0] - x, point[1] - z);
+      if (distance >= bestDistance) continue;
+      bestDistance = distance;
+      bestRoute = route;
+      bestIndex = i;
+    }
+  }
+  if (!bestRoute || bestIndex < 0) return false;
+  const targetIndex = bestIndex + (side < 0 ? -1 : 1);
+  if (targetIndex < 0 || targetIndex >= bestRoute.points.length) return false;
+  const target = bestRoute.points[targetIndex] as readonly [number, number];
+  const prev = bestRoute.points[Math.max(0, targetIndex - 1)] as readonly [number, number];
+  const next = bestRoute.points[Math.min(bestRoute.points.length - 1, targetIndex + 1)] as readonly [number, number];
+  const dx = next[0] - prev[0];
+  const dz = next[1] - prev[1];
+  const length = Math.hypot(dx, dz) || 1;
+  const offset = 2.8 * (side < 0 ? -1 : 1);
+  out.set(target[0] - dz / length * offset, target[1] + dx / length * offset);
+  return true;
+}
