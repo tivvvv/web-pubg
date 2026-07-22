@@ -8,7 +8,7 @@ import { isGunKind, isMeleeKind, isWeaponKind } from './loot';
 import { ARMORS, armorFromLoot } from './armor';
 import { MELEE, WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF } from './world';
-import { VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
+import { driveVehicleStep, VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { clamp, lerp, turnToward } from './utils';
 import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, recoilFactorOf, sightZoomOf } from './attachments';
@@ -644,7 +644,8 @@ export class PlayerController {
 
   // 上车(F 近驾驶座)
   enterVehicle(v: Vehicle, game: Game): void {
-    if (this.driving || this.descent || this.char.knocked) return;
+    if (this.driving || this.descent || this.char.knocked || v.dead || v.burnT >= 0 || v.driver) return;
+    v.claimedBy = null;
     this.driving = v;
     v.driver = this.char;
     const c = this.char;
@@ -687,6 +688,7 @@ export class PlayerController {
     c.moveLean = 0;
     this.moveVel.set(0, 0);
     v.driver = null;
+    v.speed = 0;
     this.driving = null;
     game.audio.engineStop();
     if (!forced) game.audio.vehicleDoor();
@@ -698,63 +700,13 @@ export class PlayerController {
     const spec = VEHICLE_SPEC[v.kind];
     const W = input.keys.has('KeyW');
     const S = input.keys.has('KeyS');
-    const hb = input.keys.has('Space');
-    // 油门/刹车/倒车
-    if (W) v.speed += spec.accel * dt;
-    else if (S) {
-      if (v.speed > 0.5) v.speed -= spec.brake * dt;
-      else v.speed -= spec.accel * 0.5 * dt;
-    }
-    // 自然阻力 + 滚动摩擦 + 手刹
-    v.speed -= v.speed * 0.4 * dt;
-    if (!W && !S) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 1.0 * dt);
-    if (hb) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 20 * dt);
-    v.speed = clamp(v.speed, -spec.revMax, spec.vmax);
-    // 转向(随速度衰减, 倒车反向)
     const steerIn = (input.keys.has('KeyA') ? 1 : 0) - (input.keys.has('KeyD') ? 1 : 0);
-    const auth = 1 - Math.min(0.75, (Math.abs(v.speed) / spec.vmax) * 0.75);
-    v.yaw += steerIn * spec.steer * auth * (v.speed >= 0 ? 1 : -1) * dt;
-    // 位移 + 碰撞(圆)
-    v.pos.x += Math.sin(v.yaw) * v.speed * dt;
-    v.pos.z += Math.cos(v.yaw) * v.speed * dt;
-    const hit = game.world.resolveVehicle(v.pos, spec.radius);
-    if (hit) {
-      const impact = Math.abs(v.speed);
-      if (impact > 12) {
-        game.vehicles.damage(v, impact * 6);
-        game.soundAt(v.pos, (d2, p2) => game.audio.vehicleImpact(d2, p2));
-        game.addShakeFrom(v.pos);
-      }
-      v.speed *= 0.55;
-    }
-    v.pos.x = clamp(v.pos.x, -WORLD_HALF + 2, WORLD_HALF - 2);
-    v.pos.z = clamp(v.pos.z, -WORLD_HALF + 2, WORLD_HALF - 2);
-    // 地形跟随(桥面/屋顶可走) + 坡度姿态
-    const gh = game.world.groundHeight(v.pos.x, v.pos.z, v.pos.y + 1);
-    v.pos.y = gh;
-    const sin = Math.sin(v.yaw);
-    const cos = Math.cos(v.yaw);
-    const r = spec.radius;
-    const ghF = game.world.getHeight(v.pos.x + sin * r, v.pos.z + cos * r);
-    const ghB = game.world.getHeight(v.pos.x - sin * r, v.pos.z - cos * r);
-    const ghL = game.world.getHeight(v.pos.x + cos * r, v.pos.z - sin * r);
-    const ghR = game.world.getHeight(v.pos.x - cos * r, v.pos.z + sin * r);
-    const targetPitch = Math.atan2(ghB - ghF, 2 * r);
-    const targetRoll = Math.atan2(ghR - ghL, 2 * r);
-    v.pitch = lerp(v.pitch, clamp(targetPitch, -0.4, 0.4), Math.min(1, dt * 8));
-    v.roll = lerp(v.roll, clamp(targetRoll, -0.4, 0.4), Math.min(1, dt * 8));
-    v.spinWheels(dt, steerIn);
-    // 涉水熄火
-    if (gh < WATER_Y - 0.05) {
-      game.vehicles.stall(v, game);
-      this.driving = null;
-      return;
-    }
-    // 碾压(>6m/s)
-    if (Math.abs(v.speed) > 6) game.runOverCheck(v, this.char);
-    // 角色随座
-    seatWorld(v, this.char.pos);
-    this.char.yaw = v.yaw;
+    const result = driveVehicleStep(v, this.char, {
+      throttle: W ? 1 : S ? -1 : 0,
+      steer: steerIn,
+      handbrake: input.keys.has('Space'),
+    }, dt, game);
+    if (result.stalled) return;
     this.yaw = v.yaw;
     this.driveCamera(dt, game, v);
     game.audio.engineSet(Math.abs(v.speed) / spec.vmax);

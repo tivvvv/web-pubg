@@ -1026,10 +1026,12 @@ export class Game {
     if (idx >= 0 && idx < v.passengers.length) v.passengers[idx] = null;
   }
 
-  // 载具爆炸/熄火时强制司机下车(可带伤害; 目前仅玩家驾驶)
+  // 载具爆炸或熄火时强制司机下车.
   forceExitVehicle(driver: Character, dmg: number): void {
     if (driver.isPlayer && this.player) {
       this.player.exitVehicle(this, true);
+    } else {
+      this.bots.find((bot) => bot.char === driver)?.forceExitVehicle(this);
     }
     if (dmg > 0 && driver.alive) this.damageChar(driver, dmg, false, null, '载具爆炸', true);
   }
@@ -1452,6 +1454,8 @@ export class Game {
   }
 
   private kill(victim: Character, attacker: Character | null, head: boolean, via?: string): void {
+    const drivenVehicle = this.vehicles.list.find((vehicle) => vehicle.driver === victim);
+    if (drivenVehicle) this.forceExitVehicle(victim, 0);
     victim.hp = 0;
     victim.alive = false;
     victim.dieT = 0;

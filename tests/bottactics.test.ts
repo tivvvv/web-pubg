@@ -6,6 +6,8 @@ import {
   preferredCombatRange,
   selectCombatGunSlot,
   shouldDeploySmoke,
+  shouldExitVehicle,
+  shouldSeekVehicle,
   shouldTacticalReload,
   zoneRotationUrgency,
 } from '../src/bottactics';
@@ -117,5 +119,39 @@ describe('机器人战术决策', () => {
     expect(shouldDeploySmoke({ ...base, hasLineOfSight: false, hp: 30 })).toBe(false);
     expect(shouldDeploySmoke({ ...base, alreadyUsed: true, hp: 30 })).toBe(false);
     expect(shouldDeploySmoke({ ...base, distance: 6, hp: 30 })).toBe(false);
+  });
+
+  it('仅为长距离转移或追击寻找附近载具', () => {
+    const base = {
+      mode: 'rotate' as const,
+      rotation: 'prepare' as const,
+      goalDistance: 90,
+      vehicleDistance: 24,
+      hp: 100,
+      hasUsableGun: true,
+      cooldown: 0,
+    };
+    expect(shouldSeekVehicle(base)).toBe(true);
+    expect(shouldSeekVehicle({ ...base, goalDistance: 30 })).toBe(false);
+    expect(shouldSeekVehicle({ ...base, vehicleDistance: 50 })).toBe(false);
+    expect(shouldSeekVehicle({ ...base, hp: 25 })).toBe(false);
+    expect(shouldSeekVehicle({ ...base, mode: 'loot' })).toBe(false);
+    expect(shouldSeekVehicle({ ...base, mode: 'hunt', rotation: 'none', goalDistance: 110 })).toBe(true);
+  });
+
+  it('到点接敌车况危险或持续卡住时下车', () => {
+    const base = {
+      goalDistance: 80,
+      enemyDistance: Infinity,
+      hpFraction: 1,
+      stuckFor: 0,
+      burning: false,
+    };
+    expect(shouldExitVehicle(base)).toBe(false);
+    expect(shouldExitVehicle({ ...base, goalDistance: 8 })).toBe(true);
+    expect(shouldExitVehicle({ ...base, enemyDistance: 40 })).toBe(true);
+    expect(shouldExitVehicle({ ...base, hpFraction: 0.2 })).toBe(true);
+    expect(shouldExitVehicle({ ...base, stuckFor: 7 })).toBe(true);
+    expect(shouldExitVehicle({ ...base, burning: true })).toBe(true);
   });
 });

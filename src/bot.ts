@@ -13,19 +13,27 @@ import { magSizeOf } from './attachments';
 import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import type { Game } from './game';
-import { AgentNavigator, findBridgeExit, findCoverPoint, findSwimBank } from './botnav';
+import { AgentNavigator, findBridgeExit, findCoverPoint, findSwimBank, findVehicleRiverWaypoint } from './botnav';
 import {
   chooseCombatMode, chooseStrategicMode, preferredCombatRange, selectCombatGunSlot,
-  shouldDeploySmoke, shouldTacticalReload, zoneRotationUrgency, type BotCombatMode, type BotStrategicMode,
-  type ZoneRotationUrgency,
+  shouldDeploySmoke, shouldExitVehicle, shouldSeekVehicle, shouldTacticalReload, zoneRotationUrgency,
+  type BotCombatMode, type BotStrategicMode, type ZoneRotationUrgency,
 } from './bottactics';
 import { autoLootDeathCrate } from './deathcrate';
 import { findTacticalRouteWaypoint, type TacticalRoute } from './tactics';
 import { random } from './random';
+import { driveVehicleStep, seatWorld, VEHICLE_SPEC, type Vehicle } from './vehicles';
 
 const ENGAGE_DIST = 92;
 // bot 降落伞配色(哑光低饱和, 按角色 id 轮换; 队友另用绿色系)
 const BOT_CANOPIES = [0x7a8a6a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a, 0x8a6e62] as const;
+
+function signedAngleDelta(current: number, target: number): number {
+  let delta = (target - current) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return delta;
+}
 
 export class BotController {
   readonly char: Character;
@@ -73,6 +81,12 @@ export class BotController {
   private navigationIntent = false;
   private combatStuckT = 0;
   private strategicStuckT = 0;
+  private strategicProgressT = 0;
+  private strategicProgressX = 0;
+  private strategicProgressZ = 0;
+  private lastNavMoved = 0;
+  private lastNavBlocked = false;
+  private lastNavStuck = 0;
   private rotationAttempt = 0;
   private strategicMode: BotStrategicMode = 'loot';
   private postCombatT = 0;
@@ -81,7 +95,23 @@ export class BotController {
   private routeSide = random() < 0.5 ? -1 : 1;
   private routeRole: TacticalRoute['role'] = 'advance';
   private lootScanT = 0;
+  private lootTarget: LootItem | null = null;
+  private blockedLoot: LootItem | null = null;
+  private blockedLootT = 0;
   private investigateT = 0;
+  private driving: Vehicle | null = null;
+  private vehicleTarget: Vehicle | null = null;
+  private vehicleClaimT = 0;
+  private vehicleCooldown = 0;
+  private vehicleStuckT = 0;
+  private vehicleProgressT = 0;
+  private vehicleProgress = 0;
+  private vehicleRecoveryT = 0;
+  private vehicleRecoverySide = 1;
+  private vehicleDetourT = 0;
+  private vehicleDetourYaw = 0;
+  private vehicleWaypoint = new THREE.Vector2();
+  private vehicleProbe = new THREE.Vector3();
   // 空降状态: 高空自由落体 → 开伞滑翔 → 落地(null 恢复正常 AI)
   descent: 'freefall' | 'canopy' | null = null;
   jumpS = -1;          // ≥0 = 还在机上, 到达该航线里程即跳伞
@@ -101,6 +131,8 @@ export class BotController {
   }
 
   get tacticalState(): string {
+    if (this.driving) return 'vehicle:drive';
+    if (this.vehicleTarget) return 'vehicle:board';
     return this.state === 'engage' ? `combat:${this.tacticMode}` : this.strategicMode;
   }
 
@@ -108,10 +140,34 @@ export class BotController {
     return this.navigationIntent;
   }
 
+  get navigationDiagnostic(): string {
+    const loot = this.lootTarget;
+    const blocked = this.blockedLoot;
+    return [
+      this.char.id,
+      this.tacticalState,
+      this.char.pos.x.toFixed(1),
+      this.char.pos.z.toFixed(1),
+      this.char.pos.y.toFixed(1),
+      this.char.speed2d.toFixed(2),
+      this.char.grounded ? 'ground' : 'air',
+      this.hasMoveTarget ? this.moveTarget.x.toFixed(1) : '-',
+      this.hasMoveTarget ? this.moveTarget.z.toFixed(1) : '-',
+      this.strategicStuckT.toFixed(1),
+      this.lastNavMoved.toFixed(3),
+      this.lastNavBlocked ? 'blocked' : 'clear',
+      this.lastNavStuck.toFixed(1),
+      loot ? `${loot.kind}@${loot.group.position.x.toFixed(1)},${loot.group.position.z.toFixed(1)}` : '-',
+      blocked ? `${blocked.kind}@${blocked.group.position.x.toFixed(1)},${blocked.group.position.z.toFixed(1)}` : '-',
+    ].join(',');
+  }
+
   update(dt: number, game: Game): void {
     const c = this.char;
     this.navigationIntent = false;
     if (!c.alive) {
+      this.releaseVehicleTarget();
+      if (this.driving) this.exitVehicle(game, true);
       // 空中被击杀: 继续坠地
       if (this.descent) {
         c.pos.y += this.vy * dt;
@@ -144,6 +200,18 @@ export class BotController {
     }
     this.fireTimer = Math.max(0, this.fireTimer - dt);
     this.postCombatT = Math.max(0, this.postCombatT - dt);
+    this.blockedLootT = Math.max(0, this.blockedLootT - dt);
+    if (this.blockedLoot && (!this.blockedLoot.active || this.blockedLootT <= 0)) this.blockedLoot = null;
+    this.vehicleCooldown = Math.max(0, this.vehicleCooldown - dt);
+    if (this.driving) {
+      this.scanT -= dt;
+      if (this.scanT <= 0) {
+        this.scanT = 0.25 + random() * 0.08;
+        this.scan(game);
+      }
+      this.updateVehicleDrive(dt, game);
+      return;
+    }
     // 闪避驶来载具(便宜版: 侧向急躲)
     if (this.dodgeVehicle(dt, game)) return;
     // 游泳状态: 深水中只朝岸游, 不索敌/开火/拾取
@@ -217,6 +285,7 @@ export class BotController {
       } else if (this.wantsWeapon(k)) {
         game.tryPickupWeapon(c, item);
       }
+      if (item === this.lootTarget && !item.active) this.lootTarget = null;
     }
   }
 
@@ -460,6 +529,8 @@ export class BotController {
 
   private setLootTarget(game: Game, item: LootItem): boolean {
     if (game.zoneArmed && game.zone.isOutside(item.group.position.x, item.group.position.z)) return false;
+    if (item === this.blockedLoot && this.blockedLootT > 0) return false;
+    this.lootTarget = item;
     this.moveTarget.copy(item.group.position);
     this.hasMoveTarget = true;
     this.repathT = 2.5;
@@ -470,6 +541,7 @@ export class BotController {
   private fleeGrenade(dt: number, game: Game): boolean {
     const c = this.char;
     if (!game.grenades.nearestLiveFrag(c.pos.x, c.pos.y, c.pos.z, 6, this.fragOut)) return false;
+    this.releaseVehicleTarget();
     const dx = c.pos.x - this.fragOut.x;
     const dz = c.pos.z - this.fragOut.z;
     const d = Math.hypot(dx, dz) || 1;
@@ -488,6 +560,7 @@ export class BotController {
   private fleeBombardment(dt: number, game: Game): boolean {
     const c = this.char;
     if (!game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) return false;
+    this.releaseVehicleTarget();
     const speed = game.bombardment.state === 'active' ? 6.4 : 5.8;
     c.setStance('stand');
     this.navigator.move(
@@ -562,6 +635,271 @@ export class BotController {
       return true;
     }
     return false;
+  }
+
+  private releaseVehicleTarget(): void {
+    const target = this.vehicleTarget;
+    if (target?.claimedBy === this.char) target.claimedBy = null;
+    this.vehicleTarget = null;
+    this.vehicleClaimT = 0;
+  }
+
+  private enterVehicle(v: Vehicle): void {
+    const c = this.char;
+    if (v.dead || v.burnT >= 0 || v.driver || c.knocked || !c.alive) {
+      this.releaseVehicleTarget();
+      return;
+    }
+    if (v.claimedBy === c) v.claimedBy = null;
+    this.vehicleTarget = null;
+    v.driver = c;
+    this.driving = v;
+    v.speed = Math.abs(v.speed) < 0.5 ? 0 : v.speed;
+    c.airPose = 'sit';
+    c.setStance('stand');
+    c.stanceF = 0;
+    c.moveLean = 0;
+    c.vault = null;
+    seatWorld(v, c.pos);
+    c.yaw = v.yaw;
+    this.vehicleStuckT = 0;
+    this.vehicleProgressT = 0;
+    this.vehicleProgress = 0;
+    this.vehicleRecoveryT = 0;
+    this.vehicleDetourT = 0;
+    this.navigator.reset(c);
+  }
+
+  private exitVehicle(game: Game, forced: boolean): void {
+    const v = this.driving;
+    if (!v) return;
+    const c = this.char;
+    const offsets = [
+      [Math.cos(v.yaw) * 2.2, -Math.sin(v.yaw) * 2.2],
+      [-Math.cos(v.yaw) * 2.2, Math.sin(v.yaw) * 2.2],
+      [-Math.sin(v.yaw) * 2.4, -Math.cos(v.yaw) * 2.4],
+      [Math.sin(v.yaw) * 2.4, Math.cos(v.yaw) * 2.4],
+    ] as const;
+    let exitX = v.pos.x + offsets[0][0];
+    let exitZ = v.pos.z + offsets[0][1];
+    for (const [ox, oz] of offsets) {
+      const x = v.pos.x + ox;
+      const z = v.pos.z + oz;
+      const ground = game.world.groundHeight(x, z, v.pos.y + 1.4);
+      if (ground < WATER_Y - 0.05 || !game.world.navPointFree(x, z, v.pos.y, 0.5, false, false, true)) continue;
+      exitX = x;
+      exitZ = z;
+      break;
+    }
+    c.pos.set(exitX, game.world.groundHeight(exitX, exitZ, v.pos.y + 1.4), exitZ);
+    c.airPose = null;
+    c.setStance('stand');
+    c.stanceF = 0;
+    c.vy = 0;
+    c.moveLean = 0;
+    c.speed2d = 0;
+    if (v.driver === c) v.driver = null;
+    v.speed = 0;
+    this.driving = null;
+    this.vehicleCooldown = forced ? 8 : 14;
+    this.vehicleStuckT = 0;
+    this.vehicleRecoveryT = 0;
+    this.vehicleDetourT = 0;
+    this.navigator.reset(c);
+  }
+
+  forceExitVehicle(game: Game): void {
+    this.releaseVehicleTarget();
+    this.exitVehicle(game, true);
+  }
+
+  private updateVehicleApproach(
+    dt: number,
+    game: Game,
+    rotation: ZoneRotationUrgency,
+    goalDistance: number,
+  ): boolean {
+    const c = this.char;
+    let target = this.vehicleTarget;
+    if (target && (target.dead || target.burnT >= 0 || target.driver ||
+      (target.claimedBy && target.claimedBy !== c && target.claimedBy.alive))) {
+      this.releaseVehicleTarget();
+      target = null;
+    }
+    if (!target) {
+      const candidate = game.vehicles.nearestClaimable(c.pos.x, c.pos.z, rotation === 'immediate' ? 58 : 42, c);
+      if (!candidate) return false;
+      const vehicleDistance = Math.hypot(candidate.pos.x - c.pos.x, candidate.pos.z - c.pos.z);
+      if (!shouldSeekVehicle({
+        mode: this.strategicMode,
+        rotation,
+        goalDistance,
+        vehicleDistance,
+        hp: c.hp,
+        hasUsableGun: this.hasUsableGun(),
+        cooldown: this.vehicleCooldown,
+      })) return false;
+      candidate.claimedBy = c;
+      this.vehicleTarget = candidate;
+      this.vehicleClaimT = 13;
+      target = candidate;
+      this.navigator.reset(c);
+    }
+
+    const targetDistance = Math.hypot(target.pos.x - c.pos.x, target.pos.z - c.pos.z);
+    if (!shouldSeekVehicle({
+      mode: this.strategicMode,
+      rotation,
+      goalDistance,
+      vehicleDistance: targetDistance,
+      hp: c.hp,
+      hasUsableGun: this.hasUsableGun(),
+      cooldown: 0,
+    })) {
+      this.releaseVehicleTarget();
+      return false;
+    }
+    this.vehicleClaimT -= dt;
+    if (this.vehicleClaimT <= 0) {
+      this.releaseVehicleTarget();
+      this.vehicleCooldown = 8;
+      return false;
+    }
+    if (targetDistance <= 2.55) {
+      this.enterVehicle(target);
+      return true;
+    }
+    const nav = this.navigator.move(c, target.pos.x, target.pos.z, 5.5, dt, game.world, {
+      stopDistance: 2.4,
+      turnRate: 6,
+      allowWater: false,
+      neighbors: game.chars,
+    });
+    this.navigationIntent = !nav.reached;
+    if (nav.reached) this.enterVehicle(target);
+    return true;
+  }
+
+  private vehicleDirectionClear(v: Vehicle, yaw: number, lookAhead: number, game: Game): boolean {
+    const spec = VEHICLE_SPEC[v.kind];
+    let previousY = v.pos.y;
+    const steps = 3;
+    for (let step = 1; step <= steps; step++) {
+      const distance = lookAhead * step / steps;
+      const x = v.pos.x + Math.sin(yaw) * distance;
+      const z = v.pos.z + Math.cos(yaw) * distance;
+      const ground = game.world.groundHeight(x, z, previousY + 2.2);
+      if (ground < WATER_Y - 0.05 || Math.abs(ground - previousY) > 2.8) return false;
+      this.vehicleProbe.set(x, ground, z);
+      if (game.world.resolveVehicle(this.vehicleProbe, spec.radius + 0.18) &&
+        Math.hypot(this.vehicleProbe.x - x, this.vehicleProbe.z - z) > 0.08) return false;
+      for (const other of game.vehicles.list) {
+        if (other === v || other.dead) continue;
+        const safe = spec.radius + VEHICLE_SPEC[other.kind].radius + 1.2;
+        if (Math.hypot(x - other.pos.x, z - other.pos.z) < safe) return false;
+      }
+      previousY = ground;
+    }
+    return true;
+  }
+
+  private chooseVehicleYaw(v: Vehicle, goalX: number, goalZ: number, game: Game): number {
+    const desired = Math.atan2(goalX - v.pos.x, goalZ - v.pos.z);
+    const lookAhead = clamp(4.5 + Math.abs(v.speed) * 0.48, 5, 13);
+    const offsets = [0, 0.28, -0.28, 0.55, -0.55, 0.9, -0.9, 1.25, -1.25, 1.65, -1.65] as const;
+    let bestYaw = v.yaw + this.vehicleRecoverySide * 1.3;
+    let bestScore = Infinity;
+    for (const offset of offsets) {
+      const yaw = desired + offset;
+      if (!this.vehicleDirectionClear(v, yaw, lookAhead, game)) continue;
+      const score = Math.abs(offset) * 1.8 + Math.abs(signedAngleDelta(v.yaw, yaw)) * 0.35;
+      if (score >= bestScore) continue;
+      bestScore = score;
+      bestYaw = yaw;
+    }
+    return bestYaw;
+  }
+
+  private updateVehicleDrive(dt: number, game: Game): void {
+    const v = this.driving;
+    if (!v || v.driver !== this.char || v.dead) {
+      this.exitVehicle(game, true);
+      return;
+    }
+    let goalX = this.moveTarget.x;
+    let goalZ = this.moveTarget.z;
+    if (!this.hasMoveTarget) {
+      this.pickRotationPoint(game, this.vehicleWaypoint);
+      goalX = this.vehicleWaypoint.x;
+      goalZ = this.vehicleWaypoint.y;
+      this.moveTarget.set(goalX, 0, goalZ);
+      this.hasMoveTarget = true;
+    }
+    const enemyDistance = this.target?.alive
+      ? Math.hypot(this.target.pos.x - v.pos.x, this.target.pos.z - v.pos.z)
+      : Infinity;
+    if (this.target?.alive && enemyDistance > 52) {
+      goalX = this.target.pos.x;
+      goalZ = this.target.pos.z;
+    }
+    const goalDistance = Math.hypot(goalX - v.pos.x, goalZ - v.pos.z);
+    const exitWanted = shouldExitVehicle({
+      goalDistance,
+      enemyDistance,
+      hpFraction: v.hp / VEHICLE_SPEC[v.kind].hp,
+      stuckFor: this.vehicleStuckT,
+      burning: v.burnT >= 0,
+    });
+    if (exitWanted && Math.abs(v.speed) <= 2.2) {
+      this.exitVehicle(game, false);
+      if (goalDistance <= 11) this.hasMoveTarget = false;
+      return;
+    }
+
+    let driveGoalX = goalX;
+    let driveGoalZ = goalZ;
+    if (findVehicleRiverWaypoint(this.vehicleWaypoint, v.pos.x, v.pos.z, goalX, goalZ)) {
+      driveGoalX = this.vehicleWaypoint.x;
+      driveGoalZ = this.vehicleWaypoint.y;
+    }
+    let throttle = exitWanted ? -1 : 1;
+    let steer = 0;
+    let handbrake = exitWanted;
+    if (this.vehicleRecoveryT > 0) {
+      this.vehicleRecoveryT = Math.max(0, this.vehicleRecoveryT - dt);
+      throttle = -1;
+      steer = this.vehicleRecoverySide;
+      handbrake = false;
+    } else {
+      this.vehicleDetourT = Math.max(0, this.vehicleDetourT - dt);
+      const selectedYaw = this.vehicleDetourT > 0
+        ? this.vehicleDetourYaw
+        : this.chooseVehicleYaw(v, driveGoalX, driveGoalZ, game);
+      const delta = signedAngleDelta(v.yaw, selectedYaw);
+      steer = clamp(delta / 0.55, -1, 1);
+      if (Math.abs(delta) > 1.15 && Math.abs(v.speed) > 4) throttle = -1;
+      else if (Math.abs(delta) > 0.75) throttle = 0.35;
+      if (goalDistance < 25 && !exitWanted) throttle = Math.min(throttle, 0.55);
+    }
+    const result = driveVehicleStep(v, this.char, { throttle, steer, handbrake }, dt, game);
+    if (result.stalled) return;
+
+    this.navigationIntent = !exitWanted && goalDistance > 11;
+    this.vehicleProgress += result.distance;
+    this.vehicleProgressT += dt;
+    if (result.collision) this.vehicleStuckT += dt * 1.5;
+    if (this.vehicleProgressT >= 1) {
+      if (this.vehicleProgress < 0.9 && goalDistance > 14) this.vehicleStuckT += this.vehicleProgressT;
+      else this.vehicleStuckT = Math.max(0, this.vehicleStuckT - this.vehicleProgressT * 0.65);
+      this.vehicleProgressT = 0;
+      this.vehicleProgress = 0;
+      if (this.vehicleStuckT >= 2.2 && this.vehicleRecoveryT <= 0 && !exitWanted) {
+        this.vehicleRecoveryT = 1.15;
+        this.vehicleRecoverySide *= -1;
+        this.vehicleDetourT = 2.4;
+        this.vehicleDetourYaw = v.yaw + this.vehicleRecoverySide * 1.05;
+      }
+    }
   }
 
   // 是否想要地上这件武器
@@ -653,6 +991,10 @@ export class BotController {
 
   private updateEngage(dt: number, game: Game): void {
     const c = this.char;
+    this.releaseVehicleTarget();
+    this.lootTarget = null;
+    this.strategicStuckT = 0;
+    this.strategicProgressT = 0;
     const t = this.target as Character;
     if (!t.alive) {
       this.lastKnown.copy(t.pos);
@@ -1031,6 +1373,11 @@ export class BotController {
 
   private updateWander(dt: number, game: Game): void {
     const c = this.char;
+    if (this.lootTarget && !this.lootTarget.active) {
+      this.lootTarget = null;
+      this.hasMoveTarget = false;
+      this.repathT = 0;
+    }
     this.repathT -= dt;
     this.lootScanT -= dt;
     this.investigateT = Math.max(0, this.investigateT - dt);
@@ -1050,6 +1397,10 @@ export class BotController {
       recentThreat: this.investigateT > 0,
       postCombat: this.postCombatT > 0,
     });
+    if (this.strategicMode !== 'rotate' && this.strategicMode !== 'hunt' && this.strategicMode !== 'patrol') {
+      this.releaseVehicleTarget();
+    }
+    if (this.strategicMode !== 'loot') this.lootTarget = null;
 
     let targetDist = this.hasMoveTarget
       ? Math.hypot(this.moveTarget.x - c.pos.x, this.moveTarget.z - c.pos.z)
@@ -1057,6 +1408,8 @@ export class BotController {
     const needsNewTarget = !this.hasMoveTarget || this.repathT <= 0 || targetDist < 2.5;
 
     if (this.strategicMode === 'recover') {
+      this.strategicStuckT = 0;
+      this.strategicProgressT = 0;
       c.setStance('crouch');
       moveChar(c, 0, 0, dt, game.world);
       this.tryRecover();
@@ -1138,7 +1491,20 @@ export class BotController {
       this.reloadT = reloadGun?.def.reloadTime ?? 0;
     }
 
+    targetDist = this.hasMoveTarget
+      ? Math.hypot(this.moveTarget.x - c.pos.x, this.moveTarget.z - c.pos.z)
+      : Infinity;
+    if (this.hasMoveTarget && this.updateVehicleApproach(dt, game, rotation, targetDist)) {
+      this.strategicStuckT = 0;
+      this.strategicProgressT = 0;
+      return;
+    }
+
     if (this.hasMoveTarget) {
+      if (this.strategicProgressT <= 0) {
+        this.strategicProgressX = c.pos.x;
+        this.strategicProgressZ = c.pos.z;
+      }
       const dx = this.moveTarget.x - c.pos.x;
       const dz = this.moveTarget.z - c.pos.z;
       const bridgeExit = findBridgeExit(
@@ -1168,21 +1534,41 @@ export class BotController {
           neighbors: game.chars,
         },
       );
+      this.lastNavMoved = nav.moved;
+      this.lastNavBlocked = nav.blocked;
+      this.lastNavStuck = nav.stuckFor;
       this.navigationIntent = !nav.reached;
-      if (nav.reached || nav.moved >= 0.025) {
-        this.strategicStuckT = Math.max(0, this.strategicStuckT - dt * 2);
-        if (nav.reached) this.rotationAttempt = 0;
-      } else {
+      this.strategicProgressT += dt;
+      if (nav.reached) {
+        this.strategicStuckT = 0;
+        this.strategicProgressT = 0;
+        this.rotationAttempt = 0;
+      } else if (nav.moved < 0.025) {
         this.strategicStuckT += dt;
-        if (this.strategicStuckT >= 2.2) {
-          this.strategicStuckT = 0;
-          this.hasMoveTarget = false;
-          this.repathT = 0;
-          this.lootScanT = Math.max(this.lootScanT, 4);
-          this.routeSide *= -1;
-          this.rotationAttempt = (this.rotationAttempt + 1) % 8;
-          this.navigator.reset(c);
+      }
+      if (!nav.reached && this.strategicProgressT >= 4) {
+        const netMovement = Math.hypot(
+          c.pos.x - this.strategicProgressX,
+          c.pos.z - this.strategicProgressZ,
+        );
+        if (netMovement < 0.8) this.strategicStuckT = Math.max(this.strategicStuckT, this.strategicProgressT);
+        else this.strategicStuckT = Math.max(0, this.strategicStuckT - this.strategicProgressT * 1.2);
+        this.strategicProgressT = 0;
+      }
+      if (this.strategicStuckT >= 4) {
+        this.strategicStuckT = 0;
+        this.strategicProgressT = 0;
+        if (this.strategicMode === 'loot' && this.lootTarget) {
+          this.blockedLoot = this.lootTarget;
+          this.blockedLootT = 18;
         }
+        this.lootTarget = null;
+        this.hasMoveTarget = false;
+        this.repathT = 0;
+        this.lootScanT = Math.max(this.lootScanT, 4);
+        this.routeSide *= -1;
+        this.rotationAttempt = (this.rotationAttempt + 1) % 8;
+        this.navigator.reset(c);
       }
       if (nav.reached && !bridgeExit) this.hasMoveTarget = false;
       this.vaultProbeT -= dt;
@@ -1197,6 +1583,7 @@ export class BotController {
       }
     } else {
       this.strategicStuckT = 0;
+      this.strategicProgressT = 0;
       moveChar(c, 0, 0, dt, game.world);
     }
   }

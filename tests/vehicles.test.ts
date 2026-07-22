@@ -29,6 +29,34 @@ describe('载具座位 命中和损毁状态', () => {
     expect(manager.nearest(0, 0, 10)).toBeNull();
   });
 
+  it('燃烧倒计时中的载具不可再驾驶或认领', () => {
+    const manager = new VehicleManager(new THREE.Scene());
+    const burning = new Vehicle('car', new THREE.Vector3(2, 0, 0), 0);
+    const safe = new Vehicle('buggy', new THREE.Vector3(7, 0, 0), 0);
+    const claimant = new Character('驾驶员', false, 0x3a6ea5);
+    burning.burnT = 1.5;
+    manager.list.push(burning, safe);
+
+    expect(manager.nearest(0, 0, 10)).toBe(safe);
+    expect(manager.nearestClaimable(0, 0, 10, claimant)).toBe(safe);
+  });
+
+  it('机器人认领载具后其他机器人选择下一辆车', () => {
+    const manager = new VehicleManager(new THREE.Scene());
+    const near = new Vehicle('car', new THREE.Vector3(3, 0, 0), 0);
+    const far = new Vehicle('buggy', new THREE.Vector3(8, 0, 0), 0);
+    const first = new Character('甲', false, 0x3a6ea5);
+    const second = new Character('乙', false, 0x3a6ea5);
+    manager.list.push(near, far);
+
+    expect(manager.nearestClaimable(0, 0, 12, first)).toBe(near);
+    near.claimedBy = first;
+    expect(manager.nearestClaimable(0, 0, 12, first)).toBe(near);
+    expect(manager.nearestClaimable(0, 0, 12, second)).toBe(far);
+    first.alive = false;
+    expect(manager.nearestClaimable(0, 0, 12, second)).toBe(near);
+  });
+
   it('射线命中车体且致命伤进入燃烧倒计时', () => {
     const manager = new VehicleManager(new THREE.Scene());
     const vehicle = new Vehicle('car', new THREE.Vector3(0, 0, 0), 0);

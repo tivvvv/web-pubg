@@ -142,3 +142,37 @@ export function shouldDeploySmoke(input: SmokeDecisionInput): boolean {
   if (input.distance < 10 || input.distance > 62) return false;
   return input.hp < 38 || input.reloading || input.rotation === 'immediate';
 }
+
+export interface VehicleSeekInput {
+  mode: BotStrategicMode;
+  rotation: ZoneRotationUrgency;
+  goalDistance: number;
+  vehicleDistance: number;
+  hp: number;
+  hasUsableGun: boolean;
+  cooldown: number;
+}
+
+export function shouldSeekVehicle(input: VehicleSeekInput): boolean {
+  if (input.cooldown > 0 || input.hp < 36 || !input.hasUsableGun) return false;
+  if (input.vehicleDistance > (input.rotation === 'immediate' ? 58 : 42)) return false;
+  if (input.mode === 'rotate') {
+    return input.goalDistance >= (input.rotation === 'immediate' ? 42 : 58);
+  }
+  if (input.mode === 'hunt' || input.mode === 'patrol') return input.goalDistance >= 88;
+  return false;
+}
+
+export interface VehicleExitInput {
+  goalDistance: number;
+  enemyDistance: number;
+  hpFraction: number;
+  stuckFor: number;
+  burning: boolean;
+}
+
+export function shouldExitVehicle(input: VehicleExitInput): boolean {
+  if (input.burning || input.hpFraction <= 0.22 || input.stuckFor >= 6.5) return true;
+  if (input.enemyDistance <= 52) return true;
+  return input.goalDistance <= 11;
+}

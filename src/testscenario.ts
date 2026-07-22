@@ -14,7 +14,7 @@ import {
 } from './stability';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'combat', 'bottactics', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
+  'stairs', 'swim', 'combat', 'bottactics', 'botvehicle', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -23,6 +23,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   swim: '游泳回归: 检查入水姿态, Shift 加速和连续上岸',
   combat: '枪战回归: M416 + 全套配件, 检查 ADS, 后坐和命中反馈',
   bottactics: '机器人战术: 同时检查交战, 恢复, 搜索和圈外转移',
+  botvehicle: '机器人载具: 检查搜车, 上车, 长途转移, 绕障和到点下车',
   stability: '长局稳定性: 固定种子加速整局, 检查卡住, 非法状态和重开泄漏',
   parachute: '空降回归: 玩家和队友同高度自由落体, 检查速度和开伞时机',
   vehicle: '载具回归: F 上车, WASD 驾驶, 低速 F 下车并检查碰撞和仪表',
@@ -88,6 +89,29 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
     };
     window.requestAnimationFrame(publishTactics);
   }
+  if (id === 'botvehicle') {
+    const vehicleStateHistory = new Set<string>();
+    const publishVehicleTactics = (): void => {
+      if (!panel.isConnected) return;
+      const bot = game.bots[0];
+      const vehicle = game.vehicles.list[0];
+      if (bot && vehicle) {
+        vehicleStateHistory.add(bot.tacticalState);
+        panel.dataset.botVehicleState = bot.tacticalState;
+        panel.dataset.botVehicleStateHistory = [...vehicleStateHistory].join(',');
+        panel.dataset.botVehicleDriver = vehicle.driver?.name ?? '';
+        panel.dataset.botVehicleSpeed = vehicle.speed.toFixed(2);
+        panel.dataset.botVehiclePosition = `${vehicle.pos.x.toFixed(1)},${vehicle.pos.z.toFixed(1)}`;
+        panel.dataset.botVehicleHp = Math.round(vehicle.hp).toString();
+        panel.dataset.botVehicleZoneDistance = Math.max(
+          0,
+          Math.hypot(vehicle.pos.x - game.zone.center.x, vehicle.pos.z - game.zone.center.y) - game.zone.radius,
+        ).toFixed(1);
+      }
+      window.requestAnimationFrame(publishVehicleTactics);
+    };
+    window.requestAnimationFrame(publishVehicleTactics);
+  }
   if (id === 'stability') beginStabilityMonitoring(panel, game);
 }
 
@@ -146,6 +170,7 @@ function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
   const deadline = parseBoundedTestInteger(search, 'deadline', 390, 240, 480);
   const baseline = stabilityResources(game);
   const accumulatedIssues = new Set<string>();
+  const issueDiagnostics = new Map<string, string>();
   const roundResults: string[] = [];
   let round = 1;
   let monitor = new MatchStabilityMonitor(10, 0.8);
@@ -154,7 +179,24 @@ function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
     if (!panel.isConnected) return;
     const actors = stabilityActors(game);
     const summary = monitor.update(game.nowSec, actors);
-    for (const issue of summary.issues) accumulatedIssues.add(`round${round}:${issue}`);
+    for (const issue of summary.issues) {
+      const key = `round${round}:${issue}`;
+      accumulatedIssues.add(key);
+      if (!issueDiagnostics.has(key)) {
+        issueDiagnostics.set(key, game.bots.map((bot) => {
+          const c = bot.char;
+          let freeMask = '';
+          for (let direction = 0; direction < 16; direction++) {
+            const angle = direction / 16 * Math.PI * 2;
+            const x = c.pos.x + Math.cos(angle) * 1.75;
+            const z = c.pos.z + Math.sin(angle) * 1.75;
+            freeMask += game.world.navPointFree(x, z, c.pos.y, 0.5, false, false, true) ? '1' : '0';
+          }
+          const stats = game.world.collisionIndexStatsAt(c.pos.x, c.pos.z);
+          return `${bot.navigationDiagnostic},${freeMask},${stats.localCylinders},${stats.localBoxes}`;
+        }).join('|'));
+      }
+    }
     panel.dataset.stabilityStatus = 'running';
     panel.dataset.stabilitySeed = String(baseSeed + round - 1);
     panel.dataset.stabilityRound = `${round}/${rounds}`;
@@ -164,6 +206,7 @@ function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
     panel.dataset.stabilityTransitions = String(summary.transitions);
     panel.dataset.stabilityMaxStuck = summary.maxStagnantSec.toFixed(2);
     panel.dataset.stabilityIssues = [...accumulatedIssues].join('|');
+    panel.dataset.stabilityDiagnostics = [...issueDiagnostics].map(([issue, detail]) => `${issue}:${detail}`).join(';');
     panel.dataset.stabilitySteps = String(game.simulationSteps);
     panel.dataset.stabilityActors = actors
       .filter((actor) => actor.alive)
@@ -436,6 +479,113 @@ function setupVehicle(game: Game): void {
   player.pitch = 0.02;
 }
 
+function setupBotVehicle(game: Game): void {
+  setGroundPlayer(game, 145, -145);
+  const player = game.playerCtl;
+  if (player) {
+    player.char.alive = false;
+    player.char.hp = 0;
+    player.char.group.visible = false;
+  }
+  const bot = game.bots[0];
+  const vehicle = game.vehicles.list[0];
+  if (!bot || !vehicle) return;
+  let botX = -142;
+  let botZ = 126;
+  let dirX = 1;
+  let dirZ = 0;
+  const bridgeRoute = new URLSearchParams(window.location.search).get('route') === 'bridge';
+  let laneFound = bridgeRoute;
+  let laneLength = 105;
+  if (bridgeRoute) {
+    const bridgeZ = riverZAt(-50);
+    botX = -50;
+    botZ = bridgeZ + 25;
+    dirX = 0;
+    dirZ = -1;
+    laneLength = 70;
+  }
+  const directions = [
+    [1, 0], [-1, 0], [0, 1], [0, -1],
+    [0.707, 0.707], [0.707, -0.707], [-0.707, 0.707], [-0.707, -0.707],
+  ] as const;
+  for (let x = -240; x <= 240 && !laneFound; x += 40) {
+    for (let z = -240; z <= 240 && !laneFound; z += 40) {
+      for (const direction of directions) {
+        let previousGround = game.world.getHeight(x, z);
+        let clear = previousGround >= WATER_Y + 0.1;
+        for (let distance = 0; clear && distance <= laneLength; distance += 5) {
+          const px = x + direction[0] * distance;
+          const pz = z + direction[1] * distance;
+          const ground = game.world.getHeight(px, pz);
+          clear = Math.abs(ground - previousGround) < 2.2 && game.world.pointFree(px, pz, 1.65, WATER_Y + 0.1, 18);
+          previousGround = ground;
+        }
+        if (!clear) continue;
+        botX = x;
+        botZ = z;
+        dirX = direction[0];
+        dirZ = direction[1];
+        laneFound = true;
+        break;
+      }
+    }
+  }
+  bot.jumpS = -1;
+  bot.descent = null;
+  bot.trainingIdle = false;
+  bot.char.alive = true;
+  bot.char.hp = 100;
+  bot.char.airPose = null;
+  bot.char.group.visible = true;
+  bot.char.pos.set(botX, game.world.groundHeight(botX, botZ, 30), botZ);
+  bot.char.groundH = bot.char.pos.y;
+  bot.char.grounded = true;
+  bot.char.guns[0] = { def: WEAPONS.rifle, mag: 30, att: emptyAttachments() };
+  bot.char.ammo.rifle = 120;
+  bot.char.curSlot = 0;
+
+  const vehicleX = botX + dirX * 5;
+  const vehicleZ = botZ + dirZ * 5;
+  vehicle.pos.set(vehicleX, game.world.groundHeight(vehicleX, vehicleZ, 30), vehicleZ);
+  vehicle.yaw = Math.atan2(dirX, dirZ);
+  vehicle.speed = 0;
+  vehicle.hp = VEHICLE_SPEC[vehicle.kind].hp;
+  vehicle.driver = null;
+  vehicle.claimedBy = null;
+  vehicle.passengers.fill(null);
+  vehicle.dead = false;
+  vehicle.exploded = false;
+  vehicle.burnT = -1;
+  vehicle.group.visible = true;
+  vehicle.sync();
+
+  game.zone.center.set(botX + dirX * laneLength, botZ + dirZ * laneLength);
+  game.zone.nextCenter.copy(game.zone.center);
+  game.zone.radius = 18;
+  game.zone.nextRadius = 18;
+  game.zone.state = 'done';
+  game.zoneArmed = true;
+
+  if (new URLSearchParams(window.location.search).get('contact') === '1') {
+    const enemy = game.bots[1];
+    if (enemy) {
+      const enemyX = game.zone.center.x;
+      const enemyZ = game.zone.center.y;
+      enemy.jumpS = -1;
+      enemy.descent = null;
+      enemy.trainingIdle = true;
+      enemy.char.alive = true;
+      enemy.char.hp = 100;
+      enemy.char.airPose = null;
+      enemy.char.group.visible = true;
+      enemy.char.pos.set(enemyX, game.world.groundHeight(enemyX, enemyZ, 30), enemyZ);
+      enemy.char.groundH = enemy.char.pos.y;
+      enemy.char.grounded = true;
+    }
+  }
+}
+
 function setupDeathCrate(game: Game): void {
   const lane = testLane(game);
   const dir = laneDirection(lane);
@@ -640,6 +790,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'swim') setupSwim(game);
   else if (id === 'combat') setupCombat(game);
   else if (id === 'bottactics') setupBotTactics(game);
+  else if (id === 'botvehicle') setupBotVehicle(game);
   else if (id === 'stability') setupStability(game);
   else if (id === 'parachute') setupParachute(game);
   else if (id === 'vehicle') setupVehicle(game);

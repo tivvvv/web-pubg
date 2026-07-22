@@ -23,6 +23,46 @@ type SwimBankWorld = Pick<World, 'getHeight' | 'pointFree'>;
 
 const BRIDGE_X = [-50, 170] as const;
 
+// Route vehicle river crossings through a bridge approach or bridge exit.
+export function findVehicleRiverWaypoint(
+  out: THREE.Vector2,
+  x: number,
+  z: number,
+  goalX: number,
+  goalZ: number,
+): boolean {
+  const currentOffset = z - riverZAt(x);
+  const goalOffset = goalZ - riverZAt(goalX);
+  const currentSide = currentOffset >= 0 ? 1 : -1;
+  const goalSide = goalOffset >= 0 ? 1 : -1;
+
+  for (const bridgeX of BRIDGE_X) {
+    const bridgeZ = riverZAt(bridgeX);
+    if (Math.abs(x - bridgeX) <= 3.2 && Math.abs(z - bridgeZ) <= 20) {
+      out.set(bridgeX, bridgeZ + goalSide * 19);
+      return true;
+    }
+  }
+  if (currentSide === goalSide) return false;
+
+  let bestX: number = BRIDGE_X[0];
+  let bestCost = Infinity;
+  for (const bridgeX of BRIDGE_X) {
+    const bridgeZ = riverZAt(bridgeX);
+    const entryZ = bridgeZ + currentSide * 18;
+    const exitZ = bridgeZ + goalSide * 18;
+    const cost = Math.hypot(x - bridgeX, z - entryZ) + 36 + Math.hypot(goalX - bridgeX, goalZ - exitZ);
+    if (cost >= bestCost) continue;
+    bestCost = cost;
+    bestX = bridgeX;
+  }
+  const bestZ = riverZAt(bestX);
+  const entryZ = bestZ + currentSide * 18;
+  if (Math.hypot(x - bestX, z - entryZ) <= 4.5) out.set(bestX, bestZ + goalSide * 19);
+  else out.set(bestX, entryZ);
+  return true;
+}
+
 // 桥面被侧护栏约束时先走到更接近目标的桥头, 离桥后再恢复原目标.
 export function findBridgeExit(
   out: THREE.Vector2,

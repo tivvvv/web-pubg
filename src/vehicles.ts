@@ -1,11 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // vehicles.ts - 载具系统: 汽车(吉普)/摩托车 生成/模型/射线/损毁/残骸
-// 驾驶物理在 player.ts(街机运动学); 这里管对象/模型/命中/爆炸熄火
+// 玩家和机器人共用街机驾驶运动学; 这里同时管理对象/模型/命中/爆炸熄火
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import type { World } from './world';
+import { WATER_Y, WORLD_HALF, type World } from './world';
 import type { Character } from './character';
 import type { Game } from './game';
+import { clamp, lerp } from './utils';
 
 export type VehicleKind = 'car' | 'moto' | 'buggy';
 
@@ -67,10 +68,105 @@ export function seatWorldAt(v: Vehicle, idx: number, out: THREE.Vector3): THREE.
   return out;
 }
 
+export interface VehicleDriveControls {
+  throttle: number;
+  steer: number;
+  handbrake?: boolean;
+}
+
+export interface VehicleDriveResult {
+  collision: boolean;
+  stalled: boolean;
+  impactSpeed: number;
+  distance: number;
+}
+
+// Shared vehicle movement for player and bot drivers.
+export function driveVehicleStep(
+  v: Vehicle,
+  driver: Character,
+  controls: VehicleDriveControls,
+  dt: number,
+  game: Game,
+): VehicleDriveResult {
+  const spec = VEHICLE_SPEC[v.kind];
+  const throttle = clamp(controls.throttle, -1, 1);
+  const steerIn = clamp(controls.steer, -1, 1);
+  if (throttle > 0) {
+    v.speed += spec.accel * throttle * dt;
+  } else if (throttle < 0) {
+    if (v.speed > 0.5) v.speed -= spec.brake * -throttle * dt;
+    else v.speed -= spec.accel * 0.5 * -throttle * dt;
+  }
+  v.speed -= v.speed * 0.4 * dt;
+  if (Math.abs(throttle) < 0.01) {
+    v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 1.0 * dt);
+  }
+  if (controls.handbrake) {
+    v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 20 * dt);
+  }
+  v.speed = clamp(v.speed, -spec.revMax, spec.vmax);
+
+  const auth = 1 - Math.min(0.75, (Math.abs(v.speed) / spec.vmax) * 0.75);
+  v.yaw += steerIn * spec.steer * auth * (v.speed >= 0 ? 1 : -1) * dt;
+  const oldX = v.pos.x;
+  const oldZ = v.pos.z;
+  v.pos.x += Math.sin(v.yaw) * v.speed * dt;
+  v.pos.z += Math.cos(v.yaw) * v.speed * dt;
+  const impactSpeed = Math.abs(v.speed);
+  const collision = game.world.resolveVehicle(v.pos, spec.radius);
+  if (collision) {
+    if (impactSpeed > 12) {
+      game.vehicles.damage(v, impactSpeed * 6);
+      game.soundAt(v.pos, (distance, pan) => game.audio.vehicleImpact(distance, pan));
+      game.addShakeFrom(v.pos);
+    }
+    v.speed *= 0.55;
+  }
+  v.pos.x = clamp(v.pos.x, -WORLD_HALF + 2, WORLD_HALF - 2);
+  v.pos.z = clamp(v.pos.z, -WORLD_HALF + 2, WORLD_HALF - 2);
+
+  const groundY = game.world.groundHeight(v.pos.x, v.pos.z, v.pos.y + 1);
+  v.pos.y = groundY;
+  const sin = Math.sin(v.yaw);
+  const cos = Math.cos(v.yaw);
+  const radius = spec.radius;
+  const groundFront = game.world.getHeight(v.pos.x + sin * radius, v.pos.z + cos * radius);
+  const groundBack = game.world.getHeight(v.pos.x - sin * radius, v.pos.z - cos * radius);
+  const groundLeft = game.world.getHeight(v.pos.x + cos * radius, v.pos.z - sin * radius);
+  const groundRight = game.world.getHeight(v.pos.x - cos * radius, v.pos.z + sin * radius);
+  const targetPitch = Math.atan2(groundBack - groundFront, 2 * radius);
+  const targetRoll = Math.atan2(groundRight - groundLeft, 2 * radius);
+  v.pitch = lerp(v.pitch, clamp(targetPitch, -0.4, 0.4), Math.min(1, dt * 8));
+  v.roll = lerp(v.roll, clamp(targetRoll, -0.4, 0.4), Math.min(1, dt * 8));
+  v.spinWheels(dt, steerIn);
+
+  if (groundY < WATER_Y - 0.05) {
+    game.vehicles.stall(v, game);
+    return {
+      collision,
+      stalled: true,
+      impactSpeed,
+      distance: Math.hypot(v.pos.x - oldX, v.pos.z - oldZ),
+    };
+  }
+  if (Math.abs(v.speed) > 6) game.runOverCheck(v, driver);
+  seatWorld(v, driver.pos);
+  driver.yaw = v.yaw;
+  driver.speed2d = Math.abs(v.speed);
+  return {
+    collision,
+    stalled: false,
+    impactSpeed,
+    distance: Math.hypot(v.pos.x - oldX, v.pos.z - oldZ),
+  };
+}
+
 export class Vehicle {
   speed = 0;             // 有符号速度(倒挡为负)
   hp: number;
   driver: Character | null = null;
+  claimedBy: Character | null = null;
   passengers: (Character | null)[] = []; // 乘客位(任务9 队友)
   dead = false;          // 熄火/残骸(不可再驾驶)
   exploded = false;
@@ -316,7 +412,7 @@ export class VehicleManager {
     let best: Vehicle | null = null;
     let bestD = maxD * maxD;
     for (const v of this.list) {
-      if (v.dead || v.driver) continue;
+      if (v.dead || v.burnT >= 0 || v.driver) continue;
       const dx = v.pos.x - x;
       const dz = v.pos.z - z;
       const d2 = dx * dx + dz * dz;
@@ -324,6 +420,22 @@ export class VehicleManager {
         bestD = d2;
         best = v;
       }
+    }
+    return best;
+  }
+
+  nearestClaimable(x: number, z: number, maxD: number, claimant: Character): Vehicle | null {
+    let best: Vehicle | null = null;
+    let bestD = maxD * maxD;
+    for (const v of this.list) {
+      if (v.dead || v.burnT >= 0 || v.driver ||
+        (v.claimedBy && v.claimedBy !== claimant && v.claimedBy.alive)) continue;
+      const dx = v.pos.x - x;
+      const dz = v.pos.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= bestD) continue;
+      bestD = d2;
+      best = v;
     }
     return best;
   }
@@ -429,7 +541,7 @@ export class VehicleManager {
     v.speed = 0;
     v.darken();
     game.world.addCollider({ kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9, y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock' });
-    game.hud.toast('车辆进水熄火');
+    if (v.driver?.isPlayer) game.hud.toast('车辆进水熄火');
     if (v.driver) game.forceExitVehicle(v.driver, 0);
   }
 

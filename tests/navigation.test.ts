@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { findBridgeExit, findSwimBank } from '../src/botnav';
+import { findBridgeExit, findSwimBank, findVehicleRiverWaypoint } from '../src/botnav';
 import {
   shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
 } from '../src/character';
@@ -52,5 +52,17 @@ describe('桥面导航', () => {
   it('离开桥面后不再覆盖原导航目标', () => {
     const out = new THREE.Vector2();
     expect(findBridgeExit(out, 166, 88, 120, 150)).toBe(false);
+  });
+
+  it('载具跨河时依次选择桥头和对岸出口', () => {
+    const out = new THREE.Vector2();
+    expect(findVehicleRiverWaypoint(out, 130, 130, 210, -120)).toBe(true);
+    const bridgeX = out.x;
+    const bridgeZ = out.y;
+    expect([-50, 170]).toContain(bridgeX);
+    expect(findVehicleRiverWaypoint(out, bridgeX, bridgeZ, 210, -120)).toBe(true);
+    expect(out.x).toBe(bridgeX);
+    expect(out.y).toBeLessThan(bridgeZ);
+    expect(findVehicleRiverWaypoint(out, 210, -120, 250, -180)).toBe(false);
   });
 });
