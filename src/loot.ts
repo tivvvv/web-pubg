@@ -10,6 +10,7 @@ import { isAttachKind } from './attachments';
 import type { GunAttachments } from './types';
 import { WATER_Y, riverZAt, type World } from './world';
 import { regionOrWilderness, type LootProfile, type LootTier } from './regions';
+import { random } from './random';
 
 export interface LootItem {
   kind: LootKind;
@@ -23,7 +24,7 @@ export interface LootItem {
   att: GunAttachments | null; // 枪械已装配件(随枪流转)
 }
 
-const LOOT_CAP = 240; // 室内配对 + 野外补齐 + 野外武器/弹药 + 空投内容物
+export const LOOT_CAP = 240; // 室内配对 + 野外补齐 + 野外武器/弹药 + 空投内容物
 
 // 共享几何/材质
 const GEO = {
@@ -271,7 +272,7 @@ export class LootManager {
       if (count >= LOOT_CAP) break;
       const region = regionOrWilderness(s.x, s.z);
       const emptyChance = region.tier === 'high' ? 0.04 : region.tier === 'medium' ? 0.13 : 0.27;
-      if (Math.random() < emptyChance) continue;
+      if (random() < emptyChance) continue;
       const kind = this.rollKind(s.premium ? 'premium' : 'indoor', region.tier, region.profile);
       this.spawn(kind, s.x, s.y, s.z);
       count++;
@@ -297,9 +298,9 @@ export class LootManager {
   // sampleTerrain: 野外配对时弹药按自身落点地形取高(坡地不埋不浮)
   private pairAmmo(world: World, kind: LootKind, x: number, y: number, z: number, chance: number, sampleTerrain = false): number {
     if (!isGunKind(kind)) return 0;
-    if (Math.random() >= chance) return 0;
-    const a = Math.random() * Math.PI * 2;
-    const d = 0.8 + Math.random() * 1.2;
+    if (random() >= chance) return 0;
+    const a = random() * Math.PI * 2;
+    const d = 0.8 + random() * 1.2;
     const ax = x + Math.cos(a) * d;
     const az = z + Math.sin(a) * d;
     const it = this.spawn(AMMO_LOOT_KIND[WEAPONS[kind].ammo], ax, sampleTerrain ? world.getHeight(ax, az) : y, az);
@@ -321,7 +322,7 @@ export class LootManager {
     // 村边(地块外 5~12m)
     for (const p of world.buildings.plots) {
       for (let k = 0; k < 2; k++) {
-        const side = (Math.random() * 4) | 0;
+        const side = (random() * 4) | 0;
         const m = rand(5, 12);
         if (side === 0) pts.push({ x: p.minX - m, z: rand(p.minZ, p.maxZ) });
         else if (side === 1) pts.push({ x: p.maxX + m, z: rand(p.minZ, p.maxZ) });
@@ -342,8 +343,8 @@ export class LootManager {
     // 岩石/草垛旁(岩柱碰撞体, 半径外 1~2.5m)
     const rocks = world.cyls.filter((c) => c.tag === 'rock');
     for (let k = 0; k < 8 && rocks.length > 0; k++) {
-      const c = rocks[(Math.random() * rocks.length) | 0] as (typeof rocks)[number];
-      const a = Math.random() * Math.PI * 2;
+      const c = rocks[(random() * rocks.length) | 0] as (typeof rocks)[number];
+      const a = random() * Math.PI * 2;
       pts.push({ x: c.x + Math.cos(a) * (c.r + rand(1, 2.5)), z: c.z + Math.sin(a) * (c.r + rand(1, 2.5)) });
     }
     // 树丛(12m 内 ≥3 棵树)
@@ -386,7 +387,7 @@ export class LootManager {
     const anchors = this.outdoorAnchors(world);
     // 洗牌
     for (let i = anchors.length - 1; i > 0; i--) {
-      const j = (Math.random() * (i + 1)) | 0;
+      const j = (random() * (i + 1)) | 0;
       const t = anchors[i] as { x: number; z: number };
       anchors[i] = anchors[j] as { x: number; z: number };
       anchors[j] = t;
@@ -443,7 +444,7 @@ export class LootManager {
 
   // 弹药包按类型子掷: 步枪弹/冲锋枪弹偏多, 霰弹少量
   private rollAmmo(): LootKind {
-    const r = Math.random();
+    const r = random();
     if (r < 0.3) return 'ammoRifle';
     if (r < 0.58) return 'ammoSmg';
     if (r < 0.78) return 'ammoPistol';
@@ -470,7 +471,7 @@ export class LootManager {
     const entries = [...common, ...(tier === 'high' ? high : tier === 'medium' ? medium : low), ...profileBonus[profile]];
     if (table === 'premium') entries.push(['dmr', 4], ['sniper', 3], ['helmet3', 2], ['vest3', 2], ['pack3', 2], ['attScope4', 2], ['medkit', 2]);
     const total = entries.reduce((sum, e) => sum + e[1], 0);
-    let r = Math.random() * total;
+    let r = random() * total;
     for (const [kind, weight] of entries) {
       r -= weight;
       if (r <= 0) return kind;
@@ -538,7 +539,7 @@ export class LootManager {
     for (const it of this.items) {
       if (!it.active) continue;
       const dx = it.group.position.x - x;
-      const dy = it.group.position.y - y - 1;
+      const dy = it.baseY - y - 1;
       const dz = it.group.position.z - z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 < bestD) {
@@ -556,7 +557,7 @@ export class LootManager {
     for (const it of this.items) {
       if (!it.active || !isWeaponKind(it.kind)) continue;
       const dx = it.group.position.x - x;
-      const dy = it.group.position.y - y - 1;
+      const dy = it.baseY - y - 1;
       const dz = it.group.position.z - z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 < bestD) {
@@ -574,7 +575,7 @@ export class LootManager {
     for (const it of this.items) {
       if (!it.active || (!isWeaponKind(it.kind) && !isArmorKind(it.kind) && !isPackKind(it.kind) && !isAttachKind(it.kind))) continue;
       const dx = it.group.position.x - x;
-      const dy = it.group.position.y - y - 1;
+      const dy = it.baseY - y - 1;
       const dz = it.group.position.z - z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 < bestD) {
@@ -592,7 +593,7 @@ export class LootManager {
     for (const it of this.items) {
       if (!it.active || !isArmorKind(it.kind)) continue;
       const dx = it.group.position.x - x;
-      const dy = it.group.position.y - y - 1;
+      const dy = it.baseY - y - 1;
       const dz = it.group.position.z - z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 < bestD) {
@@ -610,7 +611,7 @@ export class LootManager {
     for (const it of this.items) {
       if (!it.active || !isPackKind(it.kind)) continue;
       const dx = it.group.position.x - x;
-      const dy = it.group.position.y - y - 1;
+      const dy = it.baseY - y - 1;
       const dz = it.group.position.z - z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 < bestD) {
@@ -628,7 +629,7 @@ export class LootManager {
     for (const it of this.items) {
       if (!it.active || (it.kind !== 'bandage' && it.kind !== 'medkit' && it.kind !== 'drink')) continue;
       const dx = it.group.position.x - x;
-      const dy = it.group.position.y - y - 1;
+      const dy = it.baseY - y - 1;
       const dz = it.group.position.z - z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 < bestD) {
@@ -647,7 +648,7 @@ export class LootManager {
     for (const it of this.items) {
       if (!it.active || it.kind !== kind) continue;
       const dx = it.group.position.x - x;
-      const dy = it.group.position.y - y - 1;
+      const dy = it.baseY - y - 1;
       const dz = it.group.position.z - z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 < bestD) {

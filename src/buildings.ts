@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import type { AabbCollider, DestructibleLike } from './types';
 import { riverZAt, type World } from './world';
+import { random } from './random';
 
 export interface LootSpot {
   x: number; y: number; z: number;
@@ -314,7 +315,7 @@ export class Buildings {
   // 每局重开时恢复门窗: 窗全恢复; 门 30% 概率预破坏
   reset(): void {
     for (const d of this.destructibles) {
-      d.reset(d.kind === 'window' ? true : Math.random() >= 0.3);
+      d.reset(d.kind === 'window' ? true : random() >= 0.3);
     }
   }
 

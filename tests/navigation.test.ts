@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { findSwimBank } from '../src/botnav';
+import { findBridgeExit, findSwimBank } from '../src/botnav';
 import {
   shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
 } from '../src/character';
@@ -38,5 +38,19 @@ describe('游泳上岸点搜索', () => {
 
   it('加速游泳速度明显高于普通划水', () => {
     expect(SWIM_SPRINT_SPEED).toBeGreaterThanOrEqual(SWIM_SPEED * 1.8);
+  });
+});
+
+describe('桥面导航', () => {
+  it('桥上角色先选择更接近原目标的桥头', () => {
+    const out = new THREE.Vector2();
+    expect(findBridgeExit(out, 168.5, 88, 120, 150)).toBe(true);
+    expect(out.x).toBe(170);
+    expect(out.y).toBeGreaterThan(88);
+  });
+
+  it('离开桥面后不再覆盖原导航目标', () => {
+    const out = new THREE.Vector2();
+    expect(findBridgeExit(out, 166, 88, 120, 150)).toBe(false);
   });
 });

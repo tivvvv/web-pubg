@@ -2041,12 +2041,14 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     r = 0.48,
     allowWater = true,
     swimExit = false,
+    allowDrop = false,
   ): boolean {
     const standY = this.groundHeight(x, z, feetY + 0.16);
     const deepWater = standY < WATER_Y - 0.55;
     const swimExitApproach = swimExit && allowWater && feetY < WATER_Y + 0.2 && standY <= WATER_Y + 3.6;
     if (deepWater && !allowWater) return false;
-    if (!deepWater && !swimExitApproach && (standY > feetY + 0.62 || standY < feetY - 1.45)) return false;
+    if (!deepWater && !swimExitApproach &&
+      (standY > feetY + 0.62 || (!allowDrop && standY < feetY - 1.45))) return false;
     const bodyY = deepWater ? WATER_Y - 0.78 : standY;
     for (const c of this.cylinderGrid.at(x, z)) {
       if (bodyY >= c.y1 - 0.05 || bodyY + 1.65 <= c.y0) continue;

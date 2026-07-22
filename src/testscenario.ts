@@ -2,13 +2,19 @@ import * as THREE from 'three';
 import { emptyAttachments } from './attachments';
 import { ARMORS } from './armor';
 import { findSwimBank } from './botnav';
+import { LOOT_CAP } from './loot';
 import type { Game } from './game';
 import { VEHICLE_SPEC } from './vehicles';
 import { MELEE, WEAPONS } from './weapons';
 import { riverZAt, WATER_Y } from './world';
+import { parseRandomSeed, setRandomSeed } from './random';
+import {
+  MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
+  type StabilityActorSample, type StabilityResourceSnapshot,
+} from './stability';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'combat', 'bottactics', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
+  'stairs', 'swim', 'combat', 'bottactics', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -17,6 +23,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   swim: '游泳回归: 检查入水姿态, Shift 加速和连续上岸',
   combat: '枪战回归: M416 + 全套配件, 检查 ADS, 后坐和命中反馈',
   bottactics: '机器人战术: 同时检查交战, 恢复, 搜索和圈外转移',
+  stability: '长局稳定性: 固定种子加速整局, 检查卡住, 非法状态和重开泄漏',
   parachute: '空降回归: 玩家和队友同高度自由落体, 检查速度和开伞时机',
   vehicle: '载具回归: F 上车, WASD 驾驶, 低速 F 下车并检查碰撞和仪表',
   deathcrate: '死亡盒回归: F 搜索盒子, 自动装备武器护具并遵守负重上限',
@@ -81,6 +88,128 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
     };
     window.requestAnimationFrame(publishTactics);
   }
+  if (id === 'stability') beginStabilityMonitoring(panel, game);
+}
+
+function stabilityResources(game: Game): StabilityResourceSnapshot {
+  return {
+    characters: game.chars.length,
+    bots: game.bots.length,
+    lootItems: game.loot.items.filter((item) => item.active).length,
+    lootPool: game.loot.items.length,
+    vehicles: game.vehicles.list.length,
+    sceneChildren: game.scene.children.length,
+    activeDeathCrates: game.deathCrates.crates.filter((crate) => crate.active).length,
+    deathCratePool: game.deathCrates.crates.length,
+  };
+}
+
+function stabilityActors(game: Game): StabilityActorSample[] {
+  return game.bots.map((bot) => {
+    const c = bot.char;
+    const active = bot.jumpS < 0 && bot.descent === null && c.group.visible && c.grounded && !c.swimming && !c.knocked;
+    const combatProgress = game.nowSec - c.lastShotT <= 2;
+    return {
+      id: c.id,
+      name: c.name,
+      alive: c.alive,
+      active,
+      trackMovement: active && bot.hasNavigationIntent && !combatProgress,
+      x: c.pos.x,
+      y: c.pos.y,
+      z: c.pos.z,
+      hp: c.hp,
+      mode: bot.tacticalState,
+    };
+  });
+}
+
+function setupStability(game: Game): void {
+  parkSquad(game);
+  const player = game.playerCtl;
+  if (player) {
+    player.descent = null;
+    player.vy = 0;
+    player.char.alive = false;
+    player.char.hp = 0;
+    player.char.airPose = null;
+    player.char.group.visible = false;
+    player.char.removeCanopy();
+  }
+  game.zoneArmed = true;
+}
+
+function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
+  const search = window.location.search;
+  const rounds = parseBoundedTestInteger(search, 'rounds', 2, 1, 3);
+  const baseSeed = parseRandomSeed(search, 1337) ?? 1337;
+  const deadline = parseBoundedTestInteger(search, 'deadline', 390, 240, 480);
+  const baseline = stabilityResources(game);
+  const accumulatedIssues = new Set<string>();
+  const roundResults: string[] = [];
+  let round = 1;
+  let monitor = new MatchStabilityMonitor(10, 0.8);
+
+  const publish = (): void => {
+    if (!panel.isConnected) return;
+    const actors = stabilityActors(game);
+    const summary = monitor.update(game.nowSec, actors);
+    for (const issue of summary.issues) accumulatedIssues.add(`round${round}:${issue}`);
+    panel.dataset.stabilityStatus = 'running';
+    panel.dataset.stabilitySeed = String(baseSeed + round - 1);
+    panel.dataset.stabilityRound = `${round}/${rounds}`;
+    panel.dataset.stabilityElapsed = game.nowSec.toFixed(1);
+    panel.dataset.stabilityAlive = String(summary.alive);
+    panel.dataset.stabilityZone = `${game.zone.phase}:${game.zone.state}`;
+    panel.dataset.stabilityTransitions = String(summary.transitions);
+    panel.dataset.stabilityMaxStuck = summary.maxStagnantSec.toFixed(2);
+    panel.dataset.stabilityIssues = [...accumulatedIssues].join('|');
+    panel.dataset.stabilitySteps = String(game.simulationSteps);
+    panel.dataset.stabilityActors = actors
+      .filter((actor) => actor.alive)
+      .map((actor) => {
+        const elevation = actor.y - game.world.getHeight(actor.x, actor.z);
+        return `${actor.name},${actor.x.toFixed(1)},${actor.y.toFixed(1)},${actor.z.toFixed(1)},${actor.hp.toFixed(0)},${actor.mode},${actor.trackMovement ? 1 : 0},${elevation.toFixed(1)}`;
+      })
+      .join('|');
+
+    const timedOut = game.nowSec >= deadline && summary.alive > 1;
+    const completed = summary.alive <= 1 && game.nowSec >= 20;
+    if (timedOut) accumulatedIssues.add(`round${round}:timeout:${summary.alive}`);
+    if (timedOut || completed) {
+      roundResults.push(`${round},${game.nowSec.toFixed(1)},${summary.alive},${summary.transitions}`);
+      if (!timedOut && round < rounds) {
+        round++;
+        setRandomSeed((baseSeed + round - 1) >>> 0);
+        game.startMatch();
+        setupStability(game);
+        for (const issue of validateRoundReset(baseline, stabilityResources(game), game.bots.length, LOOT_CAP)) {
+          accumulatedIssues.add(`round${round}:${issue}`);
+        }
+        monitor = new MatchStabilityMonitor(10, 0.8);
+        panel.dataset.stabilityRoundResults = roundResults.join(';');
+        window.requestAnimationFrame(publish);
+        return;
+      }
+      const finalResources = stabilityResources(game);
+      panel.dataset.stabilityStatus = accumulatedIssues.size === 0 && !timedOut ? 'passed' : 'failed';
+      panel.dataset.stabilityIssues = [...accumulatedIssues].join('|');
+      panel.dataset.stabilityRoundResults = roundResults.join(';');
+      panel.dataset.stabilityResources = [
+        finalResources.characters,
+        finalResources.bots,
+        finalResources.lootItems,
+        finalResources.lootPool,
+        finalResources.vehicles,
+        finalResources.sceneChildren,
+        finalResources.activeDeathCrates,
+        finalResources.deathCratePool,
+      ].join(',');
+      return;
+    }
+    window.requestAnimationFrame(publish);
+  };
+  window.requestAnimationFrame(publish);
 }
 
 function parkEnemies(game: Game): void {
@@ -503,13 +632,15 @@ function setupMapTour(game: Game): void {
 export function applyTestScenarioFromUrl(game: Game): void {
   const id = scenarioFromUrl();
   if (!id) return;
+  if (id === 'stability') setRandomSeed(parseRandomSeed(window.location.search, 1337) ?? 1337);
   game.startMatch();
-  parkEnemies(game);
-  if (id !== 'parachute') parkSquad(game);
+  if (id !== 'stability') parkEnemies(game);
+  if (id !== 'parachute' && id !== 'stability') parkSquad(game);
   if (id === 'stairs') setupStairs(game);
   else if (id === 'swim') setupSwim(game);
   else if (id === 'combat') setupCombat(game);
   else if (id === 'bottactics') setupBotTactics(game);
+  else if (id === 'stability') setupStability(game);
   else if (id === 'parachute') setupParachute(game);
   else if (id === 'vehicle') setupVehicle(game);
   else if (id === 'deathcrate') setupDeathCrate(game);

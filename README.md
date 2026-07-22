@@ -23,6 +23,7 @@ npm run build
 - `/?test=1&scenario=stairs`: 多层建筑, 楼梯净空和墙体接缝
 - `/?test=1&scenario=swim`: 入水, Shift 加速游泳和上岸
 - `/?test=1&scenario=combat`: M416, 2 倍镜, 扩容弹匣和补偿器
+- `/?test=1&scenario=stability&seed=1337&simSteps=12&rounds=2`: 固定种子长局, 卡住监控和重开资源校验
 - `/?test=1&scenario=parachute`: 玩家与队友同步自由落体和开伞
 - `/?test=1&scenario=vehicle`: 载具上下车, 驾驶碰撞和仪表
 - `/?test=1&scenario=deathcrate`: 死亡盒搜索, 自动装备和负重

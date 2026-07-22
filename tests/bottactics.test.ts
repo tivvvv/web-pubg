@@ -38,7 +38,7 @@ describe('机器人战术决策', () => {
     expect(zoneRotationUrgency({ outsideCurrent: false, distanceOutsideNext: 104, state: 'wait', timer: 60 }))
       .toBe('none');
     expect(zoneRotationUrgency({ outsideCurrent: false, distanceOutsideNext: 2, state: 'done', timer: 0 }))
-      .toBe('prepare');
+      .toBe('none');
     expect(zoneRotationUrgency({ outsideCurrent: false, distanceOutsideNext: 0, state: 'done', timer: 0 }))
       .toBe('none');
   });

@@ -1,6 +1,7 @@
 // 毒圈: 等待→缩圈相位机 + 蓝色能量墙 + 圈外伤害
 import * as THREE from 'three';
 import { lerp, rand } from './utils';
+import { random } from './random';
 
 export interface ZonePhase {
   wait: number;   // 等待秒数
@@ -87,8 +88,8 @@ export class Zone {
 
   reset(): void {
     // 初始圈: 半径~310, 圆心随机偏移地图中心
-    const a = Math.random() * Math.PI * 2;
-    const d = Math.random() * 55;
+    const a = random() * Math.PI * 2;
+    const d = random() * 55;
     this.center.set(Math.cos(a) * d, Math.sin(a) * d);
     this.radius = 310;
     this.phase = 0;
@@ -107,8 +108,8 @@ export class Zone {
     }
     // 新圆心保证整个小圈在当前圈内
     const maxOff = Math.max(0, (this.radius - p.radius) * 0.75);
-    const a = Math.random() * Math.PI * 2;
-    const d = Math.random() * maxOff;
+    const a = random() * Math.PI * 2;
+    const d = random() * maxOff;
     this.nextCenter.set(this.center.x + Math.cos(a) * d, this.center.y + Math.sin(a) * d);
     this.nextRadius = p.radius;
   }
@@ -197,7 +198,7 @@ export class Zone {
   // 随机圈内点(bots 用)
   randomPointInside(out: THREE.Vector2, scale = 0.6): THREE.Vector2 {
     const a = rand(0, Math.PI * 2);
-    const d = Math.sqrt(Math.random()) * this.radius * scale;
+    const d = Math.sqrt(random()) * this.radius * scale;
     out.set(this.center.x + Math.cos(a) * d, this.center.y + Math.sin(a) * d);
     return out;
   }

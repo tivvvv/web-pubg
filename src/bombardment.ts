@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { Game } from './game';
 import { rand } from './utils';
 import { WATER_Y } from './world';
+import { random } from './random';
 
 export type BombardmentState = 'idle' | 'warning' | 'active';
 
@@ -308,13 +309,13 @@ export class BombardmentSystem {
       let x: number;
       let z: number;
       if (player && i < 30) {
-        const a = Math.random() * Math.PI * 2;
+        const a = random() * Math.PI * 2;
         const d = rand(42, 76);
         x = player.pos.x + Math.cos(a) * d;
         z = player.pos.z + Math.sin(a) * d;
       } else {
-        const a = Math.random() * Math.PI * 2;
-        const d = Math.sqrt(Math.random()) * safeRadius;
+        const a = random() * Math.PI * 2;
+        const d = Math.sqrt(random()) * safeRadius;
         x = game.zone.center.x + Math.cos(a) * d;
         z = game.zone.center.y + Math.sin(a) * d;
       }
@@ -370,8 +371,8 @@ export class BombardmentSystem {
     let z = this.center.y;
     let ground = game.world.getHeight(x, z);
     for (let i = 0; i < 18; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const d = Math.sqrt(Math.random()) * RADIUS * 0.9;
+      const a = random() * Math.PI * 2;
+      const d = Math.sqrt(random()) * RADIUS * 0.9;
       const tx = this.center.x + Math.cos(a) * d;
       const tz = this.center.y + Math.sin(a) * d;
       const h = game.world.getHeight(tx, tz);
@@ -383,7 +384,7 @@ export class BombardmentSystem {
     }
     const shell = this.shells[this.shellCursor] as Shell;
     this.shellCursor = (this.shellCursor + 1) % this.shells.length;
-    const a = Math.random() * Math.PI * 2;
+    const a = random() * Math.PI * 2;
     const offset = rand(5, 11);
     shell.start.set(x + Math.cos(a) * offset, ground + rand(52, 68), z + Math.sin(a) * offset);
     shell.target.set(x, ground + 0.2, z);
@@ -451,7 +452,7 @@ export class BombardmentSystem {
     this.tmpNormal.set(hL - hR, 2, hD - hU).normalize();
     crater.mesh.position.set(point.x, point.y + 0.045, point.z);
     crater.mesh.quaternion.setFromUnitVectors(CIRCLE_NORMAL, this.tmpNormal);
-    crater.mesh.rotateZ(Math.random() * Math.PI * 2);
+    crater.mesh.rotateZ(random() * Math.PI * 2);
     const scale = rand(1.8, 2.8);
     crater.mesh.scale.set(scale * rand(0.82, 1.18), scale, 1);
     crater.mesh.material.opacity = 0.82;

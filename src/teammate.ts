@@ -12,6 +12,7 @@ import { armorFromLoot, isArmorKind } from './armor';
 import { isPackKind, packLevelFromLoot } from './backpack';
 import { ATTACHMENTS, attachFromLoot, canAttach, isAttachKind, magSizeOf } from './attachments';
 import { seatWorldAt, type Vehicle } from './vehicles';
+import { random } from './random';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { THROWABLES, WEAPONS, ammoTypeFromLoot } from './weapons';
 import { angleDiff, rand, turnToward } from './utils';
@@ -508,7 +509,7 @@ export class TeammateController {
     this.tacticT -= dt;
     if (this.tacticT <= 0) {
       this.tacticT = rand(0.75, 1.25);
-      if (Math.random() < 0.35) this.strafeDir *= -1;
+      if (random() < 0.35) this.strafeDir *= -1;
       if (gun && (this.reloadT > 0 || c.hp < 35) &&
         findCoverPoint(this.tacticPoint, c, t, game.world, 12) &&
         !game.zone.isOutside(this.tacticPoint.x, this.tacticPoint.y)) {
@@ -605,7 +606,7 @@ export class TeammateController {
       }
     } else {
       this.burstCd -= dt;
-      if (this.burstCd <= 0) this.burstLeft = gun.def.auto ? 3 + Math.floor(Math.random() * 3) : 1;
+      if (this.burstCd <= 0) this.burstLeft = gun.def.auto ? 3 + Math.floor(random() * 3) : 1;
     }
   }
 
@@ -617,11 +618,11 @@ export class TeammateController {
     t.chestPos(this.aim);
     // 略弱于敌方 bot 的精度
     const sigma = (0.028 + dist * 0.00055) * 1.3;
-    const errR = dist * Math.tan(sigma) * Math.sqrt(Math.random());
-    const errA = Math.random() * Math.PI * 2;
+    const errR = dist * Math.tan(sigma) * Math.sqrt(random());
+    const errA = random() * Math.PI * 2;
     this.aim.x += Math.cos(errA) * errR;
     this.aim.z += Math.sin(errA) * errR;
-    this.aim.y += (Math.random() - 0.5) * errR * 0.7;
+    this.aim.y += (random() - 0.5) * errR * 0.7;
     this.dir.subVectors(this.aim, this.eye).normalize();
     if (game.fireWeapon(c, this.eye, this.dir, 0)) {
       this.fireTimer = gun.def.fireInterval;

@@ -1,4 +1,5 @@
 // 数学与随机工具
+import { random } from './random';
 export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -13,11 +14,11 @@ export function smoothstep(e0: number, e1: number, x: number): number {
 }
 
 export function rand(lo: number, hi: number): number {
-  return lo + Math.random() * (hi - lo);
+  return lo + random() * (hi - lo);
 }
 
 export function randInt(lo: number, hi: number): number {
-  return (lo + Math.random() * (hi - lo + 1)) | 0;
+  return (lo + random() * (hi - lo + 1)) | 0;
 }
 
 export function dist2D(ax: number, az: number, bx: number, bz: number): number {

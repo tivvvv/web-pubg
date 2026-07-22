@@ -90,6 +90,8 @@ import { Zone } from './zone';
 import { regionOrWilderness } from './regions';
 import { scopeModeOf } from './gunplay';
 import { GameRenderer } from './rendering';
+import { random } from './random';
+import { parseBoundedTestInteger } from './stability';
 
 const TOTAL = 24;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
@@ -159,6 +161,7 @@ export class Game {
   private shotDots: { x: number; z: number }[] = [];
   private mapVehicles: { x: number; z: number; dead: boolean }[] = [];
   private mapSquad: { x: number; z: number }[] = [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }];
+  private testSimulationSteps = 1;
   private readonly hudSquadRows: SquadHudRow[] = [
     { name: '你', hp: 100, alive: true, isPlayer: true, knocked: false },
     { name: MATE_NAMES[0] as string, hp: 100, alive: true, isPlayer: false, knocked: false },
@@ -255,6 +258,9 @@ export class Game {
       (a) => this.onAction(a),
       (locked) => this.onLockChange(locked),
     );
+    if (this.input.testMode) {
+      this.testSimulationSteps = parseBoundedTestInteger(window.location.search, 'simSteps', 1, 1, 12);
+    }
 
     this.hud.onStart = () => this.startMatch();
     this.hud.onRestart = () => this.startMatch();
@@ -284,6 +290,10 @@ export class Game {
 
   get performanceStats() {
     return this.graphics.stats;
+  }
+
+  get simulationSteps(): number {
+    return this.testSimulationSteps;
   }
 
   get aliveCount(): number {
@@ -583,6 +593,7 @@ export class Game {
     this.chars.length = 0;
     this.bots = [];
     this.mates = [];
+    Character.nextId = 1;
     for (const t of this.squadTags) this.scene.remove(t);
     this.squadTags = [];
     // 上一局可能死在舱内(旧运输机未清)
@@ -674,16 +685,16 @@ export class Game {
       bot.char.group.visible = false;
       bot.jumpS = clamp(500 + p.x * dirX + p.z * dirZ + rand(-55, 55), 40, 950);
       bot.dropTarget.set(p.x, 0, p.z);
-      if (Math.random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
-      if (Math.random() < 0.5) bot.char.heals.bandage = 1 + Math.floor(Math.random() * 2); // 50% 带 1~2 绷带
-      if (Math.random() < 0.35) bot.char.pack = { level: Math.random() < 0.7 ? 1 : 2 }; // 35% 带 L1~L2 背包
+      if (random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
+      if (random() < 0.5) bot.char.heals.bandage = 1 + Math.floor(random() * 2); // 50% 带 1~2 绷带
+      if (random() < 0.35) bot.char.pack = { level: random() < 0.7 ? 1 : 2 }; // 35% 带 L1~L2 背包
       // 40% bot 开局自带 L1~L2 头盔/防弹衣
-      if (Math.random() < 0.4) {
-        const lv: ArmorLevel = Math.random() < 0.65 ? 1 : 2;
+      if (random() < 0.4) {
+        const lv: ArmorLevel = random() < 0.65 ? 1 : 2;
         bot.char.helmet = { level: lv, durability: ARMORS.helmet[lv].maxDurability };
       }
-      if (Math.random() < 0.4) {
-        const lv: ArmorLevel = Math.random() < 0.65 ? 1 : 2;
+      if (random() < 0.4) {
+        const lv: ArmorLevel = random() < 0.65 ? 1 : 2;
         bot.char.vest = { level: lv, durability: ARMORS.vest[lv].maxDurability };
       }
       this.bots.push(bot);
@@ -748,8 +759,11 @@ export class Game {
     const dt = Math.min((t - this.lastT) / 1000, 0.05);
     this.lastT = t;
     if (this.state === 'playing') {
-      this.now += dt;
-      this.update(dt);
+      const simulationDt = this.testSimulationSteps > 1 ? 1 / 60 : dt;
+      for (let step = 0; step < this.testSimulationSteps && this.state === 'playing'; step++) {
+        this.now += simulationDt;
+        this.update(simulationDt);
+      }
     } else if (this.state === 'menu') {
       this.menuAngle += dt * 0.045;
       this.menuCam.position.set(Math.cos(this.menuAngle) * 240, 100, Math.sin(this.menuAngle) * 240);

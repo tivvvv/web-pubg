@@ -15,9 +15,9 @@ export interface ZoneRotationInput {
 
 export function zoneRotationUrgency(input: ZoneRotationInput): ZoneRotationUrgency {
   if (input.outsideCurrent) return 'immediate';
+  if (input.state === 'done') return 'none';
   if (input.distanceOutsideNext <= 0) return 'none';
   if (input.state === 'shrink') return 'immediate';
-  if (input.state === 'done') return 'prepare';
   const travelTime = input.distanceOutsideNext / (input.moveSpeed ?? 5.2);
   return input.timer <= travelTime + 5 ? 'prepare' : 'none';
 }

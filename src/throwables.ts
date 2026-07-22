@@ -7,6 +7,7 @@ import type { ThrowableId } from './types';
 import type { World } from './world';
 import type { Game } from './game';
 import { buildWeaponModel } from './weaponmodels';
+import { random } from './random';
 
 const MAX_GRENADES = 12;      // 活动投掷物上限
 const MAX_CLOUDS = 4;         // 同时烟幕上限
@@ -409,8 +410,8 @@ export class GrenadeManager {
     c.pos.copy(s.pos);
     c.t = SMOKE_TIME;
     c.r = 0.5;
-    c.drift.set((Math.random() - 0.5) * 0.5, 0, (Math.random() - 0.5) * 0.5);
-    for (let i = 0; i < c.seed.length; i++) c.seed[i] = Math.random() * 2 - 1;
+    c.drift.set((random() - 0.5) * 0.5, 0, (random() - 0.5) * 0.5);
+    for (let i = 0; i < c.seed.length; i++) c.seed[i] = random() * 2 - 1;
     game.soundAt(s.pos, (d, p) => game.audio.hiss(d, p));
   }
 

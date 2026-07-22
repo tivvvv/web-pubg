@@ -13,7 +13,7 @@ import { magSizeOf } from './attachments';
 import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import type { Game } from './game';
-import { AgentNavigator, findCoverPoint, findSwimBank } from './botnav';
+import { AgentNavigator, findBridgeExit, findCoverPoint, findSwimBank } from './botnav';
 import {
   chooseCombatMode, chooseStrategicMode, preferredCombatRange, selectCombatGunSlot,
   shouldDeploySmoke, shouldTacticalReload, zoneRotationUrgency, type BotCombatMode, type BotStrategicMode,
@@ -21,6 +21,7 @@ import {
 } from './bottactics';
 import { autoLootDeathCrate } from './deathcrate';
 import { findTacticalRouteWaypoint, type TacticalRoute } from './tactics';
+import { random } from './random';
 
 const ENGAGE_DIST = 92;
 // bot 降落伞配色(哑光低饱和, 按角色 id 轮换; 队友另用绿色系)
@@ -47,6 +48,7 @@ export class BotController {
   private moveTarget = new THREE.Vector3();
   private hasMoveTarget = false;
   private swimBank = new THREE.Vector2();
+  private bridgeWaypoint = new THREE.Vector2();
   private swimRepathT = 0;
   private swimStuckT = 0;
   private swimLastX = 0;
@@ -68,11 +70,15 @@ export class BotController {
   private tacticPoint = new THREE.Vector2();
   private tacticT = 0;
   private tacticMode: BotCombatMode = 'advance';
+  private navigationIntent = false;
+  private combatStuckT = 0;
+  private strategicStuckT = 0;
+  private rotationAttempt = 0;
   private strategicMode: BotStrategicMode = 'loot';
   private postCombatT = 0;
   private searchOrigin = new THREE.Vector3();
   private searchStep = 0;
-  private routeSide = Math.random() < 0.5 ? -1 : 1;
+  private routeSide = random() < 0.5 ? -1 : 1;
   private routeRole: TacticalRoute['role'] = 'advance';
   private lootScanT = 0;
   private investigateT = 0;
@@ -89,8 +95,8 @@ export class BotController {
 
   constructor(name: string, shirtColor: number) {
     this.char = new Character(name, false, shirtColor);
-    this.scanT = Math.random() * 0.3;
-    const roleRoll = Math.random();
+    this.scanT = random() * 0.3;
+    const roleRoll = random();
     this.routeRole = roleRoll < 0.34 ? 'advance' : roleRoll < 0.67 ? 'flank' : 'defend';
   }
 
@@ -98,8 +104,13 @@ export class BotController {
     return this.state === 'engage' ? `combat:${this.tacticMode}` : this.strategicMode;
   }
 
+  get hasNavigationIntent(): boolean {
+    return this.navigationIntent;
+  }
+
   update(dt: number, game: Game): void {
     const c = this.char;
+    this.navigationIntent = false;
     if (!c.alive) {
       // 空中被击杀: 继续坠地
       if (this.descent) {
@@ -175,7 +186,7 @@ export class BotController {
     // 交错扫描: 每 0.25s 左右找一次目标
     this.scanT -= dt;
     if (this.scanT <= 0) {
-      this.scanT = 0.25 + Math.random() * 0.08;
+      this.scanT = 0.25 + random() * 0.08;
       this.scan(game);
     }
 
@@ -318,7 +329,10 @@ export class BotController {
     const radius = hasNext ? game.zone.nextRadius : game.zone.radius;
     const dx = c.pos.x - center.x;
     const dz = c.pos.z - center.y;
-    const baseAngle = Math.atan2(dz, dx);
+    const attemptOffset = this.rotationAttempt === 0
+      ? 0
+      : Math.ceil(this.rotationAttempt / 2) * 0.52 * (this.rotationAttempt % 2 === 0 ? -1 : 1);
+    const baseAngle = Math.atan2(dz, dx) + attemptOffset;
     for (let ring = 0; ring < 3; ring++) {
       const targetRadius = Math.max(2, radius * (0.68 - ring * 0.18));
       for (let step = 0; step < 8; step++) {
@@ -332,6 +346,47 @@ export class BotController {
       }
     }
     out.set(center.x, center.y);
+  }
+
+  // 将近战术移动点限制在当前安全区和可站立地面内, 避免岸边或墙角持续追逐不可达目标.
+  private pickCombatMovePoint(game: Game, desiredX: number, desiredZ: number, distance: number): void {
+    const c = this.char;
+    const dx = desiredX - c.pos.x;
+    const dz = desiredZ - c.pos.z;
+    const length = Math.hypot(dx, dz);
+    if (length < 0.2) {
+      this.tacticPoint.set(c.pos.x, c.pos.z);
+      return;
+    }
+    const nx = dx / length;
+    const nz = dz / length;
+    const safeRadius = Math.max(1.5, game.zone.radius - 1.1);
+    const offsets = [0, 0.42, -0.42, 0.84, -0.84, 1.26, -1.26, Math.PI] as const;
+    const radii = [Math.min(distance, length), Math.min(distance * 0.65, length), Math.min(2.8, length)] as const;
+    let bestScore = -Infinity;
+    let bestX = c.pos.x;
+    let bestZ = c.pos.z;
+    for (const radius of radii) {
+      if (radius < 0.6) continue;
+      for (const offset of offsets) {
+        const cos = Math.cos(offset);
+        const sin = Math.sin(offset);
+        const dirX = nx * cos - nz * sin;
+        const dirZ = nx * sin + nz * cos;
+        const x = c.pos.x + dirX * radius;
+        const z = c.pos.z + dirZ * radius;
+        if (game.zoneArmed && Math.hypot(x - game.zone.center.x, z - game.zone.center.y) > safeRadius) continue;
+        const elevated = c.pos.y - game.world.getHeight(c.pos.x, c.pos.z) > 1.6;
+        if (!game.world.navPointFree(x, z, c.pos.y, 0.52, false, false, elevated)) continue;
+        const alignment = dirX * nx + dirZ * nz;
+        const score = alignment * 3 + radius * 0.12;
+        if (score <= bestScore) continue;
+        bestScore = score;
+        bestX = x;
+        bestZ = z;
+      }
+    }
+    this.tacticPoint.set(bestX, bestZ);
   }
 
   private hasUsableGun(): boolean {
@@ -573,7 +628,7 @@ export class BotController {
         this.reactT = rand(0.3, 0.8);
         this.burstLeft = 0;
         this.burstCd = 0;
-        this.engageCrouch = Math.random() < 0.15; // 15% 概率本次交战蹲下对枪
+        this.engageCrouch = random() < 0.15; // 15% 概率本次交战蹲下对枪
         this.tacticT = 0;
         this.navigator.reset(c);
       }
@@ -683,7 +738,7 @@ export class BotController {
       (rotation === 'immediate' && this.tacticMode !== 'rotate');
     if (shouldRefreshTactic) {
       this.tacticT = rand(0.75, 1.35);
-      this.strafeDir = Math.random() < 0.35 ? -this.strafeDir : this.strafeDir;
+      this.strafeDir = random() < 0.35 ? -this.strafeDir : this.strafeDir;
       let coverAvailable = false;
       const wantsCover = !meleeOnly && (this.reloadT > 0 || c.hp < 42);
       if (wantsCover && findCoverPoint(this.tacticPoint, c, t, game.world, 14) &&
@@ -700,6 +755,7 @@ export class BotController {
         distance: dist,
         preferredRange: preferred,
       });
+      if (this.tacticMode !== 'rotate') this.rotationAttempt = 0;
       const nx = dx / (dist || 1);
       const nz = dz / (dist || 1);
       if (this.tacticMode === 'rotate') {
@@ -712,9 +768,14 @@ export class BotController {
       } else if (this.tacticMode === 'advance') {
         this.tacticPoint.set(t.pos.x, t.pos.z);
       } else if (this.tacticMode === 'retreat') {
-        this.tacticPoint.set(c.pos.x - nx * 10, c.pos.z - nz * 10);
+        this.pickCombatMovePoint(game, c.pos.x - nx * 10, c.pos.z - nz * 10, 10);
       } else if (this.tacticMode === 'strafe') {
-        this.tacticPoint.set(c.pos.x - nz * this.strafeDir * 7, c.pos.z + nx * this.strafeDir * 7);
+        this.pickCombatMovePoint(
+          game,
+          c.pos.x - nz * this.strafeDir * 7,
+          c.pos.z + nx * this.strafeDir * 7,
+          7,
+        );
       }
     }
 
@@ -738,6 +799,18 @@ export class BotController {
     } else if (this.tacticMode === 'retreat') {
       combatSpeed = 4.9;
     }
+    if (findBridgeExit(this.bridgeWaypoint, c.pos.x, c.pos.z, combatGoalX, combatGoalZ)) {
+      combatGoalX = this.bridgeWaypoint.x;
+      combatGoalZ = this.bridgeWaypoint.y;
+      stopDistance = 0.9;
+    }
+    const allowCombatWater = this.tacticMode === 'advance' ||
+      (this.tacticMode === 'rotate' && rotation === 'immediate');
+    const allowCombatDrop = c.pos.y - game.world.getHeight(c.pos.x, c.pos.z) > 1.6;
+    if (allowCombatWater) {
+      this.moveTarget.set(combatGoalX, 0, combatGoalZ);
+      this.hasMoveTarget = true;
+    }
     const nav = this.navigator.move(
       c,
       combatGoalX,
@@ -745,8 +818,37 @@ export class BotController {
       combatSpeed,
       dt,
       game.world,
-      { stopDistance, turnRate: meleeOnly ? 6.5 : 4.8, allowWater: false, neighbors: game.chars },
+      {
+        stopDistance,
+        turnRate: meleeOnly ? 6.5 : 4.8,
+        allowWater: allowCombatWater,
+        allowDrop: allowCombatDrop,
+        neighbors: game.chars,
+      },
     );
+    this.navigationIntent = !nav.reached;
+    if (nav.reached || nav.moved >= 0.025) {
+      this.combatStuckT = Math.max(0, this.combatStuckT - dt * 2);
+      if (nav.reached) this.rotationAttempt = 0;
+    } else if (this.navigationIntent) {
+      this.combatStuckT += dt;
+      if (this.combatStuckT >= 2.2) {
+        this.combatStuckT = 0;
+        this.routeSide *= -1;
+        if (this.tacticMode === 'rotate') {
+          this.rotationAttempt = (this.rotationAttempt + 1) % 8;
+          this.tacticT = 0;
+        } else {
+          const invDist = 1 / (dist || 1);
+          const sideX = -dz * invDist * this.routeSide;
+          const sideZ = dx * invDist * this.routeSide;
+          this.pickCombatMovePoint(game, c.pos.x + sideX * 7, c.pos.z + sideZ * 7, 7);
+          this.tacticMode = 'search';
+          this.tacticT = 1.6;
+        }
+        this.navigator.reset(c);
+      }
+    }
     if (nav.reached && this.tacticMode === 'cover' && !this.losOk) this.tryRecover();
     const reloadGun = c.heldGun();
     if (this.reloadT <= 0 && shouldTacticalReload(
@@ -772,7 +874,7 @@ export class BotController {
       this.reactT -= dt;
       return;
     }
-    if (this.tacticMode === 'rotate' && rotation === 'immediate' && dist > 12) return;
+    if (this.tacticMode === 'rotate' && rotation === 'immediate' && game.zone.state !== 'done' && dist > 12) return;
     // 交战中被可翻越障碍(窗台/矮墙)挡住且目标在对面: 翻越过去
     this.vaultProbeT -= dt;
     if (this.vaultProbeT <= 0) {
@@ -826,8 +928,8 @@ export class BotController {
     const nz = (t.pos.z - c.pos.z) / (dist || 1);
     this.eye.x += nx * 0.4;
     this.eye.z += nz * 0.4;
-    const tx = t.pos.x + (Math.random() - 0.5) * 5;
-    const tz = t.pos.z + (Math.random() - 0.5) * 5;
+    const tx = t.pos.x + (random() - 0.5) * 5;
+    const tz = t.pos.z + (random() - 0.5) * 5;
     const dx = tx - this.eye.x;
     const dz = tz - this.eye.z;
     const dl = Math.hypot(dx, dz) || 1;
@@ -863,11 +965,11 @@ export class BotController {
     t.chestPos(this.aim);
     // 距离/移动相关误差
     const sigma = 0.028 + dist * 0.00055 + (t.speed2d > 5 ? 0.024 : 0) + (t.isPlayer ? 0.007 : 0);
-    const errR = dist * Math.tan(sigma) * Math.sqrt(Math.random());
-    const errA = Math.random() * Math.PI * 2;
+    const errR = dist * Math.tan(sigma) * Math.sqrt(random());
+    const errA = random() * Math.PI * 2;
     this.aim.x += Math.cos(errA) * errR;
     this.aim.z += Math.sin(errA) * errR;
-    this.aim.y += (Math.random() - 0.5) * errR * 0.7;
+    this.aim.y += (random() - 0.5) * errR * 0.7;
     this.dir.subVectors(this.aim, this.eye).normalize();
     if (game.fireWeapon(c, this.eye, this.dir, 0)) {
       this.fireTimer = gun.def.fireInterval;
@@ -1039,20 +1141,50 @@ export class BotController {
     if (this.hasMoveTarget) {
       const dx = this.moveTarget.x - c.pos.x;
       const dz = this.moveTarget.z - c.pos.z;
+      const bridgeExit = findBridgeExit(
+        this.bridgeWaypoint,
+        c.pos.x,
+        c.pos.z,
+        this.moveTarget.x,
+        this.moveTarget.z,
+      );
+      const navGoalX = bridgeExit ? this.bridgeWaypoint.x : this.moveTarget.x;
+      const navGoalZ = bridgeExit ? this.bridgeWaypoint.y : this.moveTarget.z;
       const speed = this.strategicMode === 'rotate'
         ? rotation === 'immediate' ? 5.7 : 5.1
         : this.strategicMode === 'hunt' ? 4.7
           : tier === 0 ? 4.6 : 4.0;
       const nav = this.navigator.move(
         c,
-        this.moveTarget.x,
-        this.moveTarget.z,
+        navGoalX,
+        navGoalZ,
         speed,
         dt,
         game.world,
-        { stopDistance: 1.25, turnRate: 4.5, neighbors: game.chars },
+        {
+          stopDistance: 1.25,
+          turnRate: 4.5,
+          allowDrop: c.pos.y - game.world.getHeight(c.pos.x, c.pos.z) > 1.6,
+          neighbors: game.chars,
+        },
       );
-      if (nav.reached) this.hasMoveTarget = false;
+      this.navigationIntent = !nav.reached;
+      if (nav.reached || nav.moved >= 0.025) {
+        this.strategicStuckT = Math.max(0, this.strategicStuckT - dt * 2);
+        if (nav.reached) this.rotationAttempt = 0;
+      } else {
+        this.strategicStuckT += dt;
+        if (this.strategicStuckT >= 2.2) {
+          this.strategicStuckT = 0;
+          this.hasMoveTarget = false;
+          this.repathT = 0;
+          this.lootScanT = Math.max(this.lootScanT, 4);
+          this.routeSide *= -1;
+          this.rotationAttempt = (this.rotationAttempt + 1) % 8;
+          this.navigator.reset(c);
+        }
+      }
+      if (nav.reached && !bridgeExit) this.hasMoveTarget = false;
       this.vaultProbeT -= dt;
       if (nav.blocked && this.vaultProbeT <= 0 && !c.vault && c.vaultCd <= 0) {
         this.vaultProbeT = 0.35;
@@ -1064,6 +1196,7 @@ export class BotController {
         }
       }
     } else {
+      this.strategicStuckT = 0;
       moveChar(c, 0, 0, dt, game.world);
     }
   }
@@ -1077,7 +1210,7 @@ export class BotController {
       : c.hp < 60 || bestGun.def.id === 'dmr' || bestGun.def.id === 'sniper'
         ? 'defend'
         : this.routeRole;
-    if (Math.random() < 0.65) {
+    if (random() < 0.65) {
       let foundRoute = findTacticalRouteWaypoint(game.tmpV2, c.pos.x, c.pos.z, this.routeRole, this.routeSide, 115) ||
         findTacticalRouteWaypoint(game.tmpV2, c.pos.x, c.pos.z, null, this.routeSide, 115);
       if (!foundRoute) {
@@ -1095,12 +1228,12 @@ export class BotController {
     // 随圈缩紧, 点位逐渐偏向圈中心
     const pull = Math.min(0.75, Math.max(0, 1 - game.zone.radius / 300));
     for (let i = 0; i < 4; i++) {
-      const a = Math.random() * Math.PI * 2;
+      const a = random() * Math.PI * 2;
       const d = rand(15, 55);
       let x = c.pos.x + Math.cos(a) * d;
       let z = c.pos.z + Math.sin(a) * d;
-      x += (game.zone.center.x - x) * pull * Math.random();
-      z += (game.zone.center.y - z) * pull * Math.random();
+      x += (game.zone.center.x - x) * pull * random();
+      z += (game.zone.center.y - z) * pull * random();
       if (!game.zone.isOutside(x, z) && game.world.pointFree(x, z, 0.5, WATER_Y + 0.4, 14)) {
         this.moveTarget.set(x, 0, z);
         this.hasMoveTarget = true;

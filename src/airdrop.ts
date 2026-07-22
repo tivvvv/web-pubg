@@ -9,6 +9,7 @@ import { AMMO_LOOT_KIND, WEAPONS } from './weapons';
 import { rand, clamp } from './utils';
 import type { AabbCollider } from './types';
 import type { Game } from './game';
+import { random } from './random';
 
 const PLANE_H = 200;      // 过顶高度(与航线一致)
 const PLANE_SPEED = 92;   // m/s
@@ -173,20 +174,20 @@ export class AirdropManager {
     crate.smokeT = 0; // 开过后烟/图标停止(已舔标记)
     this.game.soundAt(crate.pos, (d, p) => this.game.audio.hiss(d, p));
     // 保底高级套: 狙击或步枪(满弹匣) + 1~2 盒匹配弹药 + 三级甲 + 医疗箱 + 概率饮料/手雷
-    const gunKind = Math.random() < 0.5 ? 'sniper' : 'rifle';
+    const gunKind = random() < 0.5 ? 'sniper' : 'rifle';
     const gdef = WEAPONS[gunKind];
     const items: { kind: import('./types').LootKind; mag?: number }[] = [
       { kind: gunKind, mag: gdef.magSize },
       { kind: AMMO_LOOT_KIND[gdef.ammo] },
-      { kind: Math.random() < 0.5 ? 'helmet3' : 'vest3' },
+      { kind: random() < 0.5 ? 'helmet3' : 'vest3' },
       { kind: 'medkit' },
     ];
-    if (Math.random() < 0.5) items.push({ kind: AMMO_LOOT_KIND[gdef.ammo] });
-    if (Math.random() < 0.6) items.push({ kind: 'drink' });
-    if (Math.random() < 0.4) items.push({ kind: 'frag' });
+    if (random() < 0.5) items.push({ kind: AMMO_LOOT_KIND[gdef.ammo] });
+    if (random() < 0.6) items.push({ kind: 'drink' });
+    if (random() < 0.4) items.push({ kind: 'frag' });
     for (let i = 0; i < items.length; i++) {
-      const a = (i / items.length) * Math.PI * 2 + Math.random() * 0.6;
-      const r = 1.6 + Math.random() * 0.7;
+      const a = (i / items.length) * Math.PI * 2 + random() * 0.6;
+      const r = 1.6 + random() * 0.7;
       const x = crate.pos.x + Math.cos(a) * r;
       const z = crate.pos.z + Math.sin(a) * r;
       const it = items[i] as { kind: import('./types').LootKind; mag?: number };
@@ -281,7 +282,7 @@ export class AirdropManager {
       if (this.world.getHeight(px, pz) > WATER_Y + 0.3) break;
     }
     this.dropPoint.set(px, PLANE_H, pz);
-    const ang = Math.random() * Math.PI * 2;
+    const ang = random() * Math.PI * 2;
     this.planeDir.set(Math.cos(ang), 0, Math.sin(ang));
     if (!this.plane) {
       if (!this.planeKit) this.planeKit = buildTransportPlane();
@@ -307,7 +308,7 @@ export class AirdropManager {
     c.driftX = 0;
     c.driftZ = 0;
     for (let t = 0; t < 8; t++) {
-      const da = Math.random() * Math.PI * 2;
+      const da = random() * Math.PI * 2;
       const sp = rand(0.4, 1.2);
       const lx = c.pos.x + Math.cos(da) * sp * fallT;
       const lz = c.pos.z + Math.sin(da) * sp * fallT;

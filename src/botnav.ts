@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { Character, moveChar, SWIM_EXIT_DEPTH } from './character';
 import { clamp, turnToward } from './utils';
-import { WATER_Y, WORLD_HALF, type World } from './world';
+import { riverZAt, WATER_Y, WORLD_HALF, type World } from './world';
+import { random } from './random';
 
 const DETOUR_ANGLES = [0.42, -0.42, 0.78, -0.78, 1.15, -1.15, 1.55, -1.55, 2.15, -2.15] as const;
 const DETOUR_RADII = [3.2, 5.5, 8.2] as const;
@@ -19,6 +20,29 @@ const SWIM_DIRS = Array.from({ length: 32 }, (_, i) => {
 const SWIM_RADII = [3, 5, 8, 12, 18, 26, 38, 52] as const;
 
 type SwimBankWorld = Pick<World, 'getHeight' | 'pointFree'>;
+
+const BRIDGE_X = [-50, 170] as const;
+
+// 桥面被侧护栏约束时先走到更接近目标的桥头, 离桥后再恢复原目标.
+export function findBridgeExit(
+  out: THREE.Vector2,
+  x: number,
+  z: number,
+  goalX: number,
+  goalZ: number,
+): boolean {
+  for (const bridgeX of BRIDGE_X) {
+    const centerZ = riverZAt(bridgeX);
+    if (Math.abs(x - bridgeX) > 2.35 || Math.abs(z - centerZ) > 14.4) continue;
+    const northZ = centerZ + 17;
+    const southZ = centerZ - 17;
+    const northDistance = Math.hypot(goalX - bridgeX, goalZ - northZ);
+    const southDistance = Math.hypot(goalX - bridgeX, goalZ - southZ);
+    out.set(bridgeX, northDistance <= southDistance ? northZ : southZ);
+    return true;
+  }
+  return false;
+}
 
 // 搜索最近可上岸点，优先保持原移动方向，并允许卡住后避开旧岸点。
 export function findSwimBank(
@@ -100,6 +124,7 @@ export interface NavOptions {
   stopDistance?: number;
   turnRate?: number;
   allowWater?: boolean;
+  allowDrop?: boolean;
   neighbors?: readonly Character[];
 }
 
@@ -119,6 +144,7 @@ function segmentFree(
   feetY: number,
   allowWater: boolean,
   swimExit: boolean,
+  allowDrop: boolean,
   maxProbe = 8,
 ): boolean {
   const dx = x1 - x0;
@@ -134,9 +160,9 @@ function segmentFree(
     const s = probeD * (i / steps);
     const x = x0 + nx * s;
     const z = z0 + nz * s;
-    if (!world.navPointFree(x, z, sampleY, 0.5, allowWater, swimExit)) return false;
+    if (!world.navPointFree(x, z, sampleY, 0.5, allowWater, swimExit, allowDrop)) return false;
     const h = world.groundHeight(x, z, sampleY + 0.16);
-    if (h > sampleY - 1.45) sampleY = h;
+    if (allowDrop || h > sampleY - 1.45) sampleY = h;
   }
   return true;
 }
@@ -144,7 +170,7 @@ function segmentFree(
 export class AgentNavigator {
   private detour = new THREE.Vector2();
   private detourT = 0;
-  private side = Math.random() < 0.5 ? -1 : 1;
+  private side = random() < 0.5 ? -1 : 1;
   private goalX = Infinity;
   private goalZ = Infinity;
   private progressT = 0;
@@ -182,6 +208,7 @@ export class AgentNavigator {
   ): NavResult {
     const stop = options.stopDistance ?? 1.15;
     const allowWater = options.allowWater ?? true;
+    const allowDrop = options.allowDrop ?? false;
     const goalShift = Math.hypot(goalX - this.goalX, goalZ - this.goalZ);
     if (goalShift > 7) this.detourT = 0;
     this.goalX = goalX;
@@ -199,7 +226,9 @@ export class AgentNavigator {
     this.detourT = Math.max(0, this.detourT - dt);
     let tx = goalX;
     let tz = goalZ;
-    const directClear = segmentFree(world, c.pos.x, c.pos.z, goalX, goalZ, c.pos.y, allowWater, c.swimming);
+    const directClear = segmentFree(
+      world, c.pos.x, c.pos.z, goalX, goalZ, c.pos.y, allowWater, c.swimming, allowDrop,
+    );
     if (this.detourT > 0) {
       const dd = Math.hypot(this.detour.x - c.pos.x, this.detour.y - c.pos.z);
       if (dd > 0.8 && (!directClear || this.detourT > 0.22)) {
@@ -210,7 +239,7 @@ export class AgentNavigator {
       }
     }
     if ((!directClear && this.detourT <= 0) || (this.stuckT > 0.65 && this.detourT <= 0.25)) {
-      if (this.chooseDetour(c, goalX, goalZ, world, allowWater)) {
+      if (this.chooseDetour(c, goalX, goalZ, world, allowWater, allowDrop)) {
         tx = this.detour.x;
         tz = this.detour.y;
       }
@@ -287,8 +316,17 @@ export class AgentNavigator {
     goalZ: number,
     world: World,
     allowWater: boolean,
+    allowDrop: boolean,
   ): boolean {
-    if (this.chooseGridDetour(c, goalX, goalZ, world, allowWater)) return true;
+    if (this.chooseGridDetour(
+      c,
+      goalX,
+      goalZ,
+      world,
+      allowWater,
+      allowDrop,
+      this.stuckT > 0.65,
+    )) return true;
     const goalYaw = Math.atan2(goalX - c.pos.x, goalZ - c.pos.z);
     const currentGoalD = Math.hypot(goalX - c.pos.x, goalZ - c.pos.z);
     let bestScore = -Infinity;
@@ -300,8 +338,10 @@ export class AgentNavigator {
         const a = goalYaw + signed;
         const x = c.pos.x + Math.sin(a) * radius;
         const z = c.pos.z + Math.cos(a) * radius;
-        if (!world.navPointFree(x, z, c.pos.y, 0.52, allowWater, c.swimming)) continue;
-        if (!segmentFree(world, c.pos.x, c.pos.z, x, z, c.pos.y, allowWater, c.swimming, radius)) continue;
+        if (!world.navPointFree(x, z, c.pos.y, 0.52, allowWater, c.swimming, allowDrop)) continue;
+        if (!segmentFree(
+          world, c.pos.x, c.pos.z, x, z, c.pos.y, allowWater, c.swimming, allowDrop, radius,
+        )) continue;
         const remain = Math.hypot(goalX - x, goalZ - z);
         const progress = currentGoalD - remain;
         const turnPenalty = Math.abs(signed) * 0.6;
@@ -326,7 +366,10 @@ export class AgentNavigator {
     goalZ: number,
     world: World,
     allowWater: boolean,
+    allowDrop: boolean,
+    forceEscape: boolean,
   ): boolean {
+    const cell = allowDrop ? 2.35 : NAV_CELL;
     const costs = this.gridCost;
     const ys = this.gridY;
     const parents = this.gridParent;
@@ -339,6 +382,8 @@ export class AgentNavigator {
     costs[start] = 0;
     let best = -1;
     let bestScore = -Infinity;
+    let escapeBest = -1;
+    let escapeScore = -Infinity;
     const startRemain = Math.hypot(goalX - c.pos.x, goalZ - c.pos.z);
 
     for (let expanded = 0; expanded < NAV_NODES; expanded++) {
@@ -354,10 +399,11 @@ export class AgentNavigator {
       closed[node] = 1;
       const ix = node % NAV_GRID;
       const iz = Math.floor(node / NAV_GRID);
-      const x = c.pos.x + (ix - NAV_MID) * NAV_CELL;
-      const z = c.pos.z + (iz - NAV_MID) * NAV_CELL;
+      const x = c.pos.x + (ix - NAV_MID) * cell;
+      const z = c.pos.z + (iz - NAV_MID) * cell;
       if (node !== start) {
         const remain = Math.hypot(goalX - x, goalZ - z);
+        const displacement = Math.hypot(x - c.pos.x, z - c.pos.z);
         const progress = startRemain - remain;
         const gl = remain || 1;
         const lookNx = (goalX - x) / gl;
@@ -371,6 +417,7 @@ export class AgentNavigator {
             0.5,
             allowWater,
             c.swimming,
+            allowDrop,
           )) break;
           clearSteps++;
         }
@@ -382,6 +429,11 @@ export class AgentNavigator {
           bestScore = score;
           best = node;
         }
+        const fallbackScore = displacement - nodeCost * 0.12 - remain * 0.015;
+        if (fallbackScore > escapeScore) {
+          escapeScore = fallbackScore;
+          escapeBest = node;
+        }
       }
 
       for (let n = 0; n < NAV_DX.length; n++) {
@@ -390,20 +442,20 @@ export class AgentNavigator {
         if (nx < 0 || nx >= NAV_GRID || nz < 0 || nz >= NAV_GRID) continue;
         const ni = nz * NAV_GRID + nx;
         if (closed[ni]) continue;
-        const px = c.pos.x + (nx - NAV_MID) * NAV_CELL;
-        const pz = c.pos.z + (nz - NAV_MID) * NAV_CELL;
+        const px = c.pos.x + (nx - NAV_MID) * cell;
+        const pz = c.pos.z + (nz - NAV_MID) * cell;
         const nodeY = ys[node] as number;
-        if (!world.navPointFree(px, pz, nodeY, 0.5, allowWater, c.swimming)) continue;
+        if (!world.navPointFree(px, pz, nodeY, 0.5, allowWater, c.swimming, allowDrop)) continue;
         // 对角移动要求两个相邻正交格也可走，禁止从墙角或家具角穿过去。
         const ddx = NAV_DX[n] as number;
         const ddz = NAV_DZ[n] as number;
         if (ddx !== 0 && ddz !== 0) {
-          const sx = c.pos.x + (ix + ddx - NAV_MID) * NAV_CELL;
-          const sz = c.pos.z + (iz - NAV_MID) * NAV_CELL;
-          const tx = c.pos.x + (ix - NAV_MID) * NAV_CELL;
-          const tz = c.pos.z + (iz + ddz - NAV_MID) * NAV_CELL;
-          if (!world.navPointFree(sx, sz, nodeY, 0.5, allowWater, c.swimming) ||
-            !world.navPointFree(tx, tz, nodeY, 0.5, allowWater, c.swimming)) continue;
+          const sx = c.pos.x + (ix + ddx - NAV_MID) * cell;
+          const sz = c.pos.z + (iz - NAV_MID) * cell;
+          const tx = c.pos.x + (ix - NAV_MID) * cell;
+          const tz = c.pos.z + (iz + ddz - NAV_MID) * cell;
+          if (!world.navPointFree(sx, sz, nodeY, 0.5, allowWater, c.swimming, allowDrop) ||
+            !world.navPointFree(tx, tz, nodeY, 0.5, allowWater, c.swimming, allowDrop)) continue;
         }
         const step = ddx !== 0 && ddz !== 0 ? 1.414 : 1;
         const nextCost = nodeCost + step;
@@ -415,7 +467,10 @@ export class AgentNavigator {
       }
     }
 
-    if (best < 0 || bestScore < 0.2) return false;
+    if (best < 0 || bestScore < 0.2) {
+      if (!forceEscape || escapeBest < 0 || escapeScore < 1.2) return false;
+      best = escapeBest;
+    }
     let count = 0;
     let node = best;
     while (node >= 0 && node !== start && count < NAV_NODES) {
@@ -428,8 +483,8 @@ export class AgentNavigator {
     const px = pick % NAV_GRID;
     const pz = Math.floor(pick / NAV_GRID);
     this.detour.set(
-      c.pos.x + (px - NAV_MID) * NAV_CELL,
-      c.pos.z + (pz - NAV_MID) * NAV_CELL,
+      c.pos.x + (px - NAV_MID) * cell,
+      c.pos.z + (pz - NAV_MID) * cell,
     );
     this.detourT = 1.15;
     return true;

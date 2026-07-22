@@ -5,6 +5,7 @@ import type {
   AmmoType, LootKind, MeleeDef, MeleeId, SurfaceKind, ThrowableId, WeaponDef, WeaponId,
 } from './types';
 import type { World, StaticHit } from './world';
+import { random } from './random';
 
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
   pistol: {
@@ -169,8 +170,8 @@ export function applySpread(d: THREE.Vector3, spread: number, tmp: THREE.Vector3
   const vyy = d.z * uxx - d.x * uzz;
   const vzz = d.x * uyy - d.y * uxx;
   // 高斯-ish 散布
-  const ang = Math.random() * Math.PI * 2;
-  const r = (Math.random() + Math.random()) * 0.5 * spread;
+  const ang = random() * Math.PI * 2;
+  const r = (random() + random()) * 0.5 * spread;
   const ca = Math.cos(ang) * r;
   const sa = Math.sin(ang) * r;
   d.x += uxx * ca + vxx * sa;

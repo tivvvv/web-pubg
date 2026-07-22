@@ -12,6 +12,7 @@ import { VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { clamp, lerp, turnToward } from './utils';
 import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, recoilFactorOf, sightZoomOf } from './attachments';
+import { random } from './random';
 import type { Game } from './game';
 import type { WeaponId } from './types';
 import {
@@ -365,7 +366,7 @@ export class PlayerController {
           const chainF = 1 + Math.min(this.recoilChain, 10) * 0.025;
           const recoil = gun.def.recoil * recoilFactorOf(gun) * stanceControl * aimControl;
           const verticalKick = recoil * feel.vertical * chainF;
-          const horizontalKick = (Math.random() * 2 - 1) * recoil * feel.horizontal * (0.75 + chainF * 0.25);
+          const horizontalKick = (random() * 2 - 1) * recoil * feel.horizontal * (0.75 + chainF * 0.25);
           this.recoilP += verticalKick;
           this.recoilY += horizontalKick;
           // 少量永久枪口上跳需要玩家压枪, 大部分瞬时反馈会自动回正
