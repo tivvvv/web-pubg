@@ -5,6 +5,7 @@ import { clamp } from './utils';
 export class AudioSys {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private limiter: DynamicsCompressorNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
   private rainSource: AudioBufferSourceNode | null = null;
   private rainGain: GainNode | null = null;
@@ -18,7 +19,13 @@ export class AudioSys {
       this.ctx = new AC();
       this.master = this.ctx.createGain();
       this.master.gain.value = 0.55;
-      this.master.connect(this.ctx.destination);
+      this.limiter = this.ctx.createDynamicsCompressor();
+      this.limiter.threshold.value = -12;
+      this.limiter.knee.value = 8;
+      this.limiter.ratio.value = 6;
+      this.limiter.attack.value = 0.004;
+      this.limiter.release.value = 0.18;
+      this.master.connect(this.limiter).connect(this.ctx.destination);
       const len = this.ctx.sampleRate;
       this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
       const data = this.noiseBuf.getChannelData(0);
@@ -366,6 +373,12 @@ export class AudioSys {
 
   step(vol = 1): void {
     this.noiseBurst(0.1 * vol, 0, 240, 0.8, 0.045);
+  }
+
+  stepAt(dist: number, pan: number, speed: number): void {
+    const att = clamp(1.1 / (1 + dist * 0.11), 0.01, 1);
+    const pace = clamp((speed - 0.5) / 6.4, 0, 1);
+    this.noiseBurst((0.07 + pace * 0.055) * att, pan, 210 + pace * 90, 0.85, 0.045);
   }
 
   // 入水扑通(玩家)

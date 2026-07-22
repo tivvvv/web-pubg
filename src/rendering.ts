@@ -8,6 +8,8 @@ export const RENDER_QUALITY = Object.freeze({
   maxPixelRatio: 1.5,
   shadows: true,
   baseExposure: 1.08,
+  saturation: 1.06,
+  contrast: 1.035,
 });
 
 export interface RenderStats {
@@ -47,6 +49,7 @@ export class GameRenderer {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = RENDER_QUALITY.baseExposure;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.domElement.style.filter = `saturate(${RENDER_QUALITY.saturation}) contrast(${RENDER_QUALITY.contrast})`;
     this.renderer = renderer;
     this.domElement = renderer.domElement;
     container.appendChild(renderer.domElement);

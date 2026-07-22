@@ -38,16 +38,16 @@ export function environmentLighting(
   rain: number,
   storm: number,
 ): EnvironmentLighting {
-  const rainFill = rain * (0.13 + daylight * 0.18) + storm * 0.06;
+  const rainFill = rain * (0.12 + daylight * 0.14) + storm * 0.05;
   return {
     // 白天亮度维持原水平，夜间增加冷色环境补光，避免地形和角色压成纯黑剪影。
     hemiIntensity: 0.85 + daylight * 0.29 * light + rainFill,
     moonIntensity: 0.58 * light,
     exposure: clamp(
-      1.17 - daylight * 0.09 + (1 - light) * 0.08 + rain * 0.16 + storm * 0.06
-        + (1 - daylight) * 0.18,
-      1.06,
-      1.45,
+      1.12 - daylight * 0.04 + (1 - light) * 0.05 + rain * 0.08 + storm * 0.03
+        + (1 - daylight) * 0.17,
+      1.08,
+      1.35,
     ),
   };
 }
@@ -121,15 +121,15 @@ export class EnvironmentSystem {
   private readonly fogColor = new THREE.Color();
   private readonly sunDir = new THREE.Vector3(0.7, 0.6, 0.35).normalize();
   private readonly lightDir = new THREE.Vector3();
-  private readonly dayZenith = new THREE.Color(0x5798d2);
-  private readonly dayHorizon = new THREE.Color(0xd9d9c9);
+  private readonly dayZenith = new THREE.Color(0x438fce);
+  private readonly dayHorizon = new THREE.Color(0xd9e5e1);
   private readonly dawnZenith = new THREE.Color(0x405f91);
-  private readonly dawnHorizon = new THREE.Color(0xe4a278);
+  private readonly dawnHorizon = new THREE.Color(0xefa16c);
   private readonly nightZenith = new THREE.Color(0x061226);
   private readonly nightHorizon = new THREE.Color(0x17263a);
   private readonly dayWater = new THREE.Color(0x2c7898);
   private readonly nightWater = new THREE.Color(0x102d49);
-  private readonly cloudFog = new THREE.Color(0x68737a);
+  private readonly cloudFog = new THREE.Color(0x687985);
   private readonly warmSun = new THREE.Color(0xffa268);
   private readonly daySun = new THREE.Color(0xffefcf);
   private readonly dayHemi = new THREE.Color(0x7cafdd);
@@ -292,7 +292,7 @@ export class EnvironmentSystem {
       this.zenith, this.horizon, this.sunDir, daylight, this.current.cloud, this.current.wind, this.flash,
     );
 
-    this.fogColor.copy(this.horizon).lerp(this.cloudFog, this.current.cloud * 0.24);
+    this.fogColor.copy(this.horizon).lerp(this.cloudFog, this.current.cloud * 0.34);
     this.fog.color.copy(this.fogColor);
     this.fog.near = this.current.fogNear;
     this.fog.far = this.current.fogFar;
@@ -324,13 +324,19 @@ export class EnvironmentSystem {
     this.hemi.groundColor.copy(this.nightGround).lerp(this.dayGround, daylight);
     this.hemi.intensity = lighting.hemiIntensity + this.flash * 1.7;
 
-    const groundDay = lerp(0.76, 1, daylight) * lerp(0.86, 1, this.current.light);
-    this.terrainMat.color.setRGB(groundDay * (0.9 + daylight * 0.1), groundDay * (0.94 + daylight * 0.06), groundDay);
-    this.terrainMat.roughness = 0.96 - this.current.wet * 0.13;
+    const groundDay = lerp(0.78, 1, daylight) * lerp(0.9, 1, this.current.light);
+    this.terrainMat.color.setRGB(
+      groundDay * (0.93 + daylight * 0.07),
+      groundDay * (0.96 + daylight * 0.04),
+      groundDay * (0.94 + daylight * 0.06),
+    );
+    this.terrainMat.roughness = 0.96 - this.current.wet * 0.16;
     this.waterMat.color.copy(this.nightWater).lerp(this.dayWater, daylight).lerp(this.stormWater, this.current.cloud * 0.34);
     this.waterMat.specular.setHex(moon ? 0x6f91b7 : 0xbde8ef);
     this.waterMat.shininess = 90 + this.current.wet * 45;
     this.waterMat.opacity = 0.73 + this.current.rain * 0.045;
+    const rainUniform = this.waterMat.userData.rainUniform as { value: number } | undefined;
+    if (rainUniform) rainUniform.value = this.current.rain;
 
     this.snapshot.daylight = daylight;
     this.snapshot.exposure = lighting.exposure;

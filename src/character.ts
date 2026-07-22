@@ -8,7 +8,7 @@ import { buildPackModel, type PackLevel } from './backpack';
 import { buildWeaponModel, attachWeaponMods, type WeaponModel, type WeaponModelId } from './weaponmodels';
 import type { World } from './world';
 import { WATER_Y } from './world';
-import { clamp } from './utils';
+import { clamp, lerp } from './utils';
 
 export type Stance = 'stand' | 'crouch' | 'prone';
 const STANCE_TARGET: Record<Stance, number> = { stand: 0, crouch: 1, prone: 2 };
@@ -16,6 +16,10 @@ export const SWIM_SPEED = 2.6;
 export const SWIM_SPRINT_SPEED = 4.8;
 export const SWIM_ENTER_DEPTH = 1.1;
 export const SWIM_EXIT_DEPTH = 0.45;
+
+export function advancePoseBlend(current: number, active: boolean, dt: number, enterRate: number, exitRate: number): number {
+  return clamp(current + (active ? enterRate : -exitRate) * dt, 0, 1);
+}
 
 export function shouldEnterSwimming(depth: number, standH: number, feetY: number): boolean {
   return depth > SWIM_ENTER_DEPTH && feetY < WATER_Y + 0.3 && standH < WATER_Y - 1;
@@ -303,6 +307,7 @@ export class Character {
   team: 'squad' | 'enemy' = 'enemy'; // 队伍(玩家+3队友=squad)
   speed2d = 0;
   walkPhase = 0;
+  stepAcc = 0;
 
   // ---- 背包 ----
   guns: (GunState | null)[] = [null, null, null]; // 0/1 主武器, 2 手枪
@@ -343,6 +348,12 @@ export class Character {
   lastHitX = 0;          // 最近伤害来源位置(倒地爬离用)
   lastHitZ = 0;
   private swimF = 0;     // 游泳姿态混合 0..1(平滑进出)
+  private knockF = 0;    // 击倒/起身姿态混合 0..1
+  private airPoseF = 0;   // 空降/乘车姿态混合 0..1
+  private visualAirPose: 'fall' | 'canopy' | 'sit' | null = null;
+  private deathPoseCaptured = false;
+  private deathStartRotX = 0;
+  private deathStartY = 0;
   canopyGroup: THREE.Group | null = null;   // 降落伞模型(开伞挂载, 落地卸载)
   private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
   lastAttackerId = 0;
@@ -617,10 +628,14 @@ export class Character {
       if (Math.abs(this.stanceF - stTarget) < 0.03) this.stanceF = stTarget;
     }
     const p = this.parts;
+    this.knockF = advancePoseBlend(this.knockF, this.knocked, dt, 5.2, 3.4);
+    if (this.airPose) this.visualAirPose = this.airPose;
+    this.airPoseF = advancePoseBlend(this.airPoseF, this.airPose !== null, dt, 6.5, 4.5);
+    if (!this.airPose && this.airPoseF <= 0) this.visualAirPose = null;
     this.gunKick *= Math.exp(-dt * 15);
     // 持械模型切换(仅在栏位/武器变化时克隆)
     const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
-    const wantId: WeaponModelId | null = this.airPose || this.swimming || this.knocked
+    const wantId: WeaponModelId | null = this.airPose || this.airPoseF > 0.02 || this.swimming || this.knocked || this.knockF > 0.02
       ? null // 空降/游泳/击倒收枪
       : gun
         ? gun.def.id
@@ -660,40 +675,58 @@ export class Character {
     }
     if (!this.alive) {
       if (this.dieT >= 0 && this.dieT < 1) {
+        if (!this.deathPoseCaptured) {
+          this.deathPoseCaptured = true;
+          this.deathStartRotX = p.inner.rotation.x;
+          this.deathStartY = p.inner.position.y;
+        }
         this.dieT = Math.min(1, this.dieT + dt * 2.4);
         const e = 1 - (1 - this.dieT) * (1 - this.dieT);
-        p.inner.rotation.x = -Math.PI / 2 * e;
-        p.inner.position.y = 0.15 * e;
+        const targetRot = this.deathStartRotX > 0.6 ? Math.PI / 2 - 0.08 : -Math.PI / 2;
+        p.inner.rotation.x = lerp(this.deathStartRotX, targetRot, e);
+        p.inner.position.y = lerp(this.deathStartY, 0.15, e);
       }
       return;
     }
     // 空降姿势覆盖: 自由落体(展开俯冲) / 开伞(悬挂) / 驾驶(坐姿)
-    if (this.airPose) {
-      if (this.airPose === 'fall') {
-        p.inner.rotation.x = Math.PI / 2 * 0.92 + this.airSteerForward * 0.14; // 前后修正俯仰
-        p.inner.rotation.z = -this.airSteerRight * 0.32; // 左右修正侧倾
-        p.inner.position.y = 0.3;
-        p.armL.rotation.set(-0.3, 0, 1.15);
-        p.armR.rotation.set(-0.3, 0, -1.15);
-        p.legL.rotation.set(0.28, 0, 0.25);
-        p.legR.rotation.set(-0.18, 0, -0.25);
-      } else if (this.airPose === 'canopy') {
-        p.inner.rotation.x = 0.12; // 悬挂微后仰
-        p.inner.rotation.z = 0;
-        p.inner.position.y = 0;
-        p.armL.rotation.set(-2.7, 0, 0.5);
-        p.armR.rotation.set(-2.7, 0, -0.5);
-        p.legL.rotation.set(0.32, 0, 0.06);
-        p.legR.rotation.set(0.18, 0, -0.06);
+    if (this.visualAirPose && this.airPoseF > 0.001) {
+      const f = this.airPoseF * this.airPoseF * (3 - 2 * this.airPoseF);
+      const k = 1 - Math.exp(-dt * 13);
+      if (this.visualAirPose === 'fall') {
+        p.inner.rotation.x = lerp(p.inner.rotation.x, (Math.PI / 2 * 0.92 + this.airSteerForward * 0.14) * f, k);
+        p.inner.rotation.z = lerp(p.inner.rotation.z, -this.airSteerRight * 0.32 * f, k);
+        p.inner.position.y = lerp(p.inner.position.y, 0.3 * f, k);
+        p.armL.rotation.x = lerp(p.armL.rotation.x, lerp(-1.15, -0.3, f), k);
+        p.armL.rotation.z = lerp(p.armL.rotation.z, lerp(0.25, 1.15, f), k);
+        p.armR.rotation.x = lerp(p.armR.rotation.x, lerp(-1.3, -0.3, f), k);
+        p.armR.rotation.z = lerp(p.armR.rotation.z, lerp(-0.1, -1.15, f), k);
+        p.legL.rotation.x = lerp(p.legL.rotation.x, 0.28 * f, k);
+        p.legL.rotation.z = lerp(p.legL.rotation.z, 0.25 * f, k);
+        p.legR.rotation.x = lerp(p.legR.rotation.x, -0.18 * f, k);
+        p.legR.rotation.z = lerp(p.legR.rotation.z, -0.25 * f, k);
+      } else if (this.visualAirPose === 'canopy') {
+        p.inner.rotation.x = lerp(p.inner.rotation.x, 0.12 * f, k);
+        p.inner.rotation.z = lerp(p.inner.rotation.z, 0, k);
+        p.inner.position.y = lerp(p.inner.position.y, 0, k);
+        p.armL.rotation.x = lerp(p.armL.rotation.x, lerp(-1.15, -2.7, f), k);
+        p.armL.rotation.z = lerp(p.armL.rotation.z, lerp(0.25, 0.5, f), k);
+        p.armR.rotation.x = lerp(p.armR.rotation.x, lerp(-1.3, -2.7, f), k);
+        p.armR.rotation.z = lerp(p.armR.rotation.z, lerp(-0.1, -0.5, f), k);
+        p.legL.rotation.x = lerp(p.legL.rotation.x, 0.32 * f, k);
+        p.legR.rotation.x = lerp(p.legR.rotation.x, 0.18 * f, k);
       } else {
-        // 驾驶坐姿: 腿前伸, 手扶方向盘
-        p.inner.rotation.x = 0.05;
-        p.inner.rotation.z = 0;
-        p.inner.position.y = -0.35;
-        p.armL.rotation.set(-1.15, 0, 0.35);
-        p.armR.rotation.set(-1.15, 0, -0.35);
-        p.legL.rotation.set(-1.35, 0, 0.08);
-        p.legR.rotation.set(-1.3, 0, -0.08);
+        // 驾驶/乘客坐姿平滑进入和离开, 避免上下车瞬间折叠.
+        p.inner.rotation.x = lerp(p.inner.rotation.x, 0.05 * f, k);
+        p.inner.rotation.z = lerp(p.inner.rotation.z, 0, k);
+        p.inner.position.y = lerp(p.inner.position.y, -0.35 * f, k);
+        p.armL.rotation.x = lerp(p.armL.rotation.x, lerp(-1.15, -1.15, f), k);
+        p.armL.rotation.z = lerp(p.armL.rotation.z, lerp(0.25, 0.35, f), k);
+        p.armR.rotation.x = lerp(p.armR.rotation.x, lerp(-1.3, -1.15, f), k);
+        p.armR.rotation.z = lerp(p.armR.rotation.z, lerp(-0.1, -0.35, f), k);
+        p.legL.rotation.x = lerp(p.legL.rotation.x, -1.35 * f, k);
+        p.legL.rotation.z = lerp(p.legL.rotation.z, 0.08 * f, k);
+        p.legR.rotation.x = lerp(p.legR.rotation.x, -1.3 * f, k);
+        p.legR.rotation.z = lerp(p.legR.rotation.z, -0.08 * f, k);
       }
       return;
     }
@@ -715,16 +748,17 @@ export class Character {
       return;
     }
     // 击倒姿态强制卧倒, 不受站/蹲/趴输入覆盖
-    if (this.knocked) {
+    if (this.knockF > 0.001) {
       this.swimF = 0;
-      p.inner.rotation.set(Math.PI / 2 - 0.12, 0, 0);
-      p.inner.position.set(0, 0.3, 0);
-      p.armL.rotation.set(-1.55, 0, 0.38);
-      p.armR.rotation.set(-1.35, 0, -0.22);
+      const f = this.knockF * this.knockF * (3 - 2 * this.knockF);
+      p.inner.rotation.set((Math.PI / 2 - 0.12) * f, 0, 0);
+      p.inner.position.set(0, 0.3 * f, 0);
+      p.armL.rotation.set(lerp(-1.15, -1.55, f), 0, lerp(0.25, 0.38, f));
+      p.armR.rotation.set(lerp(-1.3, -1.35, f), 0, lerp(-0.1, -0.22, f));
       p.armL.position.z = 0;
       p.armR.position.z = 0;
-      p.legL.rotation.set(0.18, 0, 0.08);
-      p.legR.rotation.set(-0.12, 0, -0.08);
+      p.legL.rotation.set(0.18 * f, 0, 0.08 * f);
+      p.legR.rotation.set(-0.12 * f, 0, -0.08 * f);
       return;
     }
     // 游泳姿势: 水平俯身贴水面 + 交替划臂打水(swimF 平滑进出)

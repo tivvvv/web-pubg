@@ -31,8 +31,8 @@ void main() {
   float t = pow(clamp(d.y, 0.0, 1.0), 0.55);
   vec3 col = mix(uHorizon, uZenith, t);
   float haze = pow(1.0 - clamp(d.y, 0.0, 1.0), 5.0);
-  col = mix(col, vec3(0.84, 0.83, 0.72), haze * 0.2);
-  col = mix(col, vec3(0.31, 0.35, 0.39), uCloudCover * (0.12 + haze * 0.18));
+  col = mix(col, vec3(0.82, 0.86, 0.84), haze * 0.12);
+  col = mix(col, vec3(0.29, 0.35, 0.4), uCloudCover * (0.1 + haze * 0.16));
   float s = max(dot(d, uSunDir), 0.0);
   col += vec3(1.0, 0.68, 0.38) * pow(s, 6.0) * 0.24 * uDaylight;
   col += vec3(1.0, 0.82, 0.58) * pow(s, 90.0) * 0.82 * uDaylight;
@@ -176,10 +176,11 @@ export class Sky {
       if (c.spr.position.x > 560) c.spr.position.x -= 1120;
       const mat = c.spr.material;
       mat.opacity = c.baseOpacity * (0.22 + this.cloudCover * 1.22) * (0.58 + this.daylight * 0.42);
+      const stormShade = this.cloudCover * this.cloudCover;
       mat.color.setRGB(
-        0.52 + this.daylight * 0.48,
-        0.58 + this.daylight * 0.42,
-        0.66 + this.daylight * 0.34,
+        0.5 + this.daylight * (0.5 - stormShade * 0.28),
+        0.57 + this.daylight * (0.43 - stormShade * 0.22),
+        0.66 + this.daylight * (0.34 - stormShade * 0.14),
       );
     }
   }

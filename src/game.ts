@@ -998,6 +998,7 @@ export class Game {
     this.knock.update(dt); // 击倒流血/救援读条
     // 4 角色间软碰撞
     this.separateChars();
+    this.updateRemoteFootsteps(dt);
     // 5 模型/特效/拾取物/包扎
     for (const c of this.chars) c.syncModel(dt, c.speed2d > 0.3);
     this.updateBlobShadows();
@@ -1308,6 +1309,22 @@ export class Game {
     const e = cam.matrixWorld.elements;
     this.tmpRight.set(e[0] ?? 1, e[1] ?? 0, e[2] ?? 0);
     fn(dist, this.tmpRight.dot(this.tmpEnd));
+  }
+
+  private updateRemoteFootsteps(dt: number): void {
+    for (const c of this.chars) {
+      if (c.isPlayer || !c.alive || !c.group.visible || !c.grounded || c.swimming || c.knocked || c.airPose || c.vault || c.speed2d < 0.5) {
+        c.stepAcc = 0;
+        continue;
+      }
+      c.stepAcc += c.speed2d * dt;
+      const stride = c.speed2d > 5 ? 2.2 : c.stance === 'crouch' ? 2.05 : 2.5;
+      if (c.stepAcc < stride) continue;
+      c.stepAcc %= stride;
+      this.soundAt(c.pos, (dist, pan) => {
+        if (dist <= 34) this.audio.stepAt(dist, pan, c.speed2d);
+      });
+    }
   }
 
   // 找挡在角色行进方向上的活门/窗(2.2m 内, 朝向 dot>0.5), bot 破门用

@@ -164,9 +164,9 @@ export class World {
     const colors = new Float32Array(pos.count * 3);
     const cSand = new THREE.Color(0xd6c188);
     const cSandWet = new THREE.Color(0xa5987a);
-    const cGrassA = new THREE.Color(0x679c46);
-    const cGrassB = new THREE.Color(0x87b25a);
-    const cDry = new THREE.Color(0xa6ac62);
+    const cGrassA = new THREE.Color(0x558d3d);
+    const cGrassB = new THREE.Color(0x7baa50);
+    const cDry = new THREE.Color(0xa4a65d);
     const cRock = new THREE.Color(0x8d8c86);
     const tmpC = new THREE.Color();
     const grassC = new THREE.Color();
@@ -221,16 +221,19 @@ export class World {
       depthWrite: false,
     });
     const timeU = this.timeU;
+    const rainU = { value: 0 };
+    waterMat.userData.rainUniform = rainU;
     waterMat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = timeU;
+      shader.uniforms.uRain = rainU;
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying vec2 vWaterPos;')
+        .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uRain;\nvarying vec2 vWaterPos;')
         .replace(
           '#include <beginnormal_vertex>',
           `#include <beginnormal_vertex>
   objectNormal = normalize(objectNormal + vec3(
-    0.045 * cos(position.x * 0.05 + uTime * 0.8),
-    0.045 * sin(position.y * 0.07 + uTime * 0.6),
+    0.026 * cos(position.x * 0.05 + uTime * 0.8),
+    0.026 * sin(position.y * 0.07 + uTime * 0.6),
     0.0));`,
         )
         .replace(
@@ -241,16 +244,21 @@ export class World {
   transformed.z += (sin(position.x * 0.08 + uTime * 1.2) + cos(position.y * 0.06 + uTime * 0.9)) * 0.022 - 0.045;`,
         );
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying vec2 vWaterPos;')
+        .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uRain;\nvarying vec2 vWaterPos;')
         .replace(
           '#include <dithering_fragment>',
           `float waterBand = sin(vWaterPos.x * 0.11 + uTime * 0.9) * cos(vWaterPos.y * 0.085 - uTime * 0.72);
+  vec2 rainGrid = floor(vWaterPos * 0.19);
+  vec2 rainCell = fract(vWaterPos * 0.19) - 0.5;
+  float rainSeed = fract(sin(dot(rainGrid, vec2(12.9898, 78.233))) * 43758.5453);
+  float rainRipple = smoothstep(0.15, 0.0, abs(length(rainCell) - fract(uTime * 0.72 + rainSeed) * 0.15));
   gl_FragColor.rgb += vec3(0.035, 0.075, 0.085) * smoothstep(0.6, 0.98, waterBand);
+  gl_FragColor.rgb += vec3(0.08, 0.11, 0.13) * rainRipple * uRain * 0.55;
   #include <dithering_fragment>`,
         );
     };
-    waterMat.customProgramCacheKey = () => 'water-bob-band-v2';
-    const water = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800, 48, 48), waterMat);
+    waterMat.customProgramCacheKey = () => 'water-bob-rain-v3';
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800, 72, 72), waterMat);
     water.rotation.x = -Math.PI / 2;
     water.position.y = WATER_Y;
     scene.add(water);
@@ -271,6 +279,7 @@ export class World {
     this.sun.shadow.camera.far = 280;
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.05;
+    this.sun.shadow.radius = 2;
     scene.add(this.sun);
     scene.add(this.sun.target);
     this.sky = new Sky(scene);
