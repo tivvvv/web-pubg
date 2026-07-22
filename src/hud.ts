@@ -5,6 +5,7 @@ import { ARMORS, type ArmorKind } from './armor';
 import type { HealId } from './heals';
 import type { WeatherKind } from './environment';
 import type { ScopeMode } from './gunplay';
+import { SQUAD_ORDER_LABELS, type SquadOrderKind } from './squadcommands';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -13,6 +14,10 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 export type HitKind = 'hit' | 'head' | 'kill';
+
+export function shouldShowSwimmingStatus(swimming: boolean, descentActive: boolean): boolean {
+  return swimming && !descentActive;
+}
 
 export interface BackpackData {
   slots: { key: string; label: string; name: string; mag: string }[];
@@ -66,6 +71,9 @@ export class Hud {
   private hud = el('hud');
   private pickupPrompt = el('pickup-prompt');
   private squadPanel = el('squad-panel');
+  private squadOrder = el('squad-order');
+  private squadOrderTitle = el('squad-order-title');
+  private squadOrderDetail = el('squad-order-detail');
   private altMeter = el('alt-meter');
   private vehiclePanel = el('vehicle-panel');
   private vehicleSpeed = el('vehicle-speed');
@@ -112,6 +120,7 @@ export class Hud {
   private drinkBuffKey = '';
   private crosshairKey = '';
   private zoneTintKey: boolean | null = null;
+  private squadOrderKey = '';
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
@@ -167,6 +176,7 @@ export class Hud {
     if (on === this.swimmingKey) return;
     this.swimmingKey = on;
     this.swimTag.classList.toggle('show', on);
+    this.swimTag.setAttribute('aria-hidden', on ? 'false' : 'true');
   }
 
   // 护具栏: 等级配色耐久条, 空槽置灰
@@ -317,6 +327,19 @@ export class Hud {
           `</div>`,
       )
       .join('');
+  }
+
+  setSquadOrder(kind: SquadOrderKind, targetName = ''): void {
+    const detail = kind === 'follow' ? 'G/中键 标记 · H 警戒' : 'J 恢复跟随';
+    const title = kind === 'focus' && targetName
+      ? `${SQUAD_ORDER_LABELS[kind]}: ${targetName}`
+      : SQUAD_ORDER_LABELS[kind];
+    const key = `${kind}|${title}|${detail}`;
+    if (key === this.squadOrderKey) return;
+    this.squadOrderKey = key;
+    this.squadOrder.dataset.kind = kind;
+    this.squadOrderTitle.textContent = title;
+    this.squadOrderDetail.textContent = detail;
   }
 
   // 击倒横幅(玩家): 显隐 + 流血条 + 副标题

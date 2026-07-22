@@ -2,7 +2,7 @@
 export type Action =
   | 'slot1' | 'slot2' | 'slot3' | 'slot4' | 'slot5'
   | 'reload' | 'mute' | 'pickup' | 'heal' | 'backpack' | 'viewmode' | 'crouch' | 'prone'
-  | 'wheelUp' | 'wheelDown';
+  | 'wheelUp' | 'wheelDown' | 'squadContext' | 'squadHold' | 'squadFollow';
 
 export class Input {
   keys = new Set<string>();
@@ -55,6 +55,9 @@ export class Input {
         case 'KeyV': this.onAction('viewmode'); break;
         case 'KeyC': this.onAction('crouch'); break;
         case 'KeyZ': this.onAction('prone'); break;
+        case 'KeyG': this.onAction('squadContext'); break;
+        case 'KeyH': this.onAction('squadHold'); break;
+        case 'KeyJ': this.onAction('squadFollow'); break;
         case 'Tab':
         case 'KeyB': this.onAction('backpack'); break;
       }
@@ -75,6 +78,9 @@ export class Input {
       if (e.button === 0) {
         this.lmb = true;
         this.firePressed = true;
+      } else if (e.button === 1) {
+        e.preventDefault();
+        this.onAction('squadContext');
       } else if (e.button === 2) {
         this.rmb = true;
       }

@@ -71,7 +71,7 @@ import type { Destructible } from './buildings';
 import { Character, BOT_SHIRTS, shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH } from './character';
 import { Effects } from './effects';
 import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathcrate';
-import { Hud, type BackpackData, type SquadHudRow } from './hud';
+import { Hud, shouldShowSwimmingStatus, type BackpackData, type SquadHudRow } from './hud';
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
 import { Input, type Action } from './input';
 import { LootManager, isGunKind, isMeleeKind, type LootItem } from './loot';
@@ -92,6 +92,9 @@ import { scopeModeOf } from './gunplay';
 import { GameRenderer } from './rendering';
 import { random } from './random';
 import { parseBoundedTestInteger } from './stability';
+import {
+  squadAimScore, SquadCommandSystem, SQUAD_ORDER_LABELS, type SquadOrder, type SquadOrderKind,
+} from './squadcommands';
 
 const TOTAL = 24;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
@@ -111,6 +114,7 @@ export class Game {
   readonly hud: Hud;
   readonly audio: AudioSys;
   readonly input: Input;
+  readonly squadCommands: SquadCommandSystem;
   readonly chars: Character[] = [];
   readonly tmpV2 = new THREE.Vector2();
   readonly staticHit: StaticHit = { t: 0, kind: 'terrain' };
@@ -142,6 +146,9 @@ export class Game {
   private mates: TeammateController[] = [];
   get squadMates(): readonly TeammateController[] {
     return this.mates;
+  }
+  get squadOrder(): Readonly<SquadOrder> {
+    return this.squadCommands.current;
   }
   private squadTags: THREE.Sprite[] = [];
   private state: 'menu' | 'playing' | 'paused' | 'over' = 'menu';
@@ -242,6 +249,7 @@ export class Game {
     this.doorFrame.visible = false;
     this.scene.add(this.doorFrame);
     this.effects = new Effects(this.scene);
+    this.squadCommands = new SquadCommandSystem(this.scene);
     this.zone = new Zone(this.scene);
     this.bombardment = new BombardmentSystem(this.scene);
     this.loot = new LootManager(this.scene);
@@ -374,8 +382,106 @@ export class Game {
       }
       case 'wheelUp': this.cycleSlot(-1); break;
       case 'wheelDown': this.cycleSlot(1); break;
+      case 'squadContext': this.issueSquadContextOrder(); break;
+      case 'squadHold': this.issueSquadOrder('hold'); break;
+      case 'squadFollow': this.issueSquadOrder('follow'); break;
       default: break;
     }
+  }
+
+  private issueSquadContextOrder(): void {
+    const player = this.player;
+    if (!player) return;
+    this.tmpOrigin.copy(player.camera.position);
+    player.getViewDir(this.tmpDir);
+    // 与开火使用同一条第三人称肩部校正射线, 保证准星锁敌和子弹落点一致.
+    player.char.eyePos(this.tmpEnd);
+    if (!this.viewFpp) this.tmpEnd.y -= 0.04;
+    this.tmpEnd.addScaledVector(this.tmpDir, 14);
+    this.tmpDir.subVectors(this.tmpEnd, this.tmpOrigin).normalize();
+    hitscan(this.world, this.chars, player.char, this.tmpOrigin, this.tmpDir, 180, this.staticHit, this.shotRes);
+    const hit = this.shotRes;
+    const focus = hit.char?.team === 'enemy'
+      ? hit.char
+      : this.squadFocusTargetFromView(this.tmpOrigin, this.tmpDir, hit.hit ? hit.t : 180);
+    if (focus) {
+      this.issueSquadOrder('focus', focus.pos.x, focus.pos.z, focus.id);
+      return;
+    }
+    let distance = hit.hit ? hit.t : 90;
+    if (hit.hit && hit.surface !== 'terrain' && hit.surface !== 'floor') distance = Math.max(3, distance - 1.8);
+    this.tmpEnd.copy(this.tmpOrigin).addScaledVector(this.tmpDir, distance);
+    const target = this.resolveSquadTarget(this.tmpEnd.x, this.tmpEnd.z, this.tmpEnd.y);
+    if (!target) {
+      this.hud.toast('标记位置无法到达');
+      return;
+    }
+    this.issueSquadOrder('move', target.x, target.z);
+  }
+
+  private squadFocusTargetFromView(origin: THREE.Vector3, viewDir: THREE.Vector3, viewReach: number): Character | null {
+    let best: Character | null = null;
+    let bestScore = Infinity;
+    for (const candidate of this.chars) {
+      if (!candidate.alive || candidate.team !== 'enemy') continue;
+      candidate.chestPos(this.tmpA);
+      this.tmpEnd.subVectors(this.tmpA, origin);
+      const distanceSq = this.tmpEnd.lengthSq();
+      const along = this.tmpEnd.dot(viewDir);
+      if (along > viewReach + 1.5) continue;
+      const score = squadAimScore(along, distanceSq);
+      if (score === null) continue;
+      if (score >= bestScore) continue;
+      bestScore = score;
+      best = candidate;
+    }
+    return best;
+  }
+
+  private resolveSquadTarget(targetX: number, targetZ: number, targetY: number): { x: number; z: number } | null {
+    for (let ring = 0; ring <= 5; ring++) {
+      const radius = ring * 1.5;
+      const steps = ring === 0 ? 1 : 12;
+      for (let step = 0; step < steps; step++) {
+        const angle = (step / steps) * Math.PI * 2;
+        const x = targetX + Math.cos(angle) * radius;
+        const z = targetZ + Math.sin(angle) * radius;
+        const groundY = this.world.groundHeight(x, z, targetY + 1.5);
+        if (!this.world.navPointFree(x, z, groundY + 0.1, 0.52, false, false, true)) continue;
+        return { x, z };
+      }
+    }
+    return null;
+  }
+
+  issueSquadOrder(kind: SquadOrderKind, x?: number, z?: number, targetId = 0): boolean {
+    const player = this.player;
+    if (!player || !player.char.alive || player.char.knocked || player.descent) return false;
+    if (!this.mates.some((mate) => mate.char.alive && !mate.char.knocked)) {
+      this.hud.toast('没有可执行指令的队友');
+      return false;
+    }
+    let targetName = '';
+    let targetX = x ?? player.char.pos.x;
+    let targetZ = z ?? player.char.pos.z;
+    let targetY = this.world.groundHeight(targetX, targetZ, player.char.pos.y + 3);
+    if (kind === 'focus') {
+      const target = this.chars.find((candidate) => candidate.id === targetId && candidate.alive && candidate.team === 'enemy');
+      if (!target) return false;
+      targetName = target.name;
+      targetX = target.pos.x;
+      targetY = target.pos.y;
+      targetZ = target.pos.z;
+    } else if (kind === 'hold' || kind === 'follow') {
+      targetX = player.char.pos.x;
+      targetY = player.char.pos.y;
+      targetZ = player.char.pos.z;
+      targetId = 0;
+    }
+    this.squadCommands.issue(kind, targetX, targetY, targetZ, player.yaw, targetId, this.now);
+    this.hud.setSquadOrder(kind, targetName);
+    this.hud.toast(kind === 'focus' ? `小队指令: 集火 ${targetName}` : `小队指令: ${SQUAD_ORDER_LABELS[kind]}`);
+    return true;
   }
 
   private cycleSlot(dir: number): void {
@@ -726,6 +832,7 @@ export class Game {
     this.healKind = null;
     this.drinkT = -1;
     this.zoneArmed = false; // 跳伞前毒圈不计时
+    this.squadCommands.reset(this.player.char.pos.x, this.player.char.pos.y, this.player.char.pos.z, this.player.yaw);
     this.hud.setAltitude(-1, 0);
     this.promptItem = null;
     this.promptDoor = null;
@@ -745,6 +852,8 @@ export class Game {
     this.hud.setHealCast(-1);
     this.hud.setDrinkBuff(-1);
     this.hud.setPickupPrompt(null);
+    this.hud.setSwimming(false);
+    this.hud.setSquadOrder('follow');
     this.hud.showScreen(null);
     this.hud.toast('飞机正在接近安全区');
     this.state = 'playing';
@@ -834,6 +943,8 @@ export class Game {
     const player = this.player as PlayerController;
     // 1 输入→玩家
     player.update(dt, this.input, this);
+    const focusEnded = this.squadCommands.update(this.now, this.chars);
+    if (focusEnded) this.hud.toast('集火目标已失效, 小队恢复跟随');
     // 2 bots + 队友
     for (const b of this.bots) b.update(dt, this);
     for (const m of this.mates) m.update(dt, this);
@@ -1874,7 +1985,7 @@ export class Game {
     } else {
       this.hud.setAltitude(-1, 0);
     }
-    this.hud.setSwimming(c.swimming); // '游泳中'状态标
+    this.hud.setSwimming(shouldShowSwimmingStatus(c.swimming, player.descent !== null)); // 空降与游泳互斥
     // 击倒/救援状态(玩家视角)
     this.hud.setKnocked(c.knocked);
     if (c.knocked) {
@@ -1902,6 +2013,11 @@ export class Game {
       row.knocked = mate.knocked;
     }
     this.hud.setSquad(this.hudSquadRows);
+    const order = this.squadOrder;
+    const focusName = order.kind === 'focus'
+      ? this.chars.find((candidate) => candidate.id === order.targetId)?.name ?? ''
+      : '';
+    this.hud.setSquadOrder(order.kind, focusName);
     // 载具仪表(驾驶中显示)
     if (player.driving) {
       const v = player.driving;
@@ -2013,6 +2129,7 @@ export class Game {
       n,
       this.mapVehicles,
       this.mapSquad,
+      this.squadCommands.mapState(),
       this.airdrop.icon(),
       this.bombardment.icon(),
     );

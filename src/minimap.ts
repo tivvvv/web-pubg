@@ -3,6 +3,7 @@ import { ROAD_PATHS, WORLD_HALF, WATER_Y, riverZAt, type World } from './world';
 import type { Zone } from './zone';
 import type { BombardmentMapState } from './bombardment';
 import { REGIONS } from './regions';
+import type { SquadOrderMapState } from './squadcommands';
 
 const BASE_RES = 150;
 
@@ -143,6 +144,7 @@ export class Minimap {
     shotCount: number,
     vehicles: readonly { x: number; z: number; dead: boolean }[],
     squad: readonly { x: number; z: number }[],
+    squadOrder: SquadOrderMapState | null = null,
     airdrop: { x: number; z: number } | null = null,
     bombardment: BombardmentMapState | null = null,
   ): void {
@@ -196,6 +198,28 @@ export class Minimap {
       ctx.beginPath();
       ctx.arc(this.toMap(q.x), this.toMap(q.z), 2.2, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // 小队指令标记: 前往为金色, 警戒为蓝色, 集火为橙红色.
+    if (squadOrder) {
+      const ox = this.toMap(squadOrder.x);
+      const oz = this.toMap(squadOrder.z);
+      const color = squadOrder.kind === 'focus' ? '#ff6847' : squadOrder.kind === 'hold' ? '#79d9ff' : '#f2c94c';
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(ox, oz, 5.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(ox, oz - 3.5);
+      ctx.lineTo(ox + 3.5, oz);
+      ctx.lineTo(ox, oz + 3.5);
+      ctx.lineTo(ox - 3.5, oz);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
     }
 
     // 下一个圈(蓝)

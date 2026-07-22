@@ -576,6 +576,10 @@ export class PlayerController {
 
   private updateDescent(dt: number, input: Input, game: Game): void {
     const c = this.char;
+    // 空降和游泳是互斥状态, 避免重开或测试场景残留水中姿态/HUD.
+    c.swimming = false;
+    c.swimDip = 0;
+    c.grounded = false;
     if (this.descent === 'plane') {
       this.planeS += 92 * dt;
       game.flightPoint(c.pos, this.planeS);

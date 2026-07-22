@@ -19,8 +19,10 @@ import { angleDiff, rand, turnToward } from './utils';
 import { AgentNavigator, allyBlocksShot, findCoverPoint, findSwimBank } from './botnav';
 import type { DestructibleLike } from './types';
 import { WATER_Y } from './world';
+import { squadFormationTarget, type SquadMateOrderState } from './squadcommands';
 
 const ENGAGE_RANGE = 60;
+const FOCUS_RANGE = 180;
 
 export class TeammateController {
   readonly char: Character;
@@ -28,6 +30,7 @@ export class TeammateController {
   vy = 0;
   riding: Vehicle | null = null;
   seatIdx = -1;
+  commandState: SquadMateOrderState = 'following';
   private followAng: number;
   private followDist: number;
   private jumpSlot: number;
@@ -65,6 +68,8 @@ export class TeammateController {
   private tgt = new THREE.Vector3();
   private dir = new THREE.Vector3();
   private aim = new THREE.Vector3();
+  private commandSerial = -1;
+  private commandAnchor = new THREE.Vector2();
 
   constructor(name: string, shirtColor: number, jumpSlot = 1) {
     this.char = new Character(name, false, shirtColor);
@@ -72,6 +77,10 @@ export class TeammateController {
     this.followAng = (jumpSlot - 1) * 0.68;
     this.followDist = rand(4, 9);
     this.jumpSlot = jumpSlot;
+  }
+
+  get commandDistance(): number {
+    return Math.hypot(this.commandAnchor.x - this.char.pos.x, this.commandAnchor.y - this.char.pos.z);
   }
 
   update(dt: number, game: Game): void {
@@ -87,9 +96,11 @@ export class TeammateController {
     }
     const player = game.playerCtl;
     if (!player) return;
+    this.syncSquadOrder(game);
 
     // ---- 空降 ----
     if (this.descent) {
+      this.commandState = 'descent';
       this.updateDescent(dt, game);
       return;
     }
@@ -111,6 +122,7 @@ export class TeammateController {
         c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, rv.pos.y + 1);
         this.navigator.reset(c);
       } else {
+        this.commandState = 'riding';
         seatWorldAt(rv, this.seatIdx + 1, c.pos); // 0=驾驶位, 乘客从 1 起
         c.yaw = rv.yaw;
         return; // 乘车不开火
@@ -118,6 +130,7 @@ export class TeammateController {
     } else if (pv && !pv.dead && c.pos.distanceTo(pv.pos) < 25) {
       const seat = game.freeSeat(pv);
       if (seat >= 0) {
+        this.commandState = 'riding';
         seatWorldAt(pv, seat + 1, this.tgt);
         const d = Math.hypot(this.tgt.x - c.pos.x, this.tgt.z - c.pos.z);
         if (d > 2.0) {
@@ -144,6 +157,7 @@ export class TeammateController {
     const wasSwimming = c.swimming;
     game.updateSwim(c);
     if (c.swimming) {
+      this.commandState = 'swimming';
       if (!wasSwimming) {
         this.hasSwimBank = false;
         this.swimRepathT = 0;
@@ -160,13 +174,20 @@ export class TeammateController {
 
     // ---- 倒地: 缓慢爬离伤害来源(圈外优先爬向圈心) ----
     if (c.knocked) {
+      this.commandState = 'knocked';
       this.updateKnocked(dt, game);
       return;
     }
 
     // 轰炸预警优先于跟随和交战, 队友会立即向红区外撤离
-    if (this.fleeBombardment(dt, game)) return;
-    if (this.fleeGrenade(dt, game)) return;
+    if (this.fleeBombardment(dt, game)) {
+      this.commandState = 'safety';
+      return;
+    }
+    if (this.fleeGrenade(dt, game)) {
+      this.commandState = 'safety';
+      return;
+    }
 
     // ---- 救援友军(优先玩家, 25m 内有敌先战斗; 第二队友自然掩护) ----
     {
@@ -201,6 +222,7 @@ export class TeammateController {
           } else if (!c.reviveTarget) {
             game.knock.startRevive(c, ally);
           }
+          this.commandState = 'reviving';
           return;
         }
       }
@@ -244,20 +266,113 @@ export class TeammateController {
       this.scan(game);
     }
     if (this.target) {
+      this.commandState = game.squadOrder.kind === 'focus' && game.squadOrder.targetId === this.target.id
+        ? 'focusing'
+        : 'engaging';
       this.combat(dt, game);
     } else {
-      // 非交战: 顺路拾取 + 跟随
-      if (!this.lootNear(dt, game)) this.follow(dt, game, player);
+      // 非交战: 先执行玩家指令, 默认状态才顺路拾取并跟随.
+      if (!this.executeSquadOrder(dt, game)) {
+        if (this.lootNear(dt, game)) this.commandState = 'looting';
+        else {
+          this.commandState = 'following';
+          this.follow(dt, game, player);
+        }
+      }
     }
     const followGap = Math.hypot(player.char.pos.x - c.pos.x, player.char.pos.z - c.pos.z);
     const wantsMove = !c.reviveTarget && (this.target !== null || this.lootTarget !== null || followGap > 3);
     this.updateDoorBreak(dt, game, wantsMove);
   }
 
+  private syncSquadOrder(game: Game): void {
+    const order = game.squadOrder;
+    if (order.serial === this.commandSerial) return;
+    this.commandSerial = order.serial;
+    this.lootTarget = null;
+    this.navigator.reset(this.char);
+    if (order.kind === 'move') {
+      const target = squadFormationTarget(order.x, order.z, order.yaw, this.jumpSlot);
+      this.setCommandAnchor(game, target.x, target.z);
+    } else if (order.kind === 'hold') {
+      this.commandAnchor.set(this.char.pos.x, this.char.pos.z);
+    } else if (order.kind === 'focus') {
+      const focus = game.chars.find((candidate) => candidate.id === order.targetId && candidate.alive);
+      if (focus) {
+        this.target = focus;
+        this.lastKnown.copy(focus.pos);
+      }
+    }
+  }
+
+  private setCommandAnchor(game: Game, targetX: number, targetZ: number): void {
+    for (let ring = 0; ring <= 4; ring++) {
+      const radius = ring * 1.3;
+      const steps = ring === 0 ? 1 : 10;
+      for (let step = 0; step < steps; step++) {
+        const angle = (step / steps) * Math.PI * 2 + this.jumpSlot * 0.4;
+        const x = targetX + Math.cos(angle) * radius;
+        const z = targetZ + Math.sin(angle) * radius;
+        const y = game.world.getHeight(x, z);
+        if (!game.world.navPointFree(x, z, y + 0.1, 0.5, false, false, true)) continue;
+        this.commandAnchor.set(x, z);
+        return;
+      }
+    }
+    this.commandAnchor.set(targetX, targetZ);
+  }
+
+  private executeSquadOrder(dt: number, game: Game): boolean {
+    const order = game.squadOrder;
+    const c = this.char;
+    if (order.kind === 'focus') {
+      this.commandState = 'focusing';
+      const d = Math.hypot(order.x - c.pos.x, order.z - c.pos.z);
+      if (d > 24) {
+        this.navigator.move(c, order.x, order.z, 5.6, dt, game.world, {
+          stopDistance: 20,
+          turnRate: 6,
+          allowWater: false,
+          neighbors: game.chars,
+        });
+        this.updateDoorBreak(dt, game, true);
+      } else {
+        moveChar(c, 0, 0, dt, game.world);
+      }
+      return true;
+    }
+    if (order.kind !== 'move' && order.kind !== 'hold') return false;
+    const distance = this.commandDistance;
+    const stopDistance = order.kind === 'move' ? 1.6 : 1.1;
+    if (distance > stopDistance) {
+      this.commandState = 'moving';
+      const nav = this.navigator.move(
+        c,
+        this.commandAnchor.x,
+        this.commandAnchor.y,
+        order.kind === 'move' ? 5.9 : 4.8,
+        dt,
+        game.world,
+        { stopDistance, turnRate: 6, allowWater: false, neighbors: game.chars },
+      );
+      this.updateDoorBreak(dt, game, true);
+      if (nav.reached) this.commandState = 'holding';
+    } else {
+      this.commandState = 'holding';
+      moveChar(c, 0, 0, dt, game.world);
+      c.setStance(c.heldGun() ? 'crouch' : 'stand');
+      c.yaw = turnToward(c.yaw, order.yaw, 2.8 * dt);
+    }
+    return true;
+  }
+
   // ---- 空降物理(跟随玩家落点) ----
   private updateDescent(dt: number, game: Game): void {
     const c = this.char;
     const player = game.playerCtl;
+    c.swimming = false;
+    c.swimDip = 0;
+    c.grounded = false;
     if (this.descent === 'plane') {
       if (!player) return;
       c.group.visible = false;
@@ -438,21 +553,33 @@ export class TeammateController {
     c.eyePos(this.eye);
     let best: Character | null = null;
     let bestScore = ENGAGE_RANGE + 40;
+    let bestVisible = false;
     const playerAttacker = game.playerCtl?.char.lastAttackerId ?? 0;
-    for (const o of game.chars) {
-      if (!o.alive || o.team !== 'enemy') continue;
-      const d = Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z);
-      if (d > ENGAGE_RANGE) continue;
-      const pd = game.playerCtl ? Math.hypot(o.pos.x - game.playerCtl.char.pos.x, o.pos.z - game.playerCtl.char.pos.z) : 99;
-      let score = d + pd * 0.35;
-      if (o === this.target) score -= 14;
-      if (o.id === c.lastAttackerId) score -= 20;
-      if (o.id === playerAttacker) score -= 16;
-      if (score >= bestScore) continue;
-      o.chestPos(this.tgt);
-      if (game.isLOSBlocked(this.eye, this.tgt, this.dir)) continue;
-      bestScore = score;
-      best = o;
+    const focusId = game.squadOrder.kind === 'focus' ? game.squadOrder.targetId : 0;
+    const focus = focusId > 0
+      ? game.chars.find((candidate) => candidate.id === focusId && candidate.alive && candidate.team === 'enemy') ?? null
+      : null;
+    if (focus && Math.hypot(focus.pos.x - c.pos.x, focus.pos.z - c.pos.z) <= FOCUS_RANGE) {
+      focus.chestPos(this.tgt);
+      best = focus;
+      bestVisible = !game.isLOSBlocked(this.eye, this.tgt, this.dir);
+    } else {
+      for (const o of game.chars) {
+        if (!o.alive || o.team !== 'enemy') continue;
+        const d = Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z);
+        if (d > ENGAGE_RANGE) continue;
+        const pd = game.playerCtl ? Math.hypot(o.pos.x - game.playerCtl.char.pos.x, o.pos.z - game.playerCtl.char.pos.z) : 99;
+        let score = d + pd * 0.35;
+        if (o === this.target) score -= 14;
+        if (o.id === c.lastAttackerId) score -= 20;
+        if (o.id === playerAttacker) score -= 16;
+        if (score >= bestScore) continue;
+        o.chestPos(this.tgt);
+        if (game.isLOSBlocked(this.eye, this.tgt, this.dir)) continue;
+        bestScore = score;
+        best = o;
+        bestVisible = true;
+      }
     }
     if (best) {
       if (this.target !== best) {
@@ -464,8 +591,8 @@ export class TeammateController {
         this.navigator.reset(c);
       }
       this.lostT = 0;
-      this.losOk = true;
-      this.lastKnown.copy(best.pos);
+      this.losOk = bestVisible;
+      if (bestVisible) this.lastKnown.copy(best.pos);
     } else if (this.target) {
       this.lostT += 0.25;
       this.losOk = false;
@@ -488,7 +615,8 @@ export class TeammateController {
     const dx = t.pos.x - c.pos.x;
     const dz = t.pos.z - c.pos.z;
     const dist = Math.hypot(dx, dz);
-    if (dist > ENGAGE_RANGE + 20) {
+    const focused = game.squadOrder.kind === 'focus' && game.squadOrder.targetId === t.id;
+    if (dist > (focused ? FOCUS_RANGE + 10 : ENGAGE_RANGE + 20)) {
       this.target = null;
       this.navigator.reset(c);
       return;

@@ -580,6 +580,9 @@ export class BotController {
     const c = this.char;
     const phase = this.descent;
     if (!phase) return;
+    c.swimming = false;
+    c.swimDip = 0;
+    c.grounded = false;
     this.vy = stepAirDescentVelocity(this.vy, phase, dt);
     const dx = this.dropTarget.x - c.pos.x;
     const dz = this.dropTarget.z - c.pos.z;

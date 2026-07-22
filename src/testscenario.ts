@@ -14,7 +14,7 @@ import {
 } from './stability';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'combat', 'bottactics', 'botvehicle', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
+  'stairs', 'swim', 'combat', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -24,6 +24,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   combat: '枪战回归: M416 + 全套配件, 检查 ADS, 后坐和命中反馈',
   bottactics: '机器人战术: 同时检查交战, 恢复, 搜索和圈外转移',
   botvehicle: '机器人载具: 检查搜车, 上车, 长途转移, 绕障和到点下车',
+  squadcommand: '小队指令: 检查前往, 警戒, 集火, 跟随和三人队形',
   stability: '长局稳定性: 固定种子加速整局, 检查卡住, 非法状态和重开泄漏',
   parachute: '空降回归: 玩家和队友同高度自由落体, 检查速度和开伞时机',
   vehicle: '载具回归: F 上车, WASD 驾驶, 低速 F 下车并检查碰撞和仪表',
@@ -111,6 +112,32 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       window.requestAnimationFrame(publishVehicleTactics);
     };
     window.requestAnimationFrame(publishVehicleTactics);
+  }
+  if (id === 'squadcommand') {
+    const orderHistory = new Set<string>();
+    const stateHistory = game.squadMates.map(() => new Set<string>());
+    const publishSquadCommand = (): void => {
+      if (!panel.isConnected) return;
+      const order = game.squadOrder;
+      orderHistory.add(order.kind);
+      for (let i = 0; i < game.squadMates.length; i++) {
+        const mate = game.squadMates[i];
+        if (mate) stateHistory[i]?.add(mate.commandState);
+      }
+      panel.dataset.squadOrder = order.kind;
+      panel.dataset.squadOrderHistory = [...orderHistory].join(',');
+      panel.dataset.squadStates = game.squadMates.map((mate) => mate.commandState).join('|');
+      panel.dataset.squadStateHistory = stateHistory.map((states) => [...states].join(',')).join('|');
+      panel.dataset.squadDistances = game.squadMates.map((mate) => mate.commandDistance.toFixed(2)).join('|');
+      panel.dataset.squadPositions = game.squadMates
+        .map((mate) => `${mate.char.pos.x.toFixed(1)},${mate.char.pos.z.toFixed(1)}`)
+        .join('|');
+      panel.dataset.squadTarget = `${order.x.toFixed(1)},${order.z.toFixed(1)}`;
+      const focus = order.targetId > 0 ? game.chars.find((char) => char.id === order.targetId) : null;
+      panel.dataset.squadFocusHp = focus ? Math.max(0, focus.hp).toFixed(1) : '';
+      window.requestAnimationFrame(publishSquadCommand);
+    };
+    window.requestAnimationFrame(publishSquadCommand);
   }
   if (id === 'stability') beginStabilityMonitoring(panel, game);
 }
@@ -586,6 +613,67 @@ function setupBotVehicle(game: Game): void {
   }
 }
 
+function setupSquadCommand(game: Game): void {
+  const lane = testLane(game);
+  const direction = laneDirection(lane);
+  setGroundPlayer(game, lane[0], lane[1]);
+  const player = game.playerCtl;
+  if (!player) return;
+  player.yaw = direction.yaw;
+  player.pitch = 0.04;
+  const rightX = direction.z;
+  const rightZ = -direction.x;
+  for (let i = 0; i < game.squadMates.length; i++) {
+    const mate = game.squadMates[i];
+    if (!mate) continue;
+    const side = (i - 1) * 2.2;
+    const x = lane[0] - direction.x * 3.5 + rightX * side;
+    const z = lane[1] - direction.z * 3.5 + rightZ * side;
+    mate.descent = null;
+    mate.char.alive = true;
+    mate.char.hp = 100;
+    mate.char.knocked = false;
+    mate.char.airPose = null;
+    mate.char.group.visible = true;
+    mate.char.pos.set(x, game.world.groundHeight(x, z, 30), z);
+    mate.char.groundH = mate.char.pos.y;
+    mate.char.grounded = true;
+    mate.char.swimming = false;
+    mate.char.guns[0] = { def: WEAPONS.rifle, mag: 30, att: emptyAttachments() };
+    mate.char.ammo.rifle = 120;
+    mate.char.curSlot = 0;
+  }
+  const order = new URLSearchParams(window.location.search).get('order');
+  if (order === 'focus' || order === 'aim') {
+    const enemy = game.bots[0];
+    if (!enemy) return;
+    const enemyX = order === 'aim' ? lane[0] + direction.x * 9 : lane[2];
+    const enemyZ = order === 'aim' ? lane[1] + direction.z * 9 : lane[3];
+    enemy.jumpS = -1;
+    enemy.descent = null;
+    enemy.trainingIdle = true;
+    enemy.char.alive = true;
+    enemy.char.hp = order === 'aim' ? 1000 : 100;
+    enemy.char.airPose = null;
+    enemy.char.group.visible = true;
+    enemy.char.pos.set(enemyX, game.world.groundHeight(enemyX, enemyZ, 30), enemyZ);
+    enemy.char.groundH = enemy.char.pos.y;
+    enemy.char.grounded = true;
+    if (order === 'focus') {
+      game.issueSquadOrder('focus', enemyX, enemyZ, enemy.char.id);
+    } else {
+      player.pitch = Math.atan2(
+        enemy.char.pos.y + enemy.char.chestHeight() - (player.char.pos.y + player.char.eyeHeight()),
+        Math.hypot(enemyX - lane[0], enemyZ - lane[1]),
+      );
+    }
+  } else if (order === 'hold') {
+    game.issueSquadOrder('hold');
+  } else {
+    game.issueSquadOrder('move', lane[2], lane[3]);
+  }
+}
+
 function setupDeathCrate(game: Game): void {
   const lane = testLane(game);
   const dir = laneDirection(lane);
@@ -662,6 +750,9 @@ function setupParachute(game: Game): void {
   player.descent = 'freefall';
   player.vy = -2;
   player.char.pos.set(x, y, z);
+  player.char.swimming = false;
+  player.char.swimDip = 0;
+  player.char.grounded = false;
   player.char.airPose = 'fall';
   player.char.group.visible = true;
   player.yaw = 0;
@@ -672,6 +763,9 @@ function setupParachute(game: Game): void {
     mate.descent = 'freefall';
     mate.vy = -2;
     mate.char.pos.set(x + (i - 1) * 3, y, z + 4);
+    mate.char.swimming = false;
+    mate.char.swimDip = 0;
+    mate.char.grounded = false;
     mate.char.airPose = 'fall';
     mate.char.group.visible = true;
   }
@@ -785,12 +879,13 @@ export function applyTestScenarioFromUrl(game: Game): void {
   if (id === 'stability') setRandomSeed(parseRandomSeed(window.location.search, 1337) ?? 1337);
   game.startMatch();
   if (id !== 'stability') parkEnemies(game);
-  if (id !== 'parachute' && id !== 'stability') parkSquad(game);
+  if (id !== 'parachute' && id !== 'stability' && id !== 'squadcommand') parkSquad(game);
   if (id === 'stairs') setupStairs(game);
   else if (id === 'swim') setupSwim(game);
   else if (id === 'combat') setupCombat(game);
   else if (id === 'bottactics') setupBotTactics(game);
   else if (id === 'botvehicle') setupBotVehicle(game);
+  else if (id === 'squadcommand') setupSquadCommand(game);
   else if (id === 'stability') setupStability(game);
   else if (id === 'parachute') setupParachute(game);
   else if (id === 'vehicle') setupVehicle(game);
