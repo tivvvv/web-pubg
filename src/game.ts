@@ -112,6 +112,16 @@ const TOTAL = MATCH_PLAYER_COUNT;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
 const SLOT_LABELS = ['主武器1', '主武器2', '手枪', '近战'];
 
+export function accumulatePlayerDamage(
+  current: number,
+  applied: number,
+  attackerIsPlayer: boolean,
+  selfDamage: boolean,
+): number {
+  if (!attackerIsPlayer || selfDamage || applied <= 0) return current;
+  return current + applied;
+}
+
 export class Game {
   readonly world: World;
   readonly effects: Effects;
@@ -1269,7 +1279,6 @@ export class Game {
             this.effects.impactBlood(res.point);
             const appliedDamage = this.damageChar(victim, dmg, res.head, shooter);
             if (shooter.isPlayer) {
-              this.damageDealt += appliedDamage;
               if (appliedDamage > 0) {
                 anyChar = true;
                 if (res.head) anyHead = true;
@@ -1576,9 +1585,8 @@ export class Game {
       this.effects.impactBlood(this.tmpEnd);
       let dmg = m.damage;
       if (!attacker.isPlayer && best.isPlayer) dmg *= BOT_VS_PLAYER_DMG;
-      const appliedDamage = this.damageChar(best, dmg, false, attacker);
+      this.damageChar(best, dmg, false, attacker);
       if (attacker.isPlayer) {
-        this.damageDealt += appliedDamage;
         this.audio.hit(false);
         this.hud.hitmarker('hit');
       }
@@ -1628,6 +1636,13 @@ export class Game {
     dmg = Math.max(0, dmg);
     const healthBefore = victim.knocked ? victim.knockHp : victim.hp;
     const appliedDamage = Math.min(healthBefore, dmg);
+    // 在死亡与胜利结算前集中累计, 避免最后一击先触发结算而漏掉本次伤害。
+    this.damageDealt = accumulatePlayerDamage(
+      this.damageDealt,
+      appliedDamage,
+      attacker?.isPlayer === true,
+      attacker === victim,
+    );
     victim.lastAttackerId = attacker?.id ?? 0;
     victim.lastHitX = attacker ? attacker.pos.x : 0;
     victim.lastHitZ = attacker ? attacker.pos.z : 0;
