@@ -136,6 +136,31 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
     };
     window.requestAnimationFrame(publishVehicleTactics);
   }
+  if (id === 'parachute') {
+    const publishParachute = (): void => {
+      if (!panel.isConnected) return;
+      const controller = game.playerCtl;
+      const character = controller?.char;
+      if (controller && character) {
+        panel.dataset.playerDescent = controller.descent ?? 'landed';
+        panel.dataset.playerGrounded = String(character.grounded);
+        panel.dataset.playerAirPose = character.airPose ?? 'none';
+        panel.dataset.playerHeight = character.pos.y.toFixed(2);
+        panel.dataset.playerLegL = [
+          character.parts.legL.rotation.x,
+          character.parts.legL.rotation.y,
+          character.parts.legL.rotation.z,
+        ].map((angle) => angle.toFixed(4)).join(',');
+        panel.dataset.playerLegR = [
+          character.parts.legR.rotation.x,
+          character.parts.legR.rotation.y,
+          character.parts.legR.rotation.z,
+        ].map((angle) => angle.toFixed(4)).join(',');
+      }
+      window.requestAnimationFrame(publishParachute);
+    };
+    window.requestAnimationFrame(publishParachute);
+  }
   if (id === 'squadcommand') {
     const orderHistory = new Set<string>();
     const stateHistory = game.squadMates.map(() => new Set<string>());
@@ -826,8 +851,10 @@ function setupParachute(game: Game): void {
   parkEnemies(game);
   const player = game.playerCtl;
   if (!player) return;
-  const x = -40;
-  const z = 170;
+  // 固定落在经过碰撞检查的旱地测试通道，避免落入河中后游泳姿态干扰落地动画验收。
+  const lane = testLane(game);
+  const x = (lane[0] + lane[2]) * 0.5;
+  const z = (lane[1] + lane[3]) * 0.5;
   const y = game.world.getHeight(x, z) + 190;
   player.descent = 'freefall';
   player.vy = -2;

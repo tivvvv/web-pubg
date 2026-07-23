@@ -713,7 +713,11 @@ export class Character {
         p.armR.rotation.x = lerp(p.armR.rotation.x, lerp(-1.3, -2.7, f), k);
         p.armR.rotation.z = lerp(p.armR.rotation.z, lerp(-0.1, -0.5, f), k);
         p.legL.rotation.x = lerp(p.legL.rotation.x, 0.32 * f, k);
+        p.legL.rotation.y = lerp(p.legL.rotation.y, 0, k);
+        p.legL.rotation.z = lerp(p.legL.rotation.z, 0, k);
         p.legR.rotation.x = lerp(p.legR.rotation.x, 0.18 * f, k);
+        p.legR.rotation.y = lerp(p.legR.rotation.y, 0, k);
+        p.legR.rotation.z = lerp(p.legR.rotation.z, 0, k);
       } else {
         // 驾驶/乘客坐姿平滑进入和离开, 避免上下车瞬间折叠.
         p.inner.rotation.x = lerp(p.inner.rotation.x, 0.05 * f, k);
@@ -845,8 +849,9 @@ export class Character {
     }
     // 蹲: 腿前弯; 趴: 腿顺直
     const legBend = -1.05 * fC * (1 - fP);
-    p.legL.rotation.x = legSwing + legBend;
-    p.legR.rotation.x = -legSwing + legBend;
+    // 使用完整欧拉角复位，避免自由落体的侧向展开角残留到落地、站立和跑步姿态。
+    p.legL.rotation.set(legSwing + legBend, 0, 0);
+    p.legR.rotation.set(-legSwing + legBend, 0, 0);
     // 身体下沉(蹲 -0.53 / 趴 +0.30 由旋转完成趴倒)与旋转(趴 = 面朝下平躺, 部分随瞄准俯仰)
     p.inner.position.y = bob - 0.53 * fC + 0.83 * fP;
     // 移动前倾(速度越大越前倾, 趴下不再加)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advancePoseBlend, ownModelVisibility } from '../src/character';
+import { advancePoseBlend, Character, ownModelVisibility } from '../src/character';
 import { environmentLighting } from '../src/environment';
 import { RENDER_QUALITY } from '../src/rendering';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
@@ -20,6 +20,30 @@ describe('画面回归保护', () => {
     expect(advancePoseBlend(entering, false, 1 / 60, 6, 4)).toBeLessThan(entering);
     expect(advancePoseBlend(0.98, true, 1, 6, 4)).toBe(1);
     expect(advancePoseBlend(0.02, false, 1, 6, 4)).toBe(0);
+  });
+
+  it('自由落体结束后双腿完整恢复地面姿态', () => {
+    const character = new Character('空降姿态测试', false, 0x335577);
+    character.airPose = 'fall';
+    character.airSteerRight = 1;
+    for (let i = 0; i < 30; i++) character.syncModel(1 / 60, false);
+
+    expect(Math.abs(character.parts.legL.rotation.z)).toBeGreaterThan(0.1);
+    expect(Math.abs(character.parts.legR.rotation.z)).toBeGreaterThan(0.1);
+
+    character.airPose = 'canopy';
+    for (let i = 0; i < 30; i++) character.syncModel(1 / 60, false);
+    character.airPose = null;
+    character.grounded = true;
+    character.speed2d = 0;
+    for (let i = 0; i < 30; i++) character.syncModel(1 / 60, false);
+
+    expect(character.parts.legL.rotation.x).toBeCloseTo(0, 5);
+    expect(character.parts.legL.rotation.y).toBeCloseTo(0, 5);
+    expect(character.parts.legL.rotation.z).toBeCloseTo(0, 5);
+    expect(character.parts.legR.rotation.x).toBeCloseTo(0, 5);
+    expect(character.parts.legR.rotation.y).toBeCloseTo(0, 5);
+    expect(character.parts.legR.rotation.z).toBeCloseTo(0, 5);
   });
 
   it('夜间补光高于旧基线且白天亮度保持稳定', () => {
