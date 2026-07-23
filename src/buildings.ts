@@ -61,6 +61,25 @@ const BOUND = 265;
 const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
 const DOOR_TWEEN = 0.3;                   // 开关门动画时长(秒)
 
+// 门从操作者所在一侧向远离操作者的方向打开，避免门扇迎面扫过角色。
+export function doorOpenAngleForActor(
+  axis: 'x' | 'z',
+  doorX: number,
+  doorZ: number,
+  actorX: number,
+  actorZ: number,
+  fallback: number,
+  hinge: 1 | -1 = 1,
+): number {
+  const side = axis === 'x' ? actorZ - doorZ : actorX - doorX;
+  if (Math.abs(side) < 0.08) return fallback;
+  return (axis === 'x' ? Math.sign(side) : -Math.sign(side)) * hinge * DOOR_SWING;
+}
+
+export function stairRailX(x0: number, x1: number, side: 'min' | 'max'): number {
+  return side === 'max' ? x1 : x0;
+}
+
 function mulberry32(seed: number) {
   let a = seed >>> 0;
   return () => {
@@ -82,7 +101,7 @@ interface Palette { wall: number; roof: number; chimney: boolean; ac: boolean }
 
 interface Op {
   a0: number; a1: number; y0: number; y1: number;
-  door?: boolean; doorless?: boolean;
+  door?: boolean; doorless?: boolean; hingeEnd?: boolean;
 }
 
 export class Destructible implements DestructibleLike {
@@ -100,6 +119,8 @@ export class Destructible implements DestructibleLike {
   pivot: THREE.Group | null = null;            // 开门绕其 Y 轴旋转
   open = false;
   openAngle = 0;                               // 全开时的 pivot 转角(带方向)
+  doorAxis: 'x' | 'z' | null = null;
+  doorHinge: 1 | -1 = 1;
   constructor(
     kind: 'door' | 'window',
     maxHp: number,
@@ -345,7 +366,9 @@ export class Buildings {
     for (const op of sorted) {
       const midA = (op.a0 + op.a1) / 2, midY = (op.y0 + op.y1) / 2;
       if (op.door) {
-        if (!op.doorless) this.addDoor(world, box, axis, fixed, op.a0, op.a1, op.y0, op.y1, midY, interior);
+        if (!op.doorless) this.addDoor(
+          world, box, axis, fixed, op.a0, op.a1, op.y0, op.y1, midY, interior, op.hingeEnd ? -1 : 1,
+        );
       } else {
         this.addWindow(world, box, axis, fixed, op.a0, op.a1, op.y0, op.y1, midA, midY);
       }
@@ -353,21 +376,71 @@ export class Buildings {
   }
 
   // 楼梯: 平台踏步(不进碰撞体), zFrom→zTo 逐级升高至 f1+steps*rise
-  private stairs(box: BoxFn, x0: number, x1: number, zFrom: number, zTo: number, f1: number, rise: number, c: number): void {
+  private stairs(
+    box: BoxFn,
+    x0: number,
+    x1: number,
+    zFrom: number,
+    zTo: number,
+    f1: number,
+    rise: number,
+    c: number,
+    railSide: 'min' | 'max' = 'max',
+  ): void {
     const run = (zTo - zFrom) / STAIR_STEPS;
+    const railX = stairRailX(x0, x1, railSide);
     for (let i = 0; i < STAIR_STEPS; i++) {
       const z0 = Math.min(zFrom + i * run, zFrom + (i + 1) * run);
       const z1 = Math.max(zFrom + i * run, zFrom + (i + 1) * run);
       const top = f1 + rise * (i + 1);
       // 每级使用独立薄踏板, 释放梯下空间, 避免从侧面看成一整块错误的实心柱体。
       box('floor', x0, Math.max(f1, top - 0.17), z0, x1, top, z1, c, { collider: false, platform: true });
-      box('wall', x1 - 0.075, Math.max(f1, top - 0.24), z0, x1 + 0.025, top - 0.13, z1, RAIL_C, { collider: false });
+      // 薄立板把相邻踏步连成完整梯段，保留梯下净空同时避免踏步看起来悬空。
+      const riserZ = zFrom + i * run;
+      const prevTop = i === 0 ? f1 : f1 + rise * i;
+      box(
+        'wall', x0, prevTop, riserZ - 0.035, x1, top, riserZ + 0.035,
+        c, { collider: false },
+      );
       // 开放侧使用连续的阶梯形扶手, 立柱从对应踏步生根, 不再出现悬空柱和整块黑墙。
-      box('wall', x1 - 0.055, top + 0.78, z0 - 0.02, x1 + 0.055, top + 0.88, z1 + 0.02, RAIL_C, { collider: false });
+      box('wall', railX - 0.055, top + 0.78, z0 - 0.02, railX + 0.055, top + 0.88, z1 + 0.02, RAIL_C, { collider: false });
       if (i === 0 || i === 3 || i === 6 || i === STAIR_STEPS - 1) {
         const postZ = (z0 + z1) / 2;
-        box('wall', x1 - 0.055, top, postZ - 0.055, x1 + 0.055, top + 0.88, postZ + 0.055, RAIL_C, { collider: false });
+        box('wall', railX - 0.055, top, postZ - 0.055, railX + 0.055, top + 0.88, postZ + 0.055, RAIL_C, { collider: false });
       }
+    }
+  }
+
+  // 入口台阶从真实地面生根，不使用悬空薄板；axis 表示门洞沿哪条轴延伸。
+  private entranceStep(
+    world: World,
+    box: BoxFn,
+    axis: 'x' | 'z',
+    fixed: number,
+    a0: number,
+    a1: number,
+    floorY: number,
+    outward: 1 | -1,
+    depth = 0.78,
+  ): void {
+    const mid = (a0 + a1) / 2;
+    const sampleX = axis === 'x' ? mid : fixed + outward * depth * 0.7;
+    const sampleZ = axis === 'x' ? fixed + outward * depth * 0.7 : mid;
+    const ground = world.getHeight(sampleX, sampleZ);
+    const top = floorY - 0.02;
+    const bottom = Math.min(top - 0.12, ground - 0.05);
+    if (axis === 'x') {
+      const outer = fixed + outward * depth;
+      box(
+        'floor', a0 - 0.15, bottom, Math.min(fixed, outer), a1 + 0.15, top, Math.max(fixed, outer),
+        TRIM_C, { collider: false, platform: true },
+      );
+    } else {
+      const outer = fixed + outward * depth;
+      box(
+        'floor', Math.min(fixed, outer), bottom, a0 - 0.15, Math.max(fixed, outer), top, a1 + 0.15,
+        TRIM_C, { collider: false, platform: true },
+      );
     }
   }
 
@@ -586,6 +659,7 @@ export class Buildings {
     world: World, box: BoxFn, axis: 'x' | 'z', fixed: number,
     a0: number, a1: number, y0: number, y1: number, midY: number,
     interior: 1 | -1,
+    hinge: 1 | -1,
   ): void {
     // 门框: 两侧柱 + 顶楣(纯装饰)
     const ft = 0.1;
@@ -603,12 +677,16 @@ export class Buildings {
       ? { kind: 'aabb', minX: a0, minY: y0, minZ: fixed - t / 2, maxX: a1, maxY: y1, maxZ: fixed + t / 2, tag: 'door' }
       : { kind: 'aabb', minX: fixed - t / 2, minY: y0, minZ: a0, maxX: fixed + t / 2, maxY: y1, maxZ: a1, tag: 'door' };
     world.addCollider(c);
-    // 铰链结构: group 定位在铰链边(a0 端), pivot 承载门扇, 开门 = pivot 绕 Y 旋转
+    // 铰链结构: group 定位在指定铰链边, pivot 承载门扇, 开门 = pivot 绕 Y 旋转
     const group = new THREE.Group();
-    group.position.set(axis === 'x' ? a0 : fixed, y0, axis === 'x' ? fixed : a0);
+    const hingeAt = hinge === 1 ? a0 : a1;
+    group.position.set(axis === 'x' ? hingeAt : fixed, y0, axis === 'x' ? fixed : hingeAt);
     const pivot = new THREE.Group();
     const mesh = new THREE.Mesh(axis === 'x' ? this.doorGeoAlongX : this.doorGeoAlongZ, this.doorMat);
-    mesh.position.set(axis === 'x' ? DOOR_W / 2 : 0, DOOR_H / 2, axis === 'x' ? 0 : DOOR_W / 2);
+    const width = a1 - a0;
+    const height = y1 - y0;
+    mesh.position.set(axis === 'x' ? width * hinge / 2 : 0, height / 2, axis === 'x' ? 0 : width * hinge / 2);
+    mesh.scale.set(axis === 'x' ? width / DOOR_W : 1, height / DOOR_H, axis === 'z' ? width / DOOR_W : 1);
     mesh.castShadow = true;
     // 门板细节(挂在门扇网格下, 破坏隐藏/铰链旋转自动跟随): 竖拼缝 ×2 + 把手
     {
@@ -621,7 +699,7 @@ export class Buildings {
         mesh.add(seam);
       }
       // 把手在远离铰链侧(局部坐标铰链在 -DOOR_W/2 侧)
-      const hx = DOOR_W / 2 - 0.18;
+      const hx = (DOOR_W / 2 - 0.18) * hinge;
       const plate = new THREE.Mesh(plateGeo, this.doorTrimMat);
       plate.position.set(axis === 'x' ? hx : 0.056, -0.12, axis === 'x' ? 0.056 : hx);
       mesh.add(plate);
@@ -632,15 +710,18 @@ export class Buildings {
     pivot.add(mesh);
     // 铰链柱: 门被炸毁后仍留在原地
     const post = new THREE.Mesh(axis === 'x' ? this.postGeoAlongX : this.postGeoAlongZ, this.postMat);
-    post.position.y = DOOR_H / 2;
+    post.position.y = height / 2;
+    post.scale.y = height / DOOR_H;
     post.castShadow = true;
     group.add(pivot);
     group.add(post);
     const d = new Destructible('door', 80, mesh, c, (c.minX + c.maxX) / 2, midY, (c.minZ + c.maxZ) / 2);
     d.group = group;
     d.pivot = pivot;
+    d.doorAxis = axis;
+    d.doorHinge = hinge;
     // 开门朝屋内: 沿 X 走向的墙取 -interior, 沿 Z 走向取 +interior
-    d.openAngle = (axis === 'x' ? -interior : interior) * DOOR_SWING;
+    d.openAngle = (axis === 'x' ? -interior : interior) * hinge * DOOR_SWING;
     c.destruct = d;
     this.destructibles.push(d);
   }
@@ -715,7 +796,8 @@ export class Buildings {
     const lowerWallTop = wt1 + STOREY_JOINT_OVERLAP;
     this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, lowerWallTop, northOps, p.wall, WT, 1);
     this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, lowerWallTop, southOps, p.wall, WT, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.3)], p.wall, WT, 1);
+    // 西墙紧邻楼梯井，多层房取消低窗，避免踏步横穿窗洞。
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, two ? [] : [win(iz0 + d * 0.3)], p.wall, WT, 1);
     this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.62)], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
     // 转角壁柱(部分房屋, 纯装饰)
@@ -724,8 +806,9 @@ export class Buildings {
         box('wall', cx - 0.09, buried, cz - 0.09, cx + 0.09, wt1, cz + 0.09, TRIM_C, { collider: false });
       }
     }
-    // 门阶(可站立小平台)
-    box('floor', doorA0 - 0.15, f1 - 0.14, iz0 - 0.75, doorA0 + DOOR_W + 0.15, f1 - 0.02, iz0, TRIM_C, { collider: false, platform: true });
+    this.entranceStep(world, box, 'x', iz0, doorA0, doorA0 + DOOR_W, f1, -1);
+    const southDoor = southOps.find((op) => op.door);
+    if (southDoor) this.entranceStep(world, box, 'x', iz1, southDoor.a0, southDoor.a1, f1, 1);
     this.lootSpots.push(
       { x: ix0 + w * 0.25, y: f1, z: iz0 + d * 0.35, premium: false },
       { x: ix1 - w * 0.2, y: f1, z: iz1 - d * 0.25, premium: false },
@@ -775,10 +858,10 @@ export class Buildings {
     const lowerWallTop = wt1 + STOREY_JOINT_OVERLAP;
     this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, lowerWallTop, [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: f1, y1: f1 + DOOR_H, door: true }], p.wall, WT, 1);
     this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, lowerWallTop, [win(ix0 + w * 0.3), win(ix0 + w * 0.62)], p.wall, WT, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.35)], p.wall, WT, 1);
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [], p.wall, WT, 1);
     this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.55)], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
-    box('floor', doorA0 - 0.15, f1 - 0.14, iz0 - 0.75, doorA0 + DOOR_W + 0.15, f1 - 0.02, iz0, TRIM_C, { collider: false, platform: true });
+    this.entranceStep(world, box, 'x', iz0, doorA0, doorA0 + DOOR_W, f1, -1);
     this.lootSpots.push(
       { x: ix0 + w * 0.25, y: f1, z: iz0 + d * 0.35, premium: false },
       { x: ix1 - w * 0.2, y: f1, z: iz1 - d * 0.3, premium: false },
@@ -834,10 +917,10 @@ export class Buildings {
     const lowerWallTop = wt1 + STOREY_JOINT_OVERLAP;
     this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, lowerWallTop, [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: f1, y1: f1 + DOOR_H, door: true }], p.wall, WT, 1);
     this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, lowerWallTop, [win(ix0 + w * 0.22, f1), win(ix0 + w * 0.62, f1)], p.wall, WT, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.25, f1), win(iz0 + d * 0.6, f1)], p.wall, WT, 1);
+    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [], p.wall, WT, 1);
     this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.3, f1), win(iz0 + d * 0.65, f1)], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
-    box('floor', doorA0 - 0.15, f1 - 0.14, iz0 - 0.75, doorA0 + DOOR_W + 0.15, f1 - 0.02, iz0, TRIM_C, { collider: false, platform: true });
+    this.entranceStep(world, box, 'x', iz0, doorA0, doorA0 + DOOR_W, f1, -1);
     this.lootSpots.push(
       { x: ix0 + w * 0.3, y: f1, z: iz0 + d * 0.35, premium: false },
       { x: ix1 - w * 0.25, y: f1, z: iz1 - d * 0.3, premium: false },
@@ -860,7 +943,8 @@ export class Buildings {
     this.wallRun(world, box, 'x', iz0, ix0, ix1, secondWallBottom, secondWallTop, [win2(ix0 + w * 0.25), win2(ix0 + w * 0.6)], p.wall, WT2, 1);
     this.wallRun(world, box, 'x', iz1, ix0, ix1, secondWallBottom, secondWallTop, [win2(ix0 + w * 0.3), win2(ix0 + w * 0.65)], p.wall, WT2, -1);
     this.wallRun(world, box, 'z', ix0, iz0, iz1, secondWallBottom, secondWallTop, [win2(iz0 + d * 0.45)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, secondWallBottom, secondWallTop, [win2(iz0 + d * 0.5)], p.wall, WT2, -1);
+    // 二楼东墙紧邻第二跑楼梯，取消与踏步重叠的窗洞。
+    this.wallRun(world, box, 'z', ix1, iz0, iz1, secondWallBottom, secondWallTop, [], p.wall, WT2, -1);
     this.lootSpots.push(
       { x: ix0 + w * 0.5, y: f2, z: iz0 + d * 0.35, premium: false },
       { x: ix1 - w * 0.2, y: f2, z: iz1 - d * 0.25, premium: false },
@@ -873,7 +957,7 @@ export class Buildings {
     const s2x1 = ix1 - 0.14, s2x0 = s2x1 - STAIR_W;
     const hole2Z0 = iz0 + STAIR_LANDING;
     const hole2Z1 = iz1 - STAIR_LANDING;
-    this.stairs(box, s2x0, s2x1, hole2Z0, hole2Z1, f2, rise2, FLOOR2_C);
+    this.stairs(box, s2x0, s2x1, hole2Z0, hole2Z1, f2, rise2, FLOOR2_C, 'min');
     this.stairSlab(box, ix0, ix1, iz0, iz1, s2x0, ix1, hole2Z0, hole2Z1, wt2, f3, FLOOR2_C);
     this.stairGuard(box, s2x0, hole2Z0, hole2Z1, f3);
 
@@ -911,6 +995,7 @@ export class Buildings {
     this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, wallTop, [], p.wall, WT, 1);
     this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, wallTop, [], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
+    this.entranceStep(world, box, 'x', iz0, openA0, openA0 + 2.6, f1, -1, 0.9);
     // 内部: 干草垛(可站上)
     box('wall', ix0 + w * 0.6, f1, iz1 - d * 0.35, ix0 + w * 0.9, f1 + 0.55, iz1 - d * 0.1, 0xc2a54e);
     box('wall', ix0 + w * 0.68, f1 + 0.55, iz1 - d * 0.32, ix0 + w * 0.86, f1 + 1.0, iz1 - d * 0.14, 0xc2a54e);
@@ -943,6 +1028,7 @@ export class Buildings {
     this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, wt1, [win(iz0 + d * 0.45)], p.wall, WT, 1);
     this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, wt1, [], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
+    this.entranceStep(world, box, 'x', iz0, openA0, openA0 + 2.4, f1, -1, 0.9);
     // 雨棚 + 柜台
     box('roof', openA0 - 0.5, f1 + 2.5, iz0 - 1.3, openA0 + 2.9, f1 + 2.66, iz0 + 0.1, p.roof, { collider: false });
     box('wall', openA0 - 0.45, f1, iz0 - 1.25, openA0 - 0.3, f1 + 2.5, iz0 - 1.1, TRIM_C);
@@ -970,7 +1056,7 @@ export class Buildings {
     this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, wallTop, [
       hiWin(ix0 + w * 0.18),
       { a0: doorA0, a1: doorA0 + DOOR_W, y0: f1, y1: f1 + DOOR_H, door: true },
-      { a0: doorA0 + DOOR_W, a1: doorA0 + DOOR_W * 2, y0: f1, y1: f1 + DOOR_H, door: true },
+      { a0: doorA0 + DOOR_W, a1: doorA0 + DOOR_W * 2, y0: f1, y1: f1 + DOOR_H, door: true, hingeEnd: true },
       hiWin(ix0 + w * 0.74),
     ], p.wall, GWT, 1);
     // 南墙: 3m 无门大洞 + 高窗×2
@@ -991,6 +1077,10 @@ export class Buildings {
       hiWin(iz0 + d * 0.75),
     ], p.wall, GWT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
+    this.entranceStep(world, box, 'x', iz0, doorA0, doorA0 + DOOR_W * 2, f1, -1, 1.0);
+    this.entranceStep(world, box, 'x', iz1, ix0 + w / 2 - 1.5, ix0 + w / 2 + 1.5, f1, 1, 1.0);
+    this.entranceStep(world, box, 'z', ix0, iz0 + d * 0.5 - DOOR_W / 2, iz0 + d * 0.5 + DOOR_W / 2, f1, -1);
+    this.entranceStep(world, box, 'z', ix1, iz0 + d * 0.55, iz0 + d * 0.55 + DOOR_W, f1, 1);
 
     // 壁柱(外墙装饰, 每 ~4m)
     for (let x = ix0 + 2; x < ix1 - 1; x += 4.2) {
@@ -1060,8 +1150,13 @@ export class Buildings {
   }
 
   // 开/关门(游戏层包装发声); 关门只在门完好时允许
-  setDoorOpen(d: Destructible, open: boolean): boolean {
+  setDoorOpen(d: Destructible, open: boolean, actorX?: number, actorZ?: number): boolean {
     if (d.kind !== 'door' || !d.alive || d.open === open) return false;
+    if (open && d.doorAxis && Number.isFinite(actorX) && Number.isFinite(actorZ)) {
+      d.openAngle = doorOpenAngleForActor(
+        d.doorAxis, d.cx, d.cz, actorX as number, actorZ as number, d.openAngle, d.doorHinge,
+      );
+    }
     d.open = open;
     d.collider.off = open; // 开门: 通行/子弹/视线全通过; 关门: 恢复阻挡
     return true;

@@ -1350,7 +1350,7 @@ export class BotController {
     // 关着的门: 非狂暴状态下开门而不是砸门
     if (d.kind === 'door' && !rage) {
       if (this.blockT > 0.4) {
-        game.openDoor(d);
+        game.openDoor(d, c);
         this.blockedDoor = null;
         this.blockT = 0;
       }

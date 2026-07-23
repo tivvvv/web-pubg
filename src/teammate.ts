@@ -832,7 +832,7 @@ export class TeammateController {
     this.blockT += dt;
     if (d.kind === 'door') {
       if (this.blockT > 0.3) {
-        game.openDoor(d);
+        game.openDoor(d, c);
         this.blockedDoor = null;
         this.blockT = 0;
       }

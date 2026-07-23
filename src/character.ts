@@ -718,7 +718,7 @@ export class Character {
         // 驾驶/乘客坐姿平滑进入和离开, 避免上下车瞬间折叠.
         p.inner.rotation.x = lerp(p.inner.rotation.x, 0.05 * f, k);
         p.inner.rotation.z = lerp(p.inner.rotation.z, 0, k);
-        p.inner.position.y = lerp(p.inner.position.y, -0.35 * f, k);
+        p.inner.position.y = lerp(p.inner.position.y, 0, k);
         p.armL.rotation.x = lerp(p.armL.rotation.x, lerp(-1.15, -1.15, f), k);
         p.armL.rotation.z = lerp(p.armL.rotation.z, lerp(0.25, 0.35, f), k);
         p.armR.rotation.x = lerp(p.armR.rotation.x, lerp(-1.3, -1.15, f), k);

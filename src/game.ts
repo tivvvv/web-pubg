@@ -1395,13 +1395,13 @@ export class Game {
   }
 
   // 开/关门切换(玩家按 F); 带方位吱呀声
-  toggleDoor(d: DestructibleLike): void {
-    this.setDoor(d, !this.asDoor(d)?.open);
+  toggleDoor(d: DestructibleLike, actor?: Character): void {
+    this.setDoor(d, !this.asDoor(d)?.open, actor);
   }
 
   // bot 开门(幂等, 只开不关)
-  openDoor(d: DestructibleLike): void {
-    this.setDoor(d, true);
+  openDoor(d: DestructibleLike, actor?: Character): void {
+    this.setDoor(d, true, actor);
   }
 
   private asDoor(d: DestructibleLike): Destructible | null {
@@ -1409,10 +1409,10 @@ export class Game {
     return dd.kind === 'door' && dd.alive ? dd : null;
   }
 
-  private setDoor(d: DestructibleLike, open: boolean): void {
+  private setDoor(d: DestructibleLike, open: boolean, actor?: Character): void {
     const dd = this.asDoor(d);
     if (!dd) return;
-    if (!this.world.buildings.setDoorOpen(dd, open)) return;
+    if (!this.world.buildings.setDoorOpen(dd, open, actor?.pos.x, actor?.pos.z)) return;
     this.tmpEnd.set(dd.cx, dd.cy, dd.cz);
     this.soundAt(this.tmpEnd, (dist, pan) => this.audio.creak(dist, pan, open));
   }
@@ -1720,7 +1720,7 @@ export class Game {
     }
     const door = this.promptDoor;
     if (door && door.alive) {
-      this.toggleDoor(door);
+      this.toggleDoor(door, player.char);
       this.promptDoor = null;
       this.hud.setPickupPrompt(null);
       return;

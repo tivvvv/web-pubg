@@ -132,11 +132,13 @@ export class BombardmentSystem {
     area.position.y = 9;
     area.scale.set(RADIUS, 18, RADIUS);
     area.renderOrder = 3;
+    // 垂直警戒面会切穿房屋内部，看起来像未知红色模型。地面边界和小地图已足够表达范围。
+    area.visible = false;
     this.marker.add(area);
 
     this.outerMat = new THREE.LineBasicMaterial({
       color: 0xff3a2c, transparent: true, opacity: 0.9,
-      blending: THREE.NormalBlending, depthWrite: false, depthTest: false, fog: false, toneMapped: false,
+      blending: THREE.NormalBlending, depthWrite: false, depthTest: true, fog: false, toneMapped: false,
     });
     this.innerMat = this.outerMat.clone();
     this.innerMat.opacity = 0.45;

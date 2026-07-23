@@ -10,8 +10,23 @@ describe('载具座位 命中和损毁状态', () => {
     const passenger = seatWorldAt(vehicle, 1, new THREE.Vector3());
 
     expect(driver.y).toBeCloseTo(2 + VEHICLE_SPEC.car.seat[1], 6);
+    expect(driver.y - vehicle.pos.y).toBeLessThan(0.3);
     expect(driver.distanceTo(passenger)).toBeCloseTo(1, 6);
     expect(driver.z).toBeGreaterThan(passenger.z);
+  });
+
+  it('三类载具都使用坐姿根节点且角色腿部进入坐姿', () => {
+    for (const kind of ['car', 'moto', 'buggy'] as const) {
+      expect(VEHICLE_SPEC[kind].seat[1]).toBeGreaterThanOrEqual(0.05);
+      expect(VEHICLE_SPEC[kind].seat[1]).toBeLessThan(0.3);
+    }
+    const seated = new Character('乘员', true, 0x3a6ea5);
+    seated.airPose = 'sit';
+    seated.syncModel(1, false);
+
+    expect(seated.parts.inner.position.y).toBeCloseTo(0, 5);
+    expect(seated.parts.legL.rotation.x).toBeLessThan(-1.2);
+    expect(seated.parts.legR.rotation.x).toBeLessThan(-1.2);
   });
 
   it('最近载具查询忽略已占用和已损毁载具', () => {

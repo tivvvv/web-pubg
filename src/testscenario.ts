@@ -369,9 +369,58 @@ function laneDirection(lane: readonly [number, number, number, number]): { x: nu
 }
 
 function setupStairs(game: Game): void {
-  const plot = game.world.buildings.plots.find((candidate) => candidate.arch === 'cottage2');
+  const params = new URLSearchParams(window.location.search);
+  const requestedArch = params.get('arch');
+  const arch = requestedArch === 'cottage1' || requestedArch === 'terrace' || requestedArch === 'apartment' ||
+    requestedArch === 'barn' || requestedArch === 'shop' || requestedArch === 'gym'
+    ? requestedArch
+    : 'cottage2';
+  const plot = game.world.buildings.plots.find((candidate) => candidate.arch === arch);
   if (!plot) {
     setGroundPlayer(game, -60, -20);
+    return;
+  }
+  if (params.get('view') === 'entrance') {
+    const x = (plot.minX + plot.maxX) / 2;
+    const inside = params.get('side') === 'inside';
+    const z = plot.minZ + 2 + (inside ? 2.1 : -2.1);
+    setGroundPlayer(game, x, z);
+    const player = game.playerCtl;
+    if (player) {
+      player.yaw = inside ? Math.PI : 0;
+      player.pitch = 0.02;
+      if (params.get('open') === '1' || params.get('open') === 'both') {
+        const doors = game.world.buildings.destructibles.filter((candidate) =>
+          candidate.kind === 'door' && Math.abs(candidate.cz - (plot.minZ + 2)) < 0.25 &&
+          Math.abs(candidate.cx - x) < (params.get('open') === 'both' ? 2 : 1.2),
+        );
+        for (const door of doors) game.openDoor(door, player.char);
+      }
+    }
+    return;
+  }
+  if (params.get('traverse') === 'up') {
+    const ix0 = plot.minX + 2;
+    const ix1 = plot.maxX - 2;
+    const iz0 = plot.minZ + 2;
+    const iz1 = plot.maxZ - 2;
+    const secondFlight = arch === 'apartment' && params.get('flight') === '2';
+    const x = secondFlight ? ix1 - 0.14 - 0.9 : ix0 + 0.14 + 0.9;
+    const z = secondFlight ? iz0 + 1.6 - 0.32 : iz1 - 1.6 + 0.32;
+    setGroundPlayer(game, x, z);
+    const player = game.playerCtl;
+    if (player) {
+      if (secondFlight) {
+        const f2 = plot.flatH + 0.28 + 2.9 + 0.24;
+        const floorY = game.world.groundHeight(x, z, f2 + 0.2);
+        player.char.pos.y = floorY;
+        player.char.groundH = floorY;
+      }
+      player.yaw = secondFlight ? 0 : Math.PI;
+      player.pitch = 0.03;
+      game.input.keys.add('KeyW');
+      window.setTimeout(() => game.input.keys.delete('KeyW'), 1500);
+    }
     return;
   }
   const x = plot.minX + 2 + 0.14 + 0.9;
@@ -384,6 +433,12 @@ function setupStairs(game: Game): void {
     player.char.groundH = floorY;
     player.yaw = -Math.PI / 2;
     player.pitch = 0.04;
+    if (params.get('bombardment') === 'cross') {
+      const centerX = (plot.minX + plot.maxX) / 2;
+      const centerZ = (plot.minZ + plot.maxZ) / 2;
+      game.zoneArmed = true;
+      game.bombardment.setTestArea(game, centerX + game.bombardment.radius, centerZ, 'active');
+    }
   }
 }
 
@@ -510,7 +565,8 @@ function setupVehicle(game: Game): void {
   const dir = laneDirection(lane);
   setGroundPlayer(game, lane[0], lane[1]);
   const player = game.playerCtl;
-  const vehicle = game.vehicles.list[0];
+  const requestedKind = new URLSearchParams(window.location.search).get('kind');
+  const vehicle = game.vehicles.list.find((candidate) => candidate.kind === requestedKind) ?? game.vehicles.list[0];
   if (!player || !vehicle) return;
   const x = lane[0] + dir.x * 2.2;
   const z = lane[1] + dir.z * 2.2;
@@ -527,6 +583,9 @@ function setupVehicle(game: Game): void {
   vehicle.sync();
   player.yaw = dir.yaw;
   player.pitch = 0.02;
+  if (new URLSearchParams(window.location.search).get('drive') === '1') {
+    player.enterVehicle(vehicle, game);
+  }
 }
 
 function setupBotVehicle(game: Game): void {

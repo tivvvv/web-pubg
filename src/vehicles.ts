@@ -24,9 +24,10 @@ export interface VehicleSpec {
 }
 
 export const VEHICLE_SPEC: Record<VehicleKind, VehicleSpec> = {
-  car: { hp: 800, seats: 4, radius: 1.4, accel: 9.5, vmax: 22, steer: 1.8, brake: 15, revMax: 7, half: [0.85, 0.8, 1.7], seat: [-0.5, 0.95, 0.15] },
-  moto: { hp: 400, seats: 2, radius: 0.9, accel: 12, vmax: 27, steer: 2.5, brake: 17, revMax: 6, half: [0.4, 0.7, 1.05], seat: [0, 0.72, -0.15] },
-  buggy: { hp: 560, seats: 2, radius: 1.15, accel: 11, vmax: 25, steer: 2.15, brake: 16, revMax: 7, half: [0.75, 0.8, 1.35], seat: [-0.28, 0.82, -0.1] },
+  // seat.y 是角色根节点高度；髋部在根节点上方 0.74m，不能直接填写座垫表面高度。
+  car: { hp: 800, seats: 4, radius: 1.4, accel: 9.5, vmax: 22, steer: 1.8, brake: 15, revMax: 7, half: [0.85, 0.8, 1.7], seat: [-0.5, 0.18, 0.15] },
+  moto: { hp: 400, seats: 2, radius: 0.9, accel: 12, vmax: 27, steer: 2.5, brake: 17, revMax: 6, half: [0.4, 0.7, 1.05], seat: [0, 0.08, -0.15] },
+  buggy: { hp: 560, seats: 2, radius: 1.15, accel: 11, vmax: 25, steer: 2.15, brake: 16, revMax: 7, half: [0.75, 0.8, 1.35], seat: [-0.28, 0.13, -0.1] },
 };
 
 interface SpawnDef { kind: VehicleKind; x: number; z: number; yaw: number }
@@ -49,9 +50,9 @@ const MOTO_COLORS = [0xa03a30, 0x3a6ea5, 0x555555];
 
 // 座位表: 0=驾驶位, 1..N=乘客位
 const SEATS: Record<VehicleKind, [number, number, number][]> = {
-  car: [VEHICLE_SPEC.car.seat, [0.5, 0.95, 0.15], [-0.5, 0.95, -0.75], [0.5, 0.95, -0.75]],
-  moto: [VEHICLE_SPEC.moto.seat, [0, 0.72, 0.45]],
-  buggy: [VEHICLE_SPEC.buggy.seat, [0.28, 0.82, -0.1]],
+  car: [VEHICLE_SPEC.car.seat, [0.5, 0.18, 0.15], [-0.5, 0.18, -0.75], [0.5, 0.18, -0.75]],
+  moto: [VEHICLE_SPEC.moto.seat, [0, 0.08, 0.45]],
+  buggy: [VEHICLE_SPEC.buggy.seat, [0.28, 0.13, -0.1]],
 };
 
 // 驾驶座世界坐标(= seatWorldAt idx 0)

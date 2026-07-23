@@ -861,9 +861,11 @@ export class PlayerController {
       }
 
       const ads = aimBlend(this.aimF);
+      // 室内和楼梯井收紧第三人称相机并降低抬升量，避免相机顶进楼板或被踏步反复推拉。
+      const indoor = game.world.inPlot(c.pos.x, c.pos.z, -1.65);
       const adsDist = gun?.def === WEAPONS.sniper ? 1.5 : 1.9;
-      const targetDist = lerp(3.4, adsDist, ads);
-      const shoulder = lerp(0.5, 0.55, ads);
+      const targetDist = lerp(indoor ? 2.55 : 3.4, adsDist, ads);
+      const shoulder = lerp(indoor ? 0.42 : 0.5, 0.55, ads);
 
       // 期望机位
       this.camDir.copy(dir).multiplyScalar(-1);
@@ -874,7 +876,7 @@ export class PlayerController {
       const rl = Math.hypot(rx, rz) || 1;
       this.camTarget.x += (rx / rl) * shoulder;
       this.camTarget.z += (rz / rl) * shoulder;
-      this.camTarget.y += 0.22;
+      this.camTarget.y += indoor ? 0.07 : 0.22;
 
       // 相机防穿: 从 pivot 向期望机位做射线
       this.camDir.subVectors(this.camTarget, this.pivot);
