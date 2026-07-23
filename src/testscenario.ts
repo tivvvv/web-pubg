@@ -115,6 +115,15 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.characterAirPose = character.airPose ?? 'none';
       panel.dataset.characterKnocked = String(character.knocked);
       panel.dataset.characterDriving = String(controller.driving !== null);
+      panel.dataset.cameraBlend = controller.cameraBlend.toFixed(3);
+      panel.dataset.cameraDistance = controller.cameraDistance.toFixed(3);
+      panel.dataset.cameraFov = controller.camera.fov.toFixed(2);
+      panel.dataset.interactionKind = controller.interactionTargetKind ?? 'none';
+      panel.dataset.cameraPosition = [
+        controller.camera.position.x,
+        controller.camera.position.y,
+        controller.camera.position.z,
+      ].map((value) => value.toFixed(2)).join(',');
     }
     window.requestAnimationFrame(publishCharacter);
   };

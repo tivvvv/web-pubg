@@ -716,7 +716,7 @@ body {
   position: absolute;
   left: 50%;
   top: 56%;
-  transform: translateX(-50%);
+  transform: translate(-50%, 6px);
   background: rgba(10, 14, 10, 0.75);
   border: 1px solid rgba(232, 200, 96, 0.6);
   border-radius: 4px;
@@ -725,13 +725,36 @@ body {
   font-weight: 600;
   padding: 7px 16px;
   opacity: 0;
-  transition: opacity 0.12s;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(4px);
+  transition: opacity 0.12s, transform 0.12s, border-color 0.12s;
   pointer-events: none;
   white-space: nowrap;
 }
 
 #pickup-prompt.show {
   opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+#pickup-prompt[data-kind='ally'] {
+  border-color: rgba(101, 225, 141, 0.82);
+  color: #c9ffda;
+}
+
+#pickup-prompt[data-kind='door'] {
+  border-color: rgba(115, 190, 235, 0.75);
+  color: #d9f2ff;
+}
+
+#pickup-prompt[data-kind='vehicle'] {
+  border-color: rgba(240, 151, 79, 0.82);
+}
+
+#pickup-prompt[data-kind='airdrop'],
+#pickup-prompt[data-kind='deathcrate'] {
+  border-color: rgba(231, 188, 81, 0.9);
+  background: rgba(22, 18, 9, 0.82);
 }
 
 /* ---------- 包扎进度 ---------- */

@@ -6,6 +6,7 @@ import {
 import type { Input } from './input';
 import { isGunKind, isMeleeKind, isWeaponKind } from './loot';
 import { ARMORS, armorFromLoot } from './armor';
+import { PACKS, isPackKind, packLevelFromLoot } from './backpack';
 import { MELEE, WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF } from './world';
 import { driveVehicleStep, VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
@@ -15,9 +16,19 @@ import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, sightZoomOf } fro
 import { random } from './random';
 import type { Game } from './game';
 import {
-  aimBlend, calculateAimSway, calculateRecoilImpulse, calculateWeaponSpread, reloadDuration, scopeModeOf,
+  aimBlend, calculateAimSway, calculateRecoilImpulse, calculateWeaponSpread, reloadDuration,
   smoothAimProgress, WEAPON_RECOIL,
 } from './gunplay';
+import {
+  advanceCameraMode, cameraModeTarget, sampleCameraShake, smoothCameraDistance, type CameraShakeSample,
+} from './camera';
+import {
+  chooseInteractionCandidate, type InteractionCandidate, type InteractionKind,
+} from './interaction';
+import type { Destructible } from './buildings';
+import type { Crate } from './airdrop';
+import type { DeathCrate } from './deathcrate';
+import type { LootItem } from './loot';
 
 const BASE_FOV = 75;
 const THROW_SPEED = 15; // 满蓄力投掷速度
@@ -26,6 +37,9 @@ const FREEFALL_STEER_RESPONSE = 5; // 自由落体转向响应
 const CANOPY_STEER_SPEED = 12;
 const CANOPY_STEER_RESPONSE = 1.6;
 const AIR_STEER_DRAG = 1.2; // 松开方向键后保留少量惯性
+const CAMERA_PROBE_OFFSETS = [0, -0.14, 0.14] as const;
+
+type InteractionTarget = LootItem | Destructible | Vehicle | Crate | DeathCrate | Character;
 
 export class PlayerController {
   readonly char: Character;
@@ -68,6 +82,17 @@ export class PlayerController {
   private camBob = 0;
   private camRoll = 0;
   private landDip = 0;
+  private cameraModeF = 0;
+  private cameraShakeT = 0;
+  private cameraShake: CameraShakeSample = { x: 0, y: 0, z: 0, roll: 0 };
+  private vehicleLookYaw = 0;
+  private vehicleLookPitch = 0.08;
+  private vehicleLookIdleT = 0;
+  private interactionLockT = 0;
+  private interactionFocusT = 0;
+  private interactionFocusF = 0;
+  private interactionTarget: InteractionTarget | null = null;
+  private interactionKind: InteractionKind | null = null;
   spreadRad = 0.004;
 
   private viewDir = new THREE.Vector3();
@@ -79,6 +104,13 @@ export class PlayerController {
   private throwOrigin = new THREE.Vector3();
   private tmpSwim = new THREE.Vector3();
   private planeNext = new THREE.Vector3();
+  private fppCameraPos = new THREE.Vector3();
+  private tppCameraPos = new THREE.Vector3();
+  private camProbe = new THREE.Vector3();
+  private camProbeDir = new THREE.Vector3();
+  private interactionOrigin = new THREE.Vector3();
+  private interactionPos = new THREE.Vector3();
+  private interactionFocus = new THREE.Vector3();
 
   constructor(shirtColor: number) {
     this.char = new Character('你', true, shirtColor);
@@ -93,8 +125,22 @@ export class PlayerController {
     return this.aimF;
   }
 
+  get cameraBlend(): number {
+    return this.cameraModeF;
+  }
+
+  get cameraDistance(): number {
+    return this.camDist;
+  }
+
+  get interactionTargetKind(): InteractionKind | null {
+    return this.interactionKind;
+  }
+
   update(dt: number, input: Input, game: Game): void {
     const c = this.char;
+    this.interactionLockT = Math.max(0, this.interactionLockT - dt);
+    this.interactionFocusT = Math.max(0, this.interactionFocusT - dt);
     if ((!c.alive || c.knocked) && (this.reloading || this.throwHold)) {
       this.cancelTransientActions(game);
     }
@@ -113,8 +159,15 @@ export class PlayerController {
     // ---- 视角 ----
     const { dx, dy } = input.consumeMouse();
     const zoomScale = this.fov / BASE_FOV;
-    this.yaw -= dx * 0.0021 * zoomScale;
-    this.pitch = clamp(this.pitch - dy * 0.0021 * zoomScale, -1.25, 1.35);
+    if (this.driving) {
+      this.vehicleLookYaw = clamp(this.vehicleLookYaw - dx * 0.0021 * zoomScale, -1.75, 1.75);
+      this.vehicleLookPitch = clamp(this.vehicleLookPitch - dy * 0.0021 * zoomScale, -0.42, 0.72);
+      if (Math.abs(dx) + Math.abs(dy) > 0.01) this.vehicleLookIdleT = 0;
+      else this.vehicleLookIdleT += dt;
+    } else {
+      this.yaw -= dx * 0.0021 * zoomScale;
+      this.pitch = clamp(this.pitch - dy * 0.0021 * zoomScale, -1.25, 1.35);
+    }
     const heldForRecovery = c.heldGun();
     const recovery = heldForRecovery ? WEAPON_RECOIL[heldForRecovery.def.id] : WEAPON_RECOIL.rifle;
     this.recoilP *= Math.exp(-recovery.pitchRecovery * dt);
@@ -154,7 +207,9 @@ export class PlayerController {
     }
 
     const gun = c.heldGun();
-    this.aiming = input.rmb && !this.reloading && gun !== null && !c.swimming && !c.knocked;
+    const interactionBusy = this.interactionLockT > 0 || c.reviveTarget !== null;
+    this.aiming = input.rmb && !this.reloading && !interactionBusy &&
+      gun !== null && !c.swimming && !c.knocked;
     if (gun) this.aimF = smoothAimProgress(this.aimF, this.aiming, gun.def.id, dt);
     else this.aimF = lerp(this.aimF, 0, 1 - Math.exp(-16 * dt));
     this.aimTime += dt;
@@ -282,6 +337,12 @@ export class PlayerController {
     }
     if (c.swimming && c.speed2d > 0.15) {
       c.yaw = turnToward(c.yaw, Math.atan2(this.moveVel.x, this.moveVel.y), dt * 4.8);
+    } else if (interactionBusy) {
+      const targetYaw = Math.atan2(
+        this.interactionFocus.x - c.pos.x,
+        this.interactionFocus.z - c.pos.z,
+      );
+      c.yaw = turnToward(c.yaw, targetYaw, dt * 8);
     } else {
       c.yaw = this.yaw;
     }
@@ -336,7 +397,7 @@ export class PlayerController {
     }
     if (c.swimming) {
       this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
-    } else if (c.knocked) {
+    } else if (c.knocked || interactionBusy) {
       // 倒地不能攻击/投掷/近战
       this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
     } else if (c.curSlot === 3) {
@@ -393,7 +454,7 @@ export class PlayerController {
     }
 
     // ---- 拾取提示(武器需按 F) ----
-    this.updatePickupPrompt(game);
+    this.refreshInteractionPrompt(game);
     // 弹药/医疗包/投掷物走近自动拾取
     const auto = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
     if (auto && !isWeaponKind(auto.kind) && !isAttachKind(auto.kind)) {
@@ -403,85 +464,196 @@ export class PlayerController {
     this.updateCamera(dt, game);
   }
 
-  private updatePickupPrompt(game: Game): void {
+  refreshInteractionPrompt(game: Game): void {
     const c = this.char;
-    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
-    // 物品候选: 最近的武器/护具/背包/配件且大致在前方
-    let item = game.loot.nearestFPickup(c.pos.x, c.pos.y, c.pos.z, 2.6);
-    let itemDot = -1;
-    if (item) {
-      const dx = item.group.position.x - c.pos.x;
-      const dz = item.group.position.z - c.pos.z;
-      const d = Math.hypot(dx, dz);
-      itemDot = d > 0.01 ? (dx * fx + dz * fz) / d : 1;
-      if (itemDot < 0.35) item = null;
-    }
-    // 门候选: 2.2m 内看得最正的活门
-    const door = game.findDoorInteraction(c.pos.x, c.pos.y, c.pos.z, fx, fz);
     game.promptItem = null;
     game.promptDoor = null;
     game.promptVehicle = null;
     game.promptCrate = null;
     game.promptDeathCrate = null;
     game.promptAlly = null;
-    if (c.reviveTarget) {
+    if (c.reviveTarget || c.knocked || c.swimming || this.descent || this.driving || this.interactionLockT > 0) {
+      this.interactionTarget = null;
+      this.interactionKind = null;
       game.hud.setPickupPrompt(null);
       return;
     }
-    // 两者同时在场: 看得更正的优先
-    if (door && (!item || door.dot >= itemDot)) {
-      game.promptDoor = door.d;
-      game.hud.setPickupPrompt(door.d.open ? '按 F 关门' : '按 F 开门');
-      return;
-    }
-    // 救援候选: 2.2m 内倒地队友(自己非倒地)
-    if (!c.knocked) {
-      const ally = game.knock.nearestKnocked(c.pos.x, c.pos.z, 2.2);
-      if (ally) {
-        game.promptAlly = ally;
-        game.hud.setPickupPrompt('按 F 救援');
-        return;
+
+    const cp = Math.cos(this.pitch);
+    const vx = Math.sin(this.yaw) * cp;
+    const vy = Math.sin(this.pitch);
+    const vz = Math.cos(this.yaw) * cp;
+    const fx = Math.sin(this.yaw);
+    const fz = Math.cos(this.yaw);
+    c.eyePos(this.interactionOrigin);
+    const candidates: InteractionCandidate<InteractionTarget>[] = [];
+    const push = (
+      kind: InteractionKind,
+      target: InteractionTarget,
+      x: number,
+      y: number,
+      z: number,
+      maxDistance: number,
+      minDot: number,
+      priority: number,
+    ): void => {
+      const dx = x - this.interactionOrigin.x;
+      const dy = y - this.interactionOrigin.y;
+      const dz = z - this.interactionOrigin.z;
+      const horizontal = Math.hypot(dx, dz);
+      const sightDistance = Math.hypot(dx, dy, dz);
+      if (sightDistance < 0.01) return;
+      const distance = Math.hypot(horizontal, dy * 0.4);
+      if (distance > maxDistance + 0.18) return;
+      const dot = (dx * vx + dy * vy + dz * vz) / sightDistance;
+      this.interactionPos.set(x, y, z);
+      if (!this.interactionVisible(game, kind, this.interactionPos, sightDistance)) return;
+      candidates.push({ kind, target, distance, dot, maxDistance, minDot, priority });
+    };
+    const pushTarget = (kind: InteractionKind, target: InteractionTarget): void => {
+      if (kind === 'item') {
+        const item = target as LootItem;
+        if (item.active) push(kind, item, item.group.position.x, item.baseY + 0.38, item.group.position.z, 2.65, 0.08, 0);
+      } else if (kind === 'door') {
+        const door = target as Destructible;
+        if (door.alive) push(kind, door, door.cx, door.cy, door.cz, 2.3, 0.06, 0.11);
+      } else if (kind === 'ally') {
+        const ally = target as Character;
+        if (ally.alive && ally.knocked) {
+          push(kind, ally, ally.pos.x, ally.pos.y + ally.chestHeight(), ally.pos.z, 2.35, -0.02, 0.24);
+        }
+      } else if (kind === 'airdrop') {
+        const crate = target as Crate;
+        if (crate.state === 'landed') push(kind, crate, crate.pos.x, crate.pos.y + 0.55, crate.pos.z, 2.9, -0.02, 0.08);
+      } else if (kind === 'deathcrate') {
+        const crate = target as DeathCrate;
+        if (crate.active) {
+          push(kind, crate, crate.group.position.x, crate.group.position.y + 0.35, crate.group.position.z, 2.9, 0, 0.07);
+        }
+      } else {
+        const vehicle = target as Vehicle;
+        if (!vehicle.dead && vehicle.burnT < 0 && !vehicle.driver) {
+          push(kind, vehicle, vehicle.pos.x, vehicle.pos.y + 0.9, vehicle.pos.z, 2.75, -0.04, 0.04);
+        }
       }
+    };
+
+    // 同一堆物资逐个参与统一评分, 让准星指向优先于单纯最近距离。
+    for (const nearbyItem of game.loot.items) {
+      if (!nearbyItem.active ||
+        (!isWeaponKind(nearbyItem.kind) && !isAttachKind(nearbyItem.kind) &&
+          !isPackKind(nearbyItem.kind) && !armorFromLoot(nearbyItem.kind))) continue;
+      pushTarget('item', nearbyItem);
     }
-    // 空投候选: 2.8m 内落地未开的空投
-    const crate = game.airdrop.nearestClosedCrate(c.pos.x, c.pos.y, c.pos.z, 2.8);
-    if (crate) {
-      game.promptCrate = crate;
-      game.hud.setPickupPrompt('按 F 打开空投');
-      return;
+    const door = game.findDoorInteraction(c.pos.x, c.pos.y, c.pos.z, fx, fz);
+    if (door) pushTarget('door', door.d);
+    const ally = game.knock.nearestKnocked(c.pos.x, c.pos.z, 2.55, c);
+    if (ally) pushTarget('ally', ally);
+    const crate = game.airdrop.nearestClosedCrate(c.pos.x, c.pos.y, c.pos.z, 3.15);
+    if (crate) pushTarget('airdrop', crate);
+    const deathCrate = game.deathCrates.nearest(c.pos.x, c.pos.y, c.pos.z, 3.15);
+    if (deathCrate) pushTarget('deathcrate', deathCrate);
+    const vehicle = game.vehicles.nearest(c.pos.x, c.pos.z, 3.05);
+    if (vehicle) pushTarget('vehicle', vehicle);
+    // 最近查询换到相邻目标时仍保留上一目标参与一帧评分, 再由距离和视线自然淘汰。
+    if (this.interactionTarget && !candidates.some((candidate) => candidate.target === this.interactionTarget) &&
+      this.interactionKind) {
+      pushTarget(this.interactionKind, this.interactionTarget);
     }
-    const deathCrate = game.deathCrates.nearest(c.pos.x, c.pos.y, c.pos.z, 2.8);
-    if (deathCrate) {
-      game.promptDeathCrate = deathCrate;
-      game.hud.setPickupPrompt(`按 F 搜索 ${deathCrate.owner} 的盒子`);
-      return;
-    }
-    // 载具候选: 2.6m 内可驾驶载具
-    const veh = game.vehicles.nearest(c.pos.x, c.pos.z, 2.6);
-    if (veh) {
-      game.promptVehicle = veh;
-      game.hud.setPickupPrompt('按 F 驾驶');
-      return;
-    }
-    if (!item) {
+
+    const selected = chooseInteractionCandidate(candidates, this.interactionTarget);
+    if (!selected) {
+      this.interactionTarget = null;
+      this.interactionKind = null;
       game.hud.setPickupPrompt(null);
       return;
     }
-    game.promptItem = item;
-    const k = item.kind;
+    this.interactionTarget = selected.target;
+    this.interactionKind = selected.kind;
+    if (selected.kind === 'ally') {
+      game.promptAlly = selected.target as Character;
+      game.hud.setPickupPrompt('按 F 救援', 'ally');
+      return;
+    }
+    if (selected.kind === 'door') {
+      const selectedDoor = selected.target as Destructible;
+      game.promptDoor = selectedDoor;
+      game.hud.setPickupPrompt(selectedDoor.open ? '按 F 关门' : '按 F 开门', 'door');
+      return;
+    }
+    if (selected.kind === 'airdrop') {
+      game.promptCrate = selected.target as Crate;
+      game.hud.setPickupPrompt('按 F 打开空投', 'airdrop');
+      return;
+    }
+    if (selected.kind === 'deathcrate') {
+      const selectedCrate = selected.target as DeathCrate;
+      game.promptDeathCrate = selectedCrate;
+      game.hud.setPickupPrompt(`按 F 搜索 ${selectedCrate.owner} 的盒子`, 'deathcrate');
+      return;
+    }
+    if (selected.kind === 'vehicle') {
+      game.promptVehicle = selected.target as Vehicle;
+      game.hud.setPickupPrompt('按 F 驾驶', 'vehicle');
+      return;
+    }
+
+    const selectedItem = selected.target as LootItem;
+    game.promptItem = selectedItem;
+    const k = selectedItem.kind;
     if (isMeleeKind(k)) {
-      game.hud.setPickupPrompt(`按 F 拾取 ${MELEE[k].name}`);
+      game.hud.setPickupPrompt(`按 F 拾取 ${MELEE[k].name}`, 'item');
     } else if (isGunKind(k)) {
       const def = WEAPONS[k];
-      const state = item.mag > 0 ? `${item.mag} 发` : item.ammo > 0 ? `无弹, 备弹 ${item.ammo}` : '无弹';
-      game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${state}）`);
+      const state = selectedItem.mag > 0
+        ? `${selectedItem.mag} 发`
+        : selectedItem.ammo > 0 ? `无弹, 备弹 ${selectedItem.ammo}` : '无弹';
+      game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${state}）`, 'item');
     } else if (isAttachKind(k)) {
       const id = attachFromLoot(k);
-      if (id) game.hud.setPickupPrompt(`按 F 装配 ${ATTACHMENTS[id].name}`);
+      if (id) game.hud.setPickupPrompt(`按 F 装配 ${ATTACHMENTS[id].name}`, 'item');
+    } else if (isPackKind(k)) {
+      const level = packLevelFromLoot(k);
+      if (level) game.hud.setPickupPrompt(`按 F 拾取 ${PACKS[level].name}`, 'item');
     } else {
       const info = armorFromLoot(k);
-      if (info) game.hud.setPickupPrompt(`按 F 拾取 ${ARMORS[info.kind][info.level].name}`);
+      if (info) game.hud.setPickupPrompt(`按 F 拾取 ${ARMORS[info.kind][info.level].name}`, 'item');
     }
+  }
+
+  private interactionVisible(
+    game: Game,
+    kind: InteractionKind,
+    target: THREE.Vector3,
+    distance: number,
+  ): boolean {
+    if (distance < 0.4) return true;
+    this.camProbeDir.subVectors(target, this.interactionOrigin).normalize();
+    let blockedAt = game.world.raycastTerrain(this.interactionOrigin, this.camProbeDir, distance);
+    if (game.world.raycastStatics(this.interactionOrigin, this.camProbeDir, distance, game.staticHit)) {
+      blockedAt = Math.min(blockedAt, game.staticHit.t);
+    }
+    return blockedAt >= distance - (kind === 'door' ? 0.45 : 0.32);
+  }
+
+  canStartInteraction(): boolean {
+    return this.interactionLockT <= 0 && !this.char.reviveTarget && !this.char.knocked &&
+      !this.char.swimming && !this.descent && !this.driving;
+  }
+
+  beginInteractionFeedback(
+    game: Game,
+    target: { x: number; y: number; z: number },
+    pose: 'interact' | 'pickup' | null,
+    duration: number,
+  ): void {
+    this.cancelTransientActions(game);
+    if (pose) this.char.beginAction(pose, duration);
+    this.interactionLockT = Math.max(this.interactionLockT, Math.min(duration, 0.46));
+    this.interactionFocusT = Math.max(this.interactionFocusT, duration + 0.16);
+    this.interactionFocus.set(target.x, target.y, target.z);
+    this.interactionTarget = null;
+    this.interactionKind = null;
   }
 
   // 投掷起点: TPP 从胸前出手, FPP 从眼位前方出手(不穿脸); 均随姿态高度
@@ -661,6 +833,10 @@ export class PlayerController {
     c.stanceF = 0;
     c.moveLean = 0;
     this.moveVel.set(0, 0);
+    this.vehicleLookYaw = 0;
+    this.vehicleLookPitch = 0.08;
+    this.vehicleLookIdleT = 0;
+    this.cameraModeF = 0;
     seatWorld(v, c.pos);
     c.yaw = v.yaw;
     this.yaw = v.yaw;
@@ -694,6 +870,11 @@ export class PlayerController {
     c.vy = 0;
     c.moveLean = 0;
     this.moveVel.set(0, 0);
+    this.yaw = v.yaw;
+    this.pitch = 0.08;
+    this.vehicleLookYaw = 0;
+    this.vehicleLookPitch = 0.08;
+    this.vehicleLookIdleT = 0;
     v.driver = null;
     v.speed = 0;
     this.driving = null;
@@ -714,42 +895,51 @@ export class PlayerController {
       handbrake: input.keys.has('Space'),
     }, dt, game);
     if (result.stalled) return;
-    this.yaw = v.yaw;
+    if (this.vehicleLookIdleT > 1.1 && Math.abs(v.speed) > 0.5) {
+      const recenter = 1 - Math.exp(-dt * 1.45);
+      this.vehicleLookYaw = lerp(this.vehicleLookYaw, 0, recenter);
+      this.vehicleLookPitch = lerp(this.vehicleLookPitch, 0.08, recenter);
+    }
     this.driveCamera(dt, game, v);
     game.audio.engineSet(Math.abs(v.speed) / spec.vmax);
   }
 
   // 追逐相机(车后上方, 与 TPP 同款防穿)
   private driveCamera(dt: number, game: Game, v: Vehicle): void {
-    const dirX = Math.sin(v.yaw);
-    const dirZ = Math.cos(v.yaw);
+    const viewYaw = v.yaw + this.vehicleLookYaw;
+    const cp = Math.cos(this.vehicleLookPitch);
+    const dirX = Math.sin(viewYaw) * cp;
+    const dirY = Math.sin(this.vehicleLookPitch);
+    const dirZ = Math.cos(viewYaw) * cp;
     const dist = v.kind === 'car' ? 6.2 : v.kind === 'buggy' ? 5.7 : 5.0;
     this.pivot.set(v.pos.x, v.pos.y + 1.4, v.pos.z);
-    this.camTarget.set(v.pos.x - dirX * dist, v.pos.y + 2.4, v.pos.z - dirZ * dist);
+    this.camTarget.set(
+      this.pivot.x - dirX * dist,
+      this.pivot.y + 0.72 - dirY * dist,
+      this.pivot.z - dirZ * dist,
+    );
     this.camDir.subVectors(this.camTarget, this.pivot);
     const len = this.camDir.length();
     if (len > 0.001) {
       this.camDir.divideScalar(len);
-      let allowed = len;
-      const tTerr = game.world.raycastTerrain(this.pivot, this.camDir, len);
-      if (tTerr < allowed) allowed = tTerr;
-      if (game.world.raycastStatics(this.pivot, this.camDir, len, game.staticHit)) {
-        allowed = Math.min(allowed, game.staticHit.t);
-      }
-      allowed = Math.max(allowed - 0.25, 0.4);
-      const k = allowed < this.camDist ? 26 : 12;
-      this.camDist = lerp(this.camDist, allowed, Math.min(1, dt * k));
+      const allowed = this.cameraAllowedDistance(game, this.pivot, this.camDir, len, 0.28);
+      this.camDist = smoothCameraDistance(this.camDist, allowed, len, dt);
     }
     this.camera.position.copy(this.pivot).addScaledVector(this.camDir, this.camDist);
     const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.3;
     if (this.camera.position.y < minY) this.camera.position.y = minY;
-    if (game.shakeAmp > 0.002) {
-      this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-      this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-      this.camera.position.z += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-    }
-    this.lookAt.set(v.pos.x + dirX * 6, v.pos.y + 1.2, v.pos.z + dirZ * 6);
+    this.cameraShakeT += dt;
+    sampleCameraShake(this.cameraShake, this.cameraShakeT, game.shakeAmp * 0.16);
+    this.camera.position.x += this.cameraShake.x;
+    this.camera.position.y += this.cameraShake.y;
+    this.camera.position.z += this.cameraShake.z;
+    this.lookAt.set(
+      this.pivot.x + dirX * 8,
+      this.pivot.y + dirY * 8,
+      this.pivot.z + dirZ * 8,
+    );
     this.camera.lookAt(this.lookAt);
+    this.camera.rotateZ(this.cameraShake.roll);
     this.fov = lerp(this.fov, BASE_FOV + Math.abs(v.speed) * 0.5, Math.min(1, dt * 6));
     if (Math.abs(this.fov - this.camera.fov) > 0.05) {
       this.camera.fov = this.fov;
@@ -789,6 +979,14 @@ export class PlayerController {
     this.reloadTotal = 0;
     this.char.reload01 = 0;
     this.aiming = false;
+    this.interactionLockT = 0;
+    this.interactionFocusT = 0;
+    this.interactionTarget = null;
+    this.interactionKind = null;
+    if (this.char.actionPose === 'interact' || this.char.actionPose === 'pickup' ||
+      this.char.actionPose === 'equip') {
+      this.char.cancelAction();
+    }
     if (this.throwHold) {
       this.throwHold = false;
       game?.grenades.hidePreview();
@@ -840,9 +1038,25 @@ export class PlayerController {
     const dir = this.getViewDir(this.viewDir);
     const gun = c.heldGun();
     const zoom = gun ? lerp(1, sightZoomOf(gun), aimBlend(this.aimF)) : 1;
-    // 装配瞄具完成开镜后让相机真正进入镜轴, 避免第三人称角色遮挡镜内视野。
-    const fpp = game.viewFpp || scopeModeOf(gun, this.aimF) !== 'none';
-    c.setFirstPerson(fpp);
+    const optic = !!gun && (gun.def.id === 'sniper' || gun.att.sight !== null);
+    const cameraTargetF = cameraModeTarget(game.viewFpp, optic, this.aimF);
+    this.cameraModeF = advanceCameraMode(this.cameraModeF, cameraTargetF, dt);
+    // 镜头开始向眼位靠近时先隐藏头身, 避免过渡中穿过自身模型。
+    c.setFirstPerson(this.cameraModeF > 0.12);
+
+    if (c.reviveTarget) {
+      this.interactionFocus.set(
+        c.reviveTarget.pos.x,
+        c.reviveTarget.pos.y + c.reviveTarget.chestHeight(),
+        c.reviveTarget.pos.z,
+      );
+    }
+    const focusActive = this.interactionFocusT > 0 || c.reviveTarget !== null;
+    this.interactionFocusF = lerp(
+      this.interactionFocusF,
+      focusActive ? 1 : 0,
+      1 - Math.exp(-(focusActive ? 9 : 6) * dt),
+    );
 
     // 陆地脚步轻微起伏, 游泳随划水节奏浮动, 侧移产生小幅镜头侧倾
     let targetBob = 0;
@@ -854,87 +1068,65 @@ export class PlayerController {
       this.camBobPhase += dt * (6.5 + c.speed2d * 1.05);
       targetBob = Math.sin(this.camBobPhase * 2) * (0.006 + speedF * 0.025);
     }
+    targetBob *= 1 - this.interactionFocusF * 0.7;
     this.camBob = lerp(this.camBob, targetBob, Math.min(1, dt * 12));
     const swimRoll = c.swimming
       ? Math.sin(c.swimT * 1.8) * clamp(c.speed2d / SWIM_SPRINT_SPEED, 0, 1) * 0.012
       : 0;
-    const targetRoll = swimRoll - c.moveLean * (fpp ? 0.018 : 0.009);
+    const targetRoll = swimRoll - c.moveLean * lerp(0.009, 0.018, this.cameraModeF);
     this.camRoll = lerp(this.camRoll, targetRoll, Math.min(1, dt * 9));
     const verticalFeel = this.camBob - this.landDip;
 
-    if (fpp) {
-      // 第一人称: 相机即眼位(随姿态 1.62/1.1/0.35), 直接看向, 无防穿拉近(camDist 保留供 TPP 恢复)
-      this.camera.position.set(c.pos.x, c.pos.y + c.eyeHeight(), c.pos.z);
-      this.camera.position.y += verticalFeel;
-      if (game.shakeAmp > 0.002) {
-        this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-        this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-        this.camera.position.z += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-      }
-      this.lookAt.copy(this.camera.position).addScaledVector(dir, 14);
-      this.camera.lookAt(this.lookAt);
-    } else {
-      this.pivot.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.04, c.pos.z);
-      this.pivot.y += verticalFeel * 0.42;
-      if (this.descent === 'freefall') {
-        // 保留少量相机滞后以呈现水平位移
-        this.pivot.x -= this.hv.x * 0.07;
-        this.pivot.z -= this.hv.y * 0.07;
-      }
-
-      const ads = aimBlend(this.aimF);
-      // 室内和楼梯井收紧第三人称相机并降低抬升量，避免相机顶进楼板或被踏步反复推拉。
-      const indoor = game.world.inPlot(c.pos.x, c.pos.z, -1.65);
-      const adsDist = gun?.def === WEAPONS.sniper ? 1.5 : 1.9;
-      const targetDist = lerp(indoor ? 2.55 : 3.4, adsDist, ads);
-      const shoulder = lerp(indoor ? 0.42 : 0.5, 0.55, ads);
-
-      // 期望机位
-      this.camDir.copy(dir).multiplyScalar(-1);
-      this.camTarget.copy(this.pivot).addScaledVector(this.camDir, targetDist);
-      // 肩部偏移(右 = cross(dir, up) 的水平分量)
-      const rx = -dir.z;
-      const rz = dir.x;
-      const rl = Math.hypot(rx, rz) || 1;
-      this.camTarget.x += (rx / rl) * shoulder;
-      this.camTarget.z += (rz / rl) * shoulder;
-      this.camTarget.y += indoor ? 0.07 : 0.22;
-
-      // 相机防穿: 从 pivot 向期望机位做射线
-      this.camDir.subVectors(this.camTarget, this.pivot);
-      const wantLen = this.camDir.length();
-      if (wantLen > 0.001) {
-        this.camDir.divideScalar(wantLen);
-        let allowed = wantLen;
-        const tTerr = game.world.raycastTerrain(this.pivot, this.camDir, wantLen);
-        if (tTerr < allowed) allowed = tTerr;
-        if (game.world.raycastStatics(this.pivot, this.camDir, wantLen, game.staticHit)) {
-          if (game.staticHit.t < allowed) allowed = game.staticHit.t;
-        }
-        allowed = Math.max(allowed - 0.24, 0.25);
-        // 被遮挡时快速拉近, 无遮挡缓慢恢复
-        const k = allowed < this.camDist ? 26 : 10;
-        this.camDist = lerp(this.camDist, allowed, Math.min(1, dt * k));
-      }
-      this.camera.position.copy(this.pivot).addScaledVector(this.camDir, this.camDist);
-      // 不钻地
-      const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.28;
-      if (this.camera.position.y < minY) this.camera.position.y = minY;
-      // 不没入水面(游泳时第三人称保持在水上)
-      if (this.camera.position.y < WATER_Y + 0.16 &&
-        game.world.getHeight(this.camera.position.x, this.camera.position.z) < WATER_Y) {
-        this.camera.position.y = WATER_Y + 0.16;
-      }
-      // 爆炸震动
-      if (game.shakeAmp > 0.002) {
-        this.camera.position.x += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-        this.camera.position.y += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-        this.camera.position.z += (Math.random() - 0.5) * game.shakeAmp * 0.22;
-      }
-      this.lookAt.copy(this.pivot).addScaledVector(dir, 14);
-      this.camera.lookAt(this.lookAt);
+    // 同时计算第三人称和眼位机位, 再按镜轴进度混合, 消除 ADS 和 V 切换时的瞬移。
+    this.fppCameraPos.set(c.pos.x, c.pos.y + c.eyeHeight() + verticalFeel, c.pos.z);
+    this.pivot.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.04, c.pos.z);
+    this.pivot.y += verticalFeel * 0.42;
+    if (this.descent === 'freefall') {
+      this.pivot.x -= this.hv.x * 0.07;
+      this.pivot.z -= this.hv.y * 0.07;
     }
-    this.camera.rotateZ(this.camRoll);
+
+    const ads = aimBlend(this.aimF);
+    const indoor = game.world.inPlot(c.pos.x, c.pos.z, -1.65);
+    const adsDist = gun?.def === WEAPONS.sniper ? 1.5 : 1.9;
+    const baseDistance = lerp(indoor ? 2.5 : 3.4, adsDist, ads);
+    const targetDist = Math.max(1.35, baseDistance - this.interactionFocusF * 0.28);
+    const shoulder = lerp(indoor ? 0.4 : 0.5, 0.55, ads) * (1 - this.interactionFocusF * 0.18);
+
+    this.camDir.copy(dir).multiplyScalar(-1);
+    this.camTarget.copy(this.pivot).addScaledVector(this.camDir, targetDist);
+    const rx = -dir.z;
+    const rz = dir.x;
+    const rl = Math.hypot(rx, rz) || 1;
+    this.camTarget.x += (rx / rl) * shoulder;
+    this.camTarget.z += (rz / rl) * shoulder;
+    this.camTarget.y += indoor ? 0.07 : 0.22;
+
+    this.camDir.subVectors(this.camTarget, this.pivot);
+    const wantLen = this.camDir.length();
+    if (wantLen > 0.001) {
+      this.camDir.divideScalar(wantLen);
+      const allowed = this.cameraAllowedDistance(game, this.pivot, this.camDir, wantLen, 0.22);
+      this.camDist = smoothCameraDistance(this.camDist, allowed, wantLen, dt);
+    }
+    this.tppCameraPos.copy(this.pivot).addScaledVector(this.camDir, this.camDist);
+    this.camera.position.lerpVectors(this.tppCameraPos, this.fppCameraPos, this.cameraModeF);
+
+    const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.28;
+    if (this.cameraModeF < 0.98 && this.camera.position.y < minY) this.camera.position.y = minY;
+    if (this.cameraModeF < 0.98 && this.camera.position.y < WATER_Y + 0.16 &&
+      game.world.getHeight(this.camera.position.x, this.camera.position.z) < WATER_Y) {
+      this.camera.position.y = WATER_Y + 0.16;
+    }
+    this.cameraShakeT += dt;
+    sampleCameraShake(this.cameraShake, this.cameraShakeT, game.shakeAmp * 0.16);
+    this.camera.position.x += this.cameraShake.x;
+    this.camera.position.y += this.cameraShake.y;
+    this.camera.position.z += this.cameraShake.z;
+    // 视线始终与射击方向一致, 交互聚焦只改变机位距离和镜头摆动。
+    this.lookAt.copy(this.camera.position).addScaledVector(dir, 14);
+    this.camera.lookAt(this.lookAt);
+    this.camera.rotateZ(this.camRoll + this.cameraShake.roll);
 
     // FOV 缩放
     const swimSprintF = c.swimming
@@ -949,5 +1141,29 @@ export class PlayerController {
       this.camera.fov = this.fov;
       this.camera.updateProjectionMatrix();
     }
+  }
+
+  private cameraAllowedDistance(
+    game: Game,
+    pivot: THREE.Vector3,
+    direction: THREE.Vector3,
+    desired: number,
+    padding: number,
+  ): number {
+    let allowed = desired;
+    const rx = -direction.z;
+    const rz = direction.x;
+    const rl = Math.hypot(rx, rz) || 1;
+    for (const offset of CAMERA_PROBE_OFFSETS) {
+      this.camProbe.copy(pivot);
+      this.camProbe.x += rx / rl * offset;
+      this.camProbe.z += rz / rl * offset;
+      const terrainT = game.world.raycastTerrain(this.camProbe, direction, desired);
+      if (terrainT < allowed) allowed = terrainT;
+      if (game.world.raycastStatics(this.camProbe, direction, desired, game.staticHit)) {
+        allowed = Math.min(allowed, game.staticHit.t);
+      }
+    }
+    return Math.max(0.25, allowed - padding);
   }
 }

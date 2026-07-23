@@ -375,6 +375,7 @@ export class Character {
   private vestMesh: THREE.Group | null = null;
   private packMesh: THREE.Group | null = null;
   private actionF = 0;
+  private actionDuration = 0;
   private visualAction: CharacterAction | 'revive' | null = null;
 
   readonly group: THREE.Group;
@@ -427,13 +428,20 @@ export class Character {
   beginAction(pose: CharacterAction, duration: number): void {
     const continuing = this.actionPose === pose;
     this.actionPose = pose;
-    this.actionT = continuing ? Math.max(this.actionT, duration) : duration;
+    if (continuing) {
+      this.actionT = Math.max(this.actionT, duration);
+      this.actionDuration = Math.max(this.actionDuration, this.actionT);
+    } else {
+      this.actionT = duration;
+      this.actionDuration = duration;
+    }
   }
 
   cancelAction(pose?: CharacterAction): void {
     if (pose && this.actionPose !== pose) return;
     this.actionPose = null;
     this.actionT = 0;
+    this.actionDuration = 0;
   }
 
   // 挂载降落伞(开伞): 弧形伞盖 + 吊绳, 跟随角色
@@ -651,6 +659,10 @@ export class Character {
     if (!this.airPose && this.airPoseF <= 0) this.visualAirPose = null;
     this.actionT = Math.max(0, this.actionT - dt);
     if (this.actionT <= 0) this.actionPose = null;
+    const actionProgress = this.actionDuration > 0
+      ? clamp(1 - this.actionT / this.actionDuration, 0, 1)
+      : 1;
+    const actionMotion = this.actionPose ? Math.sin(actionProgress * Math.PI) : 0;
     const requestedAction: CharacterAction | 'revive' | null = this.reviveTarget
       ? 'revive'
       : this.actionPose;
@@ -841,13 +853,14 @@ export class Character {
         p.armL.rotation.set(lerp(-1.15, -2.05, f), 0, lerp(0.25, 0.42, f));
         p.armR.rotation.set(lerp(-1.3, -1.9, f), 0, lerp(-0.1, -0.32, f));
       } else if (this.visualAction === 'pickup') {
-        p.inner.rotation.x = 0.52 * f;
-        p.inner.position.y = -0.26 * f;
-        p.legL.rotation.set(-0.55 * f, 0, 0);
-        p.legR.rotation.set(-0.72 * f, 0, 0);
-        p.armL.rotation.set(lerp(-1.15, -1.7, f), 0, lerp(0.25, 0.36, f));
-        p.armR.rotation.set(lerp(-1.3, -2.2, f), 0, lerp(-0.1, -0.24, f));
-        p.armR.position.z = 0.22 * f;
+        const reach = f * (0.48 + actionMotion * 0.52);
+        p.inner.rotation.x = 0.52 * reach;
+        p.inner.position.y = -0.26 * reach;
+        p.legL.rotation.set(-0.55 * reach, 0, 0);
+        p.legR.rotation.set(-0.72 * reach, 0, 0);
+        p.armL.rotation.set(lerp(-1.15, -1.7, reach), 0, lerp(0.25, 0.36, reach));
+        p.armR.rotation.set(lerp(-1.3, -2.2, reach), 0, lerp(-0.1, -0.24, reach));
+        p.armR.position.z = 0.22 * reach;
       } else if (this.visualAction === 'heal' || this.visualAction === 'drink') {
         const drink = this.visualAction === 'drink';
         p.inner.rotation.x = 0.12 * f;
@@ -943,7 +956,8 @@ export class Character {
       p.armL.position.z = 0.16 * phase;
     }
     if ((this.visualAction === 'interact' || this.visualAction === 'equip') && this.actionF > 0.001) {
-      const f = this.actionF * this.actionF * (3 - 2 * this.actionF);
+      const blend = this.actionF * this.actionF * (3 - 2 * this.actionF);
+      const f = blend * (0.5 + actionMotion * 0.5);
       if (this.visualAction === 'equip') {
         p.armL.rotation.x = lerp(p.armL.rotation.x, -1.65, f);
         p.armL.rotation.z = lerp(p.armL.rotation.z, 0.46, f);

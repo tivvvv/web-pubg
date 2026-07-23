@@ -408,7 +408,7 @@ export class Game {
     player.getViewDir(this.tmpDir);
     // 与开火使用同一条第三人称肩部校正射线, 保证准星锁敌和子弹落点一致.
     player.char.eyePos(this.tmpEnd);
-    if (!this.viewFpp) this.tmpEnd.y -= 0.04;
+    if (player.cameraBlend < 0.98) this.tmpEnd.y -= 0.04;
     this.tmpEnd.addScaledVector(this.tmpDir, 14);
     this.tmpDir.subVectors(this.tmpEnd, this.tmpOrigin).normalize();
     hitscan(this.world, this.chars, player.char, this.tmpOrigin, this.tmpDir, 180, this.staticHit, this.shotRes);
@@ -1217,7 +1217,7 @@ export class Game {
     this.tmpOrigin.copy(player.camera.position);
     player.getViewDir(this.tmpDir);
     player.char.eyePos(this.tmpEnd);
-    if (!this.viewFpp) this.tmpEnd.y -= 0.04;
+    if (player.cameraBlend < 0.98) this.tmpEnd.y -= 0.04;
     this.tmpEnd.addScaledVector(this.tmpDir, 14);
     this.tmpDir.subVectors(this.tmpEnd, this.tmpOrigin).normalize(); // 本帧准星方向 + 第三人称肩部视差
     return this.fireWeapon(player.char, this.tmpOrigin, this.tmpDir, player.spreadRad);
@@ -1433,7 +1433,8 @@ export class Game {
   // 玩家门交互候选: 2.2m 内看得最正的活门(返回门与朝向点积)
   findDoorInteraction(x: number, y: number, z: number, fx: number, fz: number): { d: Destructible; dot: number } | null {
     let best: Destructible | null = null;
-    let bestDot = 0.35;
+    let bestDot = 0;
+    let bestScore = -Infinity;
     for (const d of this.world.buildings.destructibles) {
       if (d.kind !== 'door' || !d.alive) continue;
       const dx = d.cx - x;
@@ -1442,9 +1443,12 @@ export class Game {
       if (dist > 2.2) continue;
       if (Math.abs(d.cy - (y + 1.2)) > 2.2) continue;
       const dot = dist > 0.01 ? (dx * fx + dz * fz) / dist : 1;
-      if (dot < bestDot) continue;
+      if (dot < 0.28) continue;
+      const score = dot * 0.78 + (1 - dist / 2.2) * 0.22;
+      if (score <= bestScore) continue;
       best = d;
       bestDot = dot;
+      bestScore = score;
     }
     return best ? { d: best, dot: bestDot } : null;
   }
@@ -1772,6 +1776,9 @@ export class Game {
   private playerPick(): void {
     const player = this.player;
     if (!player) return;
+    if (!player.canStartInteraction()) return;
+    // 键盘事件可能发生在两帧之间, 按下 F 时重新解析一次目标, 避免操作上一帧已经离开的对象。
+    player.refreshInteractionPrompt(this);
     // 载具优先(近驾驶座)
     if (this.promptVehicle) {
       player.enterVehicle(this.promptVehicle, this);
@@ -1786,30 +1793,39 @@ export class Game {
     }
     const door = this.promptDoor;
     if (door && door.alive) {
-      player.char.beginAction('interact', 0.38);
       this.toggleDoor(door, player.char);
+      player.beginInteractionFeedback(this, { x: door.cx, y: door.cy, z: door.cz }, 'interact', 0.38);
       this.promptDoor = null;
       this.hud.setPickupPrompt(null);
       return;
     }
     const crate = this.promptCrate;
     if (crate) {
-      player.char.beginAction('pickup', 0.52);
       this.airdrop.open(crate);
+      player.beginInteractionFeedback(this, {
+        x: crate.pos.x, y: crate.pos.y + 0.55, z: crate.pos.z,
+      }, 'pickup', 0.52);
       this.promptCrate = null;
       this.hud.setPickupPrompt(null);
       return;
     }
     const deathCrate = this.promptDeathCrate;
     if (deathCrate) {
-      player.char.beginAction('pickup', 0.52);
       this.lootDeathCrate(player.char, deathCrate);
+      player.beginInteractionFeedback(this, {
+        x: deathCrate.group.position.x,
+        y: deathCrate.group.position.y + 0.35,
+        z: deathCrate.group.position.z,
+      }, 'pickup', 0.52);
       this.promptDeathCrate = null;
       this.hud.setPickupPrompt(null);
       return;
     }
     const ally = this.promptAlly;
     if (ally) {
+      player.beginInteractionFeedback(this, {
+        x: ally.pos.x, y: ally.pos.y + ally.chestHeight(), z: ally.pos.z,
+      }, null, 0.32);
       this.knock.startRevive(player.char, ally);
       this.promptAlly = null;
       this.hud.setPickupPrompt(null);
@@ -1817,11 +1833,16 @@ export class Game {
     }
     const item = this.promptItem;
     if (!item || !item.active) return;
-    player.char.beginAction('pickup', 0.46);
-    if (isArmorKind(item.kind)) this.tryPickupArmor(player.char, item);
-    else if (isPackKind(item.kind)) this.tryPickupPack(player.char, item);
-    else if (isAttachKind(item.kind)) this.tryPickupAttachment(player.char, item);
-    else this.tryPickupWeapon(player.char, item);
+    let picked = false;
+    if (isArmorKind(item.kind)) picked = this.tryPickupArmor(player.char, item);
+    else if (isPackKind(item.kind)) picked = this.tryPickupPack(player.char, item);
+    else if (isAttachKind(item.kind)) picked = this.tryPickupAttachment(player.char, item);
+    else picked = this.tryPickupWeapon(player.char, item);
+    if (picked) {
+      player.beginInteractionFeedback(this, {
+        x: item.group.position.x, y: item.baseY + 0.38, z: item.group.position.z,
+      }, 'pickup', 0.46);
+    }
     this.promptItem = null;
     this.hud.setPickupPrompt(null);
   }

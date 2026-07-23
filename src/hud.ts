@@ -276,15 +276,18 @@ export class Hud {
     this.locationStatus.dataset.tier = tier;
   }
 
-  setPickupPrompt(text: string | null): void {
-    if (text === this.pickupKey) return;
-    this.pickupKey = text;
+  setPickupPrompt(text: string | null, kind = 'default'): void {
+    const key = text ? `${kind}|${text}` : null;
+    if (key === this.pickupKey) return;
+    this.pickupKey = key;
     if (text) {
       // 键位名渲染为 kbd 芯片
       this.pickupPrompt.innerHTML = text.replace(/ F /, ' <span class="kbd">F</span> ');
+      this.pickupPrompt.dataset.kind = kind;
       this.pickupPrompt.classList.add('show');
     } else {
       this.pickupPrompt.classList.remove('show');
+      delete this.pickupPrompt.dataset.kind;
     }
   }
 
