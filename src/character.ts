@@ -11,6 +11,7 @@ import { WATER_Y } from './world';
 import { clamp, lerp } from './utils';
 
 export type Stance = 'stand' | 'crouch' | 'prone';
+export type CharacterAction = 'interact' | 'pickup' | 'equip' | 'heal' | 'drink';
 const STANCE_TARGET: Record<Stance, number> = { stand: 0, crouch: 1, prone: 2 };
 export const SWIM_SPEED = 2.6;
 export const SWIM_SPRINT_SPEED = 4.8;
@@ -364,6 +365,8 @@ export class Character {
   aimPitch = 0;        // ADS 时枪械俯仰(玩家控制器写入), bot 恒 0
   gunKick = 0;         // 开枪瞬间的枪身后坐位移
   moveLean = 0;        // 左右移动时的身体侧倾 -1..1
+  actionPose: CharacterAction | null = null; // 短交互动作, 由拾取/开门/切枪/恢复触发
+  actionT = 0;
 
   private heldKey = '';               // 已同步的持械外观(模型 id + 配件)
   private armorKey = 0;              // 已同步的护具外观(helmetLvl*100+vestLvl*10+packLvl)
@@ -371,6 +374,8 @@ export class Character {
   private helmetMesh: THREE.Group | null = null;
   private vestMesh: THREE.Group | null = null;
   private packMesh: THREE.Group | null = null;
+  private actionF = 0;
+  private visualAction: CharacterAction | 'revive' | null = null;
 
   readonly group: THREE.Group;
   readonly parts: HumanParts;
@@ -417,6 +422,18 @@ export class Character {
   // 姿态切换(任务4的灌木隐蔽也读这个状态)
   setStance(s: Stance): void {
     this.stance = s;
+  }
+
+  beginAction(pose: CharacterAction, duration: number): void {
+    const continuing = this.actionPose === pose;
+    this.actionPose = pose;
+    this.actionT = continuing ? Math.max(this.actionT, duration) : duration;
+  }
+
+  cancelAction(pose?: CharacterAction): void {
+    if (pose && this.actionPose !== pose) return;
+    this.actionPose = null;
+    this.actionT = 0;
   }
 
   // 挂载降落伞(开伞): 弧形伞盖 + 吊绳, 跟随角色
@@ -632,11 +649,23 @@ export class Character {
     if (this.airPose) this.visualAirPose = this.airPose;
     this.airPoseF = advancePoseBlend(this.airPoseF, this.airPose !== null, dt, 6.5, 4.5);
     if (!this.airPose && this.airPoseF <= 0) this.visualAirPose = null;
+    this.actionT = Math.max(0, this.actionT - dt);
+    if (this.actionT <= 0) this.actionPose = null;
+    const requestedAction: CharacterAction | 'revive' | null = this.reviveTarget
+      ? 'revive'
+      : this.actionPose;
+    if (requestedAction) this.visualAction = requestedAction;
+    this.actionF = advancePoseBlend(this.actionF, requestedAction !== null, dt, 7.5, 6);
+    if (!requestedAction && this.actionF <= 0) this.visualAction = null;
     this.gunKick *= Math.exp(-dt * 15);
     // 持械模型切换(仅在栏位/武器变化时克隆)
     const gun = this.curSlot < 3 ? this.guns[this.curSlot] : null;
-    const wantId: WeaponModelId | null = this.airPose || this.airPoseF > 0.02 || this.swimming || this.knocked || this.knockF > 0.02
-      ? null // 空降/游泳/击倒收枪
+    const stowForAction = this.actionF > 0.02 &&
+      (this.visualAction === 'revive' || this.visualAction === 'pickup' ||
+        this.visualAction === 'heal' || this.visualAction === 'drink');
+    const wantId: WeaponModelId | null = this.airPose || this.airPoseF > 0.02 || this.swimming || this.knocked ||
+      this.knockF > 0.02 || this.vault || stowForAction
+      ? null // 空降/游泳/击倒/翻越/救援收枪
       : gun
         ? gun.def.id
         : this.curSlot === 3 && this.melee.def.id !== 'fists' ? this.melee.def.id
@@ -658,20 +687,17 @@ export class Character {
       (this.firstPerson ? 1.38 : 1.26) - this.gunKick * 0.12,
       0.34 - this.gunKick,
     );
-    p.gun.rotation.x = -this.aimPitch + reloadDip - this.gunKick * 0.55;
+    p.gun.rotation.set(-this.aimPitch + reloadDip - this.gunKick * 0.55, 0, 0);
     if (p.held?.mag) {
       p.held.mag.visible = this.reload01 < 0.4 || this.reload01 > 0.68;
     }
     // 左臂大致迎向护木(长枪更前伸), 持刀/徒手放松
     if (wantId === 'rifle' || wantId === 'akm' || wantId === 'dmr' || wantId === 'sniper' || wantId === 'shotgun') {
-      p.armL.rotation.x = -1.5;
-      p.armL.rotation.z = 0.5;
+      p.armL.rotation.set(-1.5, 0, 0.5);
     } else if (wantId === 'smg' || wantId === 'pistol') {
-      p.armL.rotation.x = -1.28;
-      p.armL.rotation.z = 0.38;
+      p.armL.rotation.set(-1.28, 0, 0.38);
     } else {
-      p.armL.rotation.x = -1.15;
-      p.armL.rotation.z = 0.25;
+      p.armL.rotation.set(-1.15, 0, 0.25);
     }
     if (!this.alive) {
       if (this.dieT >= 0 && this.dieT < 1) {
@@ -777,7 +803,7 @@ export class Character {
         ? clamp((this.speed2d - SWIM_SPEED) / (SWIM_SPRINT_SPEED - SWIM_SPEED), 0, 1)
         : 0;
       const armStroke = 0.14 + motionF * 0.38 + sprintF * 0.38;
-      const legKick = 0.06 + motionF * 0.14 + sprintF * 0.22;
+      const legKick = 0.04 + motionF * 0.08 + sprintF * 0.12;
       p.inner.rotation.x = f * (Math.PI / 2 - 0.22 + sprintF * 0.08); // 加速时更水平
       p.inner.rotation.z = Math.sin(ph * 0.5) * (0.012 + motionF * 0.02 + sprintF * 0.065) * f;
       p.inner.rotation.y = 0;
@@ -795,8 +821,51 @@ export class Character {
       );
       p.armL.position.z = 0;
       p.armR.position.z = 0;
-      p.legL.rotation.x = f * (0.3 + sR * legKick);
-      p.legR.rotation.x = f * (0.3 + sL * legKick);
+      p.legL.rotation.x = f * (0.08 + sR * legKick);
+      p.legR.rotation.x = f * (0.08 + sL * legKick);
+      return;
+    }
+    // 交互动作: 开门/拾取/切枪为短动作, 恢复和救援维持到读条结束。
+    if (this.visualAction && this.visualAction !== 'interact' && this.visualAction !== 'equip' && this.actionF > 0.001) {
+      const f = this.actionF * this.actionF * (3 - 2 * this.actionF);
+      p.inner.rotation.y = 0;
+      p.inner.rotation.z = 0;
+      p.inner.position.z = 0;
+      p.armL.position.z = 0;
+      p.armR.position.z = 0;
+      if (this.visualAction === 'revive') {
+        p.inner.rotation.x = 0.34 * f;
+        p.inner.position.y = -0.42 * f;
+        p.legL.rotation.set(-0.95 * f, 0, 0.08 * f);
+        p.legR.rotation.set(-1.28 * f, 0, -0.08 * f);
+        p.armL.rotation.set(lerp(-1.15, -2.05, f), 0, lerp(0.25, 0.42, f));
+        p.armR.rotation.set(lerp(-1.3, -1.9, f), 0, lerp(-0.1, -0.32, f));
+      } else if (this.visualAction === 'pickup') {
+        p.inner.rotation.x = 0.52 * f;
+        p.inner.position.y = -0.26 * f;
+        p.legL.rotation.set(-0.55 * f, 0, 0);
+        p.legR.rotation.set(-0.72 * f, 0, 0);
+        p.armL.rotation.set(lerp(-1.15, -1.7, f), 0, lerp(0.25, 0.36, f));
+        p.armR.rotation.set(lerp(-1.3, -2.2, f), 0, lerp(-0.1, -0.24, f));
+        p.armR.position.z = 0.22 * f;
+      } else if (this.visualAction === 'heal' || this.visualAction === 'drink') {
+        const drink = this.visualAction === 'drink';
+        p.inner.rotation.x = 0.12 * f;
+        p.inner.position.y = -0.1 * f;
+        p.legL.rotation.set(-0.22 * f, 0, 0);
+        p.legR.rotation.set(-0.22 * f, 0, 0);
+        p.armL.rotation.set(lerp(-1.15, -1.75, f), 0, lerp(0.25, 0.34, f));
+        p.armR.rotation.set(lerp(-1.3, drink ? -2.65 : -1.82, f), 0, lerp(-0.1, -0.3, f));
+        p.armR.position.z = (drink ? 0.1 : 0.22) * f;
+      } else {
+        p.inner.rotation.x = 0.08 * f;
+        p.inner.position.y = 0;
+        p.legL.rotation.set(0, 0, 0);
+        p.legR.rotation.set(0, 0, 0);
+        p.armL.rotation.set(-1.15, 0, 0.25);
+        p.armR.rotation.set(lerp(-1.3, -2.25, f), 0, lerp(-0.1, -0.2, f));
+        p.armR.position.z = 0.28 * f;
+      }
       return;
     }
     // 姿态混合: fC 蹲权重(0..1), fP 趴权重(0..1)
@@ -858,6 +927,35 @@ export class Character {
     const lean = Math.min(1, this.speed2d / 6.6) * 0.18 * (1 - fP);
     p.inner.rotation.x = 0.2 * fC + lean + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);
     p.inner.rotation.z = this.moveLean * 0.075 * (1 - fP);
+    if (this.reload01 > 0) {
+      const phase = Math.sin(clamp(this.reload01, 0, 1) * Math.PI);
+      p.inner.rotation.y = -0.08 * phase;
+      p.armL.rotation.set(
+        lerp(p.armL.rotation.x, -2.2, phase),
+        0,
+        lerp(p.armL.rotation.z, 0.34, phase),
+      );
+      p.armR.rotation.set(
+        lerp(p.armR.rotation.x, -1.82, phase),
+        0,
+        lerp(p.armR.rotation.z, -0.22, phase),
+      );
+      p.armL.position.z = 0.16 * phase;
+    }
+    if ((this.visualAction === 'interact' || this.visualAction === 'equip') && this.actionF > 0.001) {
+      const f = this.actionF * this.actionF * (3 - 2 * this.actionF);
+      if (this.visualAction === 'equip') {
+        p.armL.rotation.x = lerp(p.armL.rotation.x, -1.65, f);
+        p.armL.rotation.z = lerp(p.armL.rotation.z, 0.46, f);
+        p.armR.rotation.x = lerp(p.armR.rotation.x, -1.7, f);
+        p.armR.rotation.z = lerp(p.armR.rotation.z, -0.24, f);
+      } else {
+        p.inner.rotation.y = -0.08 * f;
+        p.armR.rotation.x = lerp(p.armR.rotation.x, -2.25, f);
+        p.armR.rotation.z = lerp(p.armR.rotation.z, -0.2, f);
+        p.armR.position.z = 0.28 * f;
+      }
+    }
   }
 
   // 解析命中: 头部球体 + 身体有向盒(随 yaw 旋转), 命中填充 res 并返回 true

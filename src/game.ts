@@ -616,12 +616,15 @@ export class Game {
     if (c.heals[id] <= 0 || c.hp >= def.cap - 0.5) return;
     this.healT = def.cast;
     this.healKind = id;
+    c.beginAction(id === 'drink' ? 'drink' : 'heal', def.cast + 0.15);
   }
 
   cancelHeal(reason: string): void {
     if (this.healT <= 0) return;
+    const action = this.healKind === 'drink' ? 'drink' : 'heal';
     this.healT = -1;
     this.healKind = null;
+    this.player?.char.cancelAction(action);
     this.hud.setHealCast(-1);
     this.hud.toast(reason);
   }
@@ -632,12 +635,15 @@ export class Game {
       const id = this.healKind as HealId;
       const def = HEALS[id];
       if (!player.char.alive) {
+        const action = this.healKind === 'drink' ? 'drink' : 'heal';
         this.healT = -1;
         this.healKind = null;
+        player.char.cancelAction(action);
         this.hud.setHealCast(-1);
       } else {
         this.healT -= dt;
-        this.hud.setHealCast(1 - Math.max(0, this.healT) / def.cast);
+        const label = id === 'drink' ? '饮用中…' : id === 'medkit' ? '使用医疗包…' : '包扎中…';
+        this.hud.setHealCast(1 - Math.max(0, this.healT) / def.cast, label);
         if (this.healT <= 0) {
           const c = player.char;
           if (c.heals[id] > 0 && c.hp < def.cap - 0.5) {
@@ -659,8 +665,10 @@ export class Game {
               this.hud.toast('恢复 15 点生命');
             }
           }
+          const action = id === 'drink' ? 'drink' : 'heal';
           this.healT = -1;
           this.healKind = null;
+          player.char.cancelAction(action);
           this.hud.setHealCast(-1);
         }
       }
@@ -1668,6 +1676,8 @@ export class Game {
     victim.hp = 0;
     victim.alive = false;
     victim.dieT = 0;
+    victim.cancelAction();
+    victim.reload01 = 0;
     victim.stance = 'stand'; // 死亡复位姿态
     victim.stanceF = 0;
     const placement = this.aliveCount + 1;
@@ -1769,8 +1779,14 @@ export class Game {
       this.hud.setPickupPrompt(null);
       return;
     }
+    if (this.healT > 0 && (
+      this.promptDoor || this.promptCrate || this.promptDeathCrate || this.promptAlly || this.promptItem
+    )) {
+      this.cancelHeal('恢复被打断');
+    }
     const door = this.promptDoor;
     if (door && door.alive) {
+      player.char.beginAction('interact', 0.38);
       this.toggleDoor(door, player.char);
       this.promptDoor = null;
       this.hud.setPickupPrompt(null);
@@ -1778,6 +1794,7 @@ export class Game {
     }
     const crate = this.promptCrate;
     if (crate) {
+      player.char.beginAction('pickup', 0.52);
       this.airdrop.open(crate);
       this.promptCrate = null;
       this.hud.setPickupPrompt(null);
@@ -1785,6 +1802,7 @@ export class Game {
     }
     const deathCrate = this.promptDeathCrate;
     if (deathCrate) {
+      player.char.beginAction('pickup', 0.52);
       this.lootDeathCrate(player.char, deathCrate);
       this.promptDeathCrate = null;
       this.hud.setPickupPrompt(null);
@@ -1799,6 +1817,7 @@ export class Game {
     }
     const item = this.promptItem;
     if (!item || !item.active) return;
+    player.char.beginAction('pickup', 0.46);
     if (isArmorKind(item.kind)) this.tryPickupArmor(player.char, item);
     else if (isPackKind(item.kind)) this.tryPickupPack(player.char, item);
     else if (isAttachKind(item.kind)) this.tryPickupAttachment(player.char, item);
@@ -2093,7 +2112,7 @@ export class Game {
         ? `${rescuer.name} 救援中 ${Math.round((rescuer.reviveT / 8) * 100)}%`
         : '按 WASD 缓慢爬行, 等待队友救援');
     } else if (c.reviveTarget) {
-      this.hud.setHealCast(c.reviveT / 8); // 玩家救援读条(复用读条 UI)
+      this.hud.setHealCast(c.reviveT / 8, '救援中…');
     } else if (this.healT <= 0) {
       // 救援结束或被打断后立即清掉复用的读条, 避免已站起仍显示"包扎中".
       this.hud.setHealCast(-1);

@@ -204,6 +204,11 @@ export class AudioSys {
     window.setTimeout(() => this.blip(420, 300, 0.05, 0.15, 'square'), 160);
   }
 
+  equip(): void {
+    this.noiseBurst(0.08, 0, 1800, 0.9, 0.06);
+    this.blip(420, 300, 0.045, 0.11, 'square');
+  }
+
   // 双管霰弹装填: 开膛 + 两次塞弹 + 合膛(对位 2.6s 装填)
   reloadShotgun(): void {
     this.blip(260, 180, 0.06, 0.16, 'square'); // 开膛

@@ -102,6 +102,23 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   }
   panel.innerHTML = `<strong>TEST / ${id.toUpperCase()}</strong><span>${SCENARIO_TEXT[id]}</span>`;
   document.body.appendChild(panel);
+  const publishCharacter = (): void => {
+    if (!panel.isConnected) return;
+    const controller = game.playerCtl;
+    const character = controller?.char;
+    if (controller && character) {
+      panel.dataset.characterAction = character.reviveTarget ? 'revive' : character.actionPose ?? 'none';
+      panel.dataset.characterReload = character.reload01.toFixed(3);
+      panel.dataset.characterHeld = character.parts.held ? 'true' : 'false';
+      panel.dataset.characterSwimming = String(character.swimming);
+      panel.dataset.characterSpeed = character.speed2d.toFixed(2);
+      panel.dataset.characterAirPose = character.airPose ?? 'none';
+      panel.dataset.characterKnocked = String(character.knocked);
+      panel.dataset.characterDriving = String(controller.driving !== null);
+    }
+    window.requestAnimationFrame(publishCharacter);
+  };
+  window.requestAnimationFrame(publishCharacter);
   if (id === 'combat') {
     const publishCombat = (): void => {
       if (!panel.isConnected) return;
@@ -517,7 +534,7 @@ function setupSwim(game: Game): void {
     const dz = bank.y - z;
     const len = Math.hypot(dx, dz) || 1;
     // 从岸点向河心回退到深水, 保证场景开始时确实处于游泳状态且能连续上岸.
-    for (let d = 3; d <= Math.min(12, len); d += 0.5) {
+    for (let d = Math.min(12, len); d >= 3; d -= 0.5) {
       const sx = bank.x - dx / len * d;
       const sz = bank.y - dz / len * d;
       if (WATER_Y - game.world.getHeight(sx, sz) > 1.35) {
@@ -538,6 +555,11 @@ function setupSwim(game: Game): void {
   c.groundH = WATER_Y - 0.03;
   c.grounded = false;
   c.swimming = true;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('auto') === '1') {
+    game.input.keys.add('KeyW');
+    game.input.keys.add('ShiftLeft');
+  }
 }
 
 function setupCombat(game: Game): void {
@@ -569,6 +591,10 @@ function setupCombat(game: Game): void {
   c.guns[0] = gun;
   c.ammo[def.ammo] = Math.max(60, def.magSize * 6);
   c.curSlot = 0;
+  const action = params.get('action');
+  if (action === 'interact' || action === 'pickup' || action === 'equip' || action === 'heal' || action === 'drink') {
+    c.beginAction(action, params.get('hold') === '1' ? 3 : 0.5);
+  }
   player.yaw = Math.atan2(targetX - playerX, targetZ - playerZ);
 
   const target = game.bots[0];
@@ -903,6 +929,9 @@ function setupRevive(game: Game): void {
   mate.char.grounded = true;
   mate.char.group.visible = true;
   game.knock.knockDown(mate.char, null, false);
+  if (new URLSearchParams(window.location.search).get('auto') === '1') {
+    game.knock.startRevive(player.char, mate.char);
+  }
   player.yaw = dir.yaw;
   player.pitch = 0.08;
 }

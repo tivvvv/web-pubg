@@ -95,6 +95,9 @@ export class PlayerController {
 
   update(dt: number, input: Input, game: Game): void {
     const c = this.char;
+    if ((!c.alive || c.knocked) && (this.reloading || this.throwHold)) {
+      this.cancelTransientActions(game);
+    }
     // 进入空降, 载具, 翻越或死亡时立即退出镜轴, 防止上一帧 ADS 覆盖层残留。
     if (!c.alive || this.descent || this.driving || c.vault) {
       this.aiming = false;
@@ -231,6 +234,7 @@ export class PlayerController {
         const probe = probeVault(c, wx, wz, game.world);
         if (probe) {
           if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
+          this.cancelTransientActions(game);
           startVault(c, probe);
           this.moveVel.set(0, 0);
           game.audio.vault();
@@ -268,6 +272,7 @@ export class PlayerController {
     }
     game.updateSwim(c);
     if (!wasSwimming && c.swimming) {
+      this.cancelTransientActions(game);
       this.moveVel.multiplyScalar(0.55);
       this.swimAcc = 0;
     } else if (wasSwimming && !c.swimming) {
@@ -419,6 +424,10 @@ export class PlayerController {
     game.promptCrate = null;
     game.promptDeathCrate = null;
     game.promptAlly = null;
+    if (c.reviveTarget) {
+      game.hud.setPickupPrompt(null);
+      return;
+    }
     // 两者同时在场: 看得更正的优先
     if (door && (!item || door.dot >= itemDot)) {
       game.promptDoor = door.d;
@@ -526,6 +535,7 @@ export class PlayerController {
   startFreefall(game: Game, forced = false): void {
     if (this.descent !== 'plane') return;
     if (!forced && !game.isInsideFlightJumpZone(this.char.pos.x, this.char.pos.z)) return;
+    this.cancelTransientActions(game);
     this.descent = 'freefall';
     this.vy = -2;
     this.char.airPose = 'fall';
@@ -640,6 +650,8 @@ export class PlayerController {
   // 上车(F 近驾驶座)
   enterVehicle(v: Vehicle, game: Game): void {
     if (this.driving || this.descent || this.char.knocked || v.dead || v.burnT >= 0 || v.driver) return;
+    if (game.healT > 0) game.cancelHeal('恢复被打断');
+    this.cancelTransientActions(game);
     v.claimedBy = null;
     this.driving = v;
     v.driver = this.char;
@@ -748,6 +760,7 @@ export class PlayerController {
   startReload(game: Game): void {
     const gun = this.char.heldGun();
     if (!gun || this.reloading || gun.mag >= magSizeOf(gun) || this.char.ammo[gun.def.ammo] <= 0) return;
+    if (game.healT > 0) game.cancelHeal('恢复被打断');
     this.reloading = true;
     this.reloadTotal = reloadDuration(gun, gun.mag <= 0);
     this.reloadT = this.reloadTotal;
@@ -759,15 +772,27 @@ export class PlayerController {
     const c = this.char;
     if (i === c.curSlot) return;
     if (i < 3 && !c.guns[i]) return;
+    if (game.healT > 0) game.cancelHeal('恢复被打断');
     c.curSlot = i;
-    this.reloading = false;
-    this.reloadT = 0;
-    this.reloadTotal = 0;
+    this.cancelTransientActions(game);
     this.recoilChain = 0;
     this.recoilRestT = 0;
     this.shotBloom = 0;
     this.fireTimer = Math.max(this.fireTimer, 0.25);
-    game.audio.reload();
+    c.beginAction('equip', 0.28);
+    game.audio.equip();
+  }
+
+  cancelTransientActions(game?: Game): void {
+    this.reloading = false;
+    this.reloadT = 0;
+    this.reloadTotal = 0;
+    this.char.reload01 = 0;
+    this.aiming = false;
+    if (this.throwHold) {
+      this.throwHold = false;
+      game?.grenades.hidePreview();
+    }
   }
 
   // 当前视线方向(含后坐力)

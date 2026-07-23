@@ -79,6 +79,7 @@ export class Hud {
   private vehicleSpeed = el('vehicle-speed');
   private vehicleHpFill = el('vehicle-hp-fill');
   private healCast = el('heal-cast');
+  private healLabel = el('heal-label');
   private healFill = el('heal-fill');
   private healCountsEl = el('heal-counts');
   private drinkBuff = el('drink-buff');
@@ -380,14 +381,16 @@ export class Hud {
     this.vehicleHpFill.style.width = `${hp}%`;
   }
 
-  // frac in [0,1] 显示包扎进度, 其他值隐藏
-  setHealCast(frac: number): void {
+  // frac in [0,1] 显示持续交互进度, 其他值隐藏
+  setHealCast(frac: number, label = '恢复中…'): void {
     if (frac >= 0 && frac <= 1) {
-      const key = (frac * 100).toFixed(0);
+      const progress = (frac * 100).toFixed(0);
+      const key = `${label}|${progress}`;
       if (key === this.healCastKey) return;
       this.healCastKey = key;
       this.healCast.classList.add('show');
-      this.healFill.style.width = `${key}%`;
+      this.healLabel.textContent = label;
+      this.healFill.style.width = `${progress}%`;
     } else {
       if (this.healCastKey === 'hidden') return;
       this.healCastKey = 'hidden';

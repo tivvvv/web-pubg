@@ -21,8 +21,9 @@ npm run build
 开发服务器运行后, 可直接打开以下地址重复验证重点系统。测试模式不会请求鼠标锁定。
 
 - `/?test=1&scenario=stairs`: 多层建筑, 楼梯净空和墙体接缝
-- `/?test=1&scenario=swim`: 入水, Shift 加速游泳和上岸
+- `/?test=1&scenario=swim&auto=1`: 自动加速游向岸边, 检查入水姿态和连续上岸
 - `/?test=1&scenario=combat`: M416, 2 倍镜, 扩容弹匣和补偿器
+- `/?test=1&scenario=combat&action=pickup&hold=1`: 持枪拾取动作, 也可替换为 interact/equip/heal/drink
 - `/?test=1&scenario=bottactics`: 机器人交战, 恢复, 搜索和跑圈决策
 - `/?test=1&scenario=botvehicle`: 机器人搜车, 驾驶转移和到点下车
 - `/?test=1&scenario=botvehicle&route=bridge&contact=1`: 机器人驾车过桥并在接敌后下车
@@ -31,7 +32,7 @@ npm run build
 - `/?test=1&scenario=vehicle`: 载具上下车, 驾驶碰撞和仪表
 - `/?test=1&scenario=deathcrate`: 死亡盒搜索, 自动装备和负重
 - `/?test=1&scenario=bombardment`: 轰炸区预警, 追加 `&phase=active` 检查落弹
-- `/?test=1&scenario=revive`: 队友击倒, 救援读条和恢复站姿
+- `/?test=1&scenario=revive&auto=1`: 自动救援倒地队友, 检查读条动作和恢复站姿
 - `/?test=1&scenario=zone`: 圈外持续伤害和进圈后停止伤害
 - `/?test=1&scenario=endgame`: 最后一名敌人淘汰和胜利结算
 - `/?test=1&scenario=defeat`: 玩家淘汰, 失败结算和重新开始

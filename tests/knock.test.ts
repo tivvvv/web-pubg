@@ -33,6 +33,8 @@ function knockFixture(): {
 describe('击倒与救援读条', () => {
   it('首次击倒进入趴姿并在八秒后以三十血站起', () => {
     const { reviver, target, knock, setHealCast } = knockFixture();
+    target.beginAction('pickup', 1);
+    target.reload01 = 0.5;
     knock.knockDown(target, null, false);
 
     expect(target.knocked).toBe(true);
@@ -40,6 +42,8 @@ describe('击倒与救援读条', () => {
     expect(target.bleedTime).toBe(60);
     expect(target.stance).toBe('prone');
     expect(target.stanceF).toBe(2);
+    expect(target.actionPose).toBeNull();
+    expect(target.reload01).toBe(0);
 
     knock.startRevive(reviver, target);
     knock.update(8);

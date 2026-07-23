@@ -27,12 +27,16 @@ export class KnockSys {
     c.reviveT = 0;
     c.reviveTarget = null;
     c.rescuerId = 0;
+    c.cancelAction();
+    c.reload01 = 0;
     // 强制脱离载具(驾驶/乘坐)
     if (c.isPlayer) {
+      g.playerCtl?.cancelTransientActions(g);
       if (g.playerCtl?.driving) g.forceExitVehicle(c, 0);
       if (g.healT > 0) g.cancelHeal('被击倒');
     } else {
       const mate = g.squadMates.find((m) => m.char === c);
+      mate?.cancelTransientActions();
       if (mate && mate.riding) {
         const rv = mate.riding;
         g.leaveSeat(rv, mate.seatIdx);

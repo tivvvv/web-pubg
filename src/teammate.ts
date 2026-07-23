@@ -15,9 +15,9 @@ import { seatWorldAt, type Vehicle } from './vehicles';
 import { random } from './random';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { THROWABLES, WEAPONS, ammoTypeFromLoot } from './weapons';
-import { angleDiff, rand, turnToward } from './utils';
+import { angleDiff, clamp, rand, turnToward } from './utils';
 import { AgentNavigator, allyBlocksShot, findCoverPoint, findSwimBank } from './botnav';
-import type { DestructibleLike } from './types';
+import type { DestructibleLike, GunState } from './types';
 import { WATER_Y } from './world';
 import { squadFormationTarget, type SquadMateOrderState } from './squadcommands';
 import { reloadDuration } from './gunplay';
@@ -43,6 +43,7 @@ export class TeammateController {
   private burstCd = 0;
   private shotT = 0;
   private reloadT = 0;
+  private reloadTotal = 0;
   private reactT = 0;
   private healCd = 0;
   private stuckT = 0;
@@ -78,6 +79,19 @@ export class TeammateController {
     this.followAng = (jumpSlot - 1) * 0.68;
     this.followDist = rand(4, 9);
     this.jumpSlot = jumpSlot;
+  }
+
+  private beginReload(gun: GunState, empty: boolean): void {
+    this.reloadTotal = reloadDuration(gun, empty);
+    this.reloadT = this.reloadTotal;
+    this.char.reload01 = 0.01;
+  }
+
+  cancelTransientActions(): void {
+    this.reloadT = 0;
+    this.reloadTotal = 0;
+    this.char.reload01 = 0;
+    this.char.cancelAction();
   }
 
   get commandDistance(): number {
@@ -141,6 +155,7 @@ export class TeammateController {
             neighbors: game.chars,
           });
         } else {
+          this.cancelTransientActions();
           this.riding = pv;
           this.seatIdx = seat;
           game.boardSeat(pv, seat, c);
@@ -152,6 +167,7 @@ export class TeammateController {
 
     // ---- 翻越中: 脚本位移 ----
     c.vaultCd = Math.max(0, c.vaultCd - dt);
+    if (c.vault) this.cancelTransientActions();
     if (updateVaultMotion(c, dt)) return;
 
     // ---- 游泳: 跟随玩家渡河, 不交战不拾取 ----
@@ -160,6 +176,7 @@ export class TeammateController {
     if (c.swimming) {
       this.commandState = 'swimming';
       if (!wasSwimming) {
+        this.cancelTransientActions();
         this.hasSwimBank = false;
         this.swimRepathT = 0;
         this.swimLastX = c.pos.x;
@@ -175,6 +192,7 @@ export class TeammateController {
 
     // ---- 倒地: 缓慢爬离伤害来源(圈外优先爬向圈心) ----
     if (c.knocked) {
+      this.cancelTransientActions();
       this.commandState = 'knocked';
       this.updateKnocked(dt, game);
       return;
@@ -210,6 +228,7 @@ export class TeammateController {
           }
         }
         if (!enemyNear) {
+          this.cancelTransientActions();
           const dx = ally.pos.x - c.pos.x;
           const dz = ally.pos.z - c.pos.z;
           const d = Math.hypot(dx, dz) || 1;
@@ -237,10 +256,14 @@ export class TeammateController {
         const take = Math.min(magSizeOf(gun) - gun.mag, c.ammo[gun.def.ammo]);
         gun.mag += take;
         c.ammo[gun.def.ammo] -= take;
+        this.cancelTransientActions();
       }
     } else if (gun && gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) {
-      this.reloadT = reloadDuration(gun, true);
+      this.beginReload(gun, true);
     }
+    c.reload01 = this.reloadT > 0 && this.reloadTotal > 0
+      ? clamp(1 - this.reloadT / this.reloadTotal, 0.01, 1)
+      : 0;
     this.healCd -= dt;
     if (this.healCd <= 0 && !this.target && !c.knocked) {
       if (c.hp < 60) {
@@ -423,6 +446,7 @@ export class TeammateController {
   private fleeBombardment(dt: number, game: Game): boolean {
     const c = this.char;
     if (!game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) return false;
+    this.cancelTransientActions();
     const speed = game.bombardment.state === 'active' ? 6.5 : 5.8;
     c.setStance('stand');
     this.navigator.move(
@@ -441,6 +465,7 @@ export class TeammateController {
   private fleeGrenade(dt: number, game: Game): boolean {
     const c = this.char;
     if (!game.grenades.nearestLiveFrag(c.pos.x, c.pos.y, c.pos.z, 6, this.fragOut)) return false;
+    this.cancelTransientActions();
     const dx = c.pos.x - this.fragOut.x;
     const dz = c.pos.z - this.fragOut.z;
     const d = Math.hypot(dx, dz) || 1;
@@ -704,6 +729,7 @@ export class TeammateController {
       const probe = probeVault(c, gx, gz, game.world);
       if (probe) {
         if (probe.win?.alive) game.hitDestructible(probe.win, 999, c.pos);
+        this.cancelTransientActions();
         startVault(c, probe);
         game.soundAt(c.pos, (dd, p2) => game.audio.melee(dd, p2));
         return;
@@ -755,7 +781,7 @@ export class TeammateController {
     this.dir.subVectors(this.aim, this.eye).normalize();
     if (game.fireWeapon(c, this.eye, this.dir, 0)) {
       this.fireTimer = gun.def.fireInterval;
-      if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = reloadDuration(gun, true);
+      if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.beginReload(gun, true);
     }
   }
 
@@ -802,6 +828,7 @@ export class TeammateController {
             const dLand = Math.hypot(probe.landX - tx, probe.landZ - tz);
             if (dLand < d - 1) {
               if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
+              this.cancelTransientActions();
               startVault(c, probe);
               game.soundAt(c.pos, (dd, p2) => game.audio.melee(dd, p2));
               return;

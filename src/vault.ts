@@ -119,6 +119,9 @@ function capsuleFree(world: World, x: number, y: number, z: number, skip: AabbCo
 
 // 起翻: 写入脚本位移(0.7s 上弧到落点)
 export function startVault(c: Character, p: VaultProbe): void {
+  c.cancelAction();
+  c.reload01 = 0;
+  c.swingT = 0;
   c.vault = {
     t: 0, dur: 0.7,
     x0: c.pos.x, y0: c.pos.y, z0: c.pos.z,

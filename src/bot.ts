@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import {
   CANOPY_DEPLOY_VELOCITY, Character, moveChar, stepAirDescentVelocity, SWIM_EXIT_DEPTH, SWIM_SPRINT_SPEED,
 } from './character';
-import type { AmmoType, MeleeId, WeaponId } from './types';
+import type { AmmoType, GunState, MeleeId, WeaponId } from './types';
 import { WEAPONS } from './weapons';
 import { WATER_Y } from './world';
 import { isMeleeKind, isWeaponKind, type LootItem } from './loot';
@@ -51,6 +51,7 @@ export class BotController {
   private burstCd = 0;
   private fireTimer = 0;
   private reloadT = 0;
+  private reloadTotal = 0;
   private losT = 0;
   private losOk = false;
   private lostT = 0;
@@ -132,6 +133,18 @@ export class BotController {
     this.scanT = random() * 0.3;
     const roleRoll = random();
     this.routeRole = roleRoll < 0.34 ? 'advance' : roleRoll < 0.67 ? 'flank' : 'defend';
+  }
+
+  private beginReload(gun: GunState, empty: boolean): void {
+    this.reloadTotal = reloadDuration(gun, empty);
+    this.reloadT = this.reloadTotal;
+    this.char.reload01 = 0.01;
+  }
+
+  private cancelReload(): void {
+    this.reloadT = 0;
+    this.reloadTotal = 0;
+    this.char.reload01 = 0;
   }
 
   get tacticalState(): string {
@@ -223,6 +236,7 @@ export class BotController {
     game.updateSwim(c);
     if (c.swimming) {
       if (!wasSwimming) {
+        this.cancelReload();
         this.navigator.reset(c);
         this.hasSwimBank = false;
         this.swimRepathT = 0;
@@ -238,6 +252,7 @@ export class BotController {
     }
     // 翻越中: 脚本位移
     c.vaultCd = Math.max(0, c.vaultCd - dt);
+    if (c.vault) this.cancelReload();
     if (updateVaultMotion(c, dt)) return;
     // 预警开始就优先离开轰炸区, 进入轰炸阶段后全速逃生
     if (this.fleeBombardment(dt, game)) return;
@@ -250,10 +265,14 @@ export class BotController {
         const take = Math.min(need, c.ammo[gun.def.ammo]);
         gun.mag += take;
         c.ammo[gun.def.ammo] -= take;
+        this.cancelReload();
       }
     } else if (gun && gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) {
-      this.reloadT = reloadDuration(gun, true);
+      this.beginReload(gun, true);
     }
+    c.reload01 = this.reloadT > 0 && this.reloadTotal > 0
+      ? clamp(1 - this.reloadT / this.reloadTotal, 0.01, 1)
+      : 0;
 
     // 交错扫描: 每 0.25s 左右找一次目标
     this.scanT -= dt;
@@ -545,6 +564,7 @@ export class BotController {
   private fleeGrenade(dt: number, game: Game): boolean {
     const c = this.char;
     if (!game.grenades.nearestLiveFrag(c.pos.x, c.pos.y, c.pos.z, 6, this.fragOut)) return false;
+    this.cancelReload();
     this.releaseVehicleTarget();
     const dx = c.pos.x - this.fragOut.x;
     const dz = c.pos.z - this.fragOut.z;
@@ -564,6 +584,7 @@ export class BotController {
   private fleeBombardment(dt: number, game: Game): boolean {
     const c = this.char;
     if (!game.bombardment.escapeVector(c.pos.x, c.pos.z, game.tmpV2)) return false;
+    this.cancelReload();
     this.releaseVehicleTarget();
     const speed = game.bombardment.state === 'active' ? 6.4 : 5.8;
     c.setStance('stand');
@@ -657,6 +678,7 @@ export class BotController {
       this.releaseVehicleTarget();
       return;
     }
+    this.cancelReload();
     if (v.claimedBy === c) v.claimedBy = null;
     this.vehicleTarget = null;
     v.driver = c;
@@ -1208,7 +1230,7 @@ export class BotController {
       true,
       this.losOk,
     ) && (this.tacticMode === 'cover' || this.tacticMode === 'search' || this.tacticMode === 'retreat')) {
-      this.reloadT = reloadGun ? reloadDuration(reloadGun, reloadGun.mag <= 0) : 0;
+      if (reloadGun) this.beginReload(reloadGun, reloadGun.mag <= 0);
     }
     // 交战姿态仅在掩体/稳固射击点使用，移动和近战保持站立。
     if (!meleeOnly && this.engageCrouch && dist > 20 && (nav.reached || this.tacticMode === 'cover')) {
@@ -1236,6 +1258,7 @@ export class BotController {
           const dLand = Math.hypot(probe.landX - t.pos.x, probe.landZ - t.pos.z);
           if (dLand < dist - 1) {
             if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
+            this.cancelReload();
             startVault(c, probe);
             game.soundAt(c.pos, (dd, p) => game.audio.melee(dd, p));
             return;
@@ -1324,7 +1347,7 @@ export class BotController {
     this.dir.subVectors(this.aim, this.eye).normalize();
     if (game.fireWeapon(c, this.eye, this.dir, 0)) {
       this.fireTimer = gun.def.fireInterval;
-      if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = reloadDuration(gun, true);
+      if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.beginReload(gun, true);
     }
   }
 
@@ -1368,7 +1391,7 @@ export class BotController {
         this.dir.subVectors(this.aim, this.eye).normalize();
         if (game.fireWeapon(c, this.eye, this.dir, 0)) {
           this.fireTimer = gun.def.fireInterval * 1.6;
-          if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = reloadDuration(gun, true);
+          if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.beginReload(gun, true);
         }
       }
     } else {
@@ -1497,7 +1520,7 @@ export class BotController {
       false,
       false,
     )) {
-      this.reloadT = reloadGun ? reloadDuration(reloadGun, reloadGun.mag <= 0) : 0;
+      if (reloadGun) this.beginReload(reloadGun, reloadGun.mag <= 0);
     }
 
     targetDist = this.hasMoveTarget
@@ -1620,6 +1643,7 @@ export class BotController {
         const probe = probeVault(c, dx, dz, game.world);
         if (probe) {
           if (probe.win?.alive) game.hitDestructible(probe.win, 999, c.pos);
+          this.cancelReload();
           startVault(c, probe);
           game.soundAt(c.pos, (dd, p) => game.audio.melee(dd, p));
         }

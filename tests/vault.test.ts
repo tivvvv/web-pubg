@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Character } from '../src/character';
+import { emptyAttachments } from '../src/attachments';
 import type { AabbCollider } from '../src/types';
 import { probeVault, startVault, updateVaultMotion } from '../src/vault';
+import { WEAPONS } from '../src/weapons';
 import type { World } from '../src/world';
 
 function vaultWorld(obstacle: AabbCollider, extras: AabbCollider[] = []): World {
@@ -56,5 +58,23 @@ describe('翻越探测和位移流程', () => {
     expect(character.vaultCd).toBe(0.4);
     expect(character.pos.x).toBeCloseTo(probe!.landX, 8);
     expect(character.pos.y).toBeCloseTo(probe!.landY, 8);
+  });
+
+  it('起翻时取消冲突动作并在翻越全程收起武器', () => {
+    const character = new Character('翻越动作测试', true, 0x3a6ea5);
+    character.guns[0] = { def: WEAPONS.rifle, mag: 15, att: emptyAttachments() };
+    character.curSlot = 0;
+    character.reload01 = 0.5;
+    character.swingT = 1;
+    character.beginAction('interact', 1);
+    const probe = probeVault(character, 1, 0, vaultWorld(obstacle()));
+
+    startVault(character, probe!);
+    character.syncModel(1 / 60, false);
+
+    expect(character.reload01).toBe(0);
+    expect(character.swingT).toBe(0);
+    expect(character.actionPose).toBeNull();
+    expect(character.parts.held).toBeNull();
   });
 });
