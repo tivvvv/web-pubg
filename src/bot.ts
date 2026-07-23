@@ -26,6 +26,7 @@ import { autoLootDeathCrate } from './deathcrate';
 import { findTacticalRouteWaypoint, type TacticalRoute } from './tactics';
 import { random } from './random';
 import { driveVehicleStep, seatWorld, VEHICLE_SPEC, type Vehicle } from './vehicles';
+import { reloadDuration } from './gunplay';
 
 const ENGAGE_DIST = 92;
 // bot 降落伞配色(哑光低饱和, 按角色 id 轮换; 队友另用绿色系)
@@ -251,7 +252,7 @@ export class BotController {
         c.ammo[gun.def.ammo] -= take;
       }
     } else if (gun && gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) {
-      this.reloadT = gun.def.reloadTime;
+      this.reloadT = reloadDuration(gun, true);
     }
 
     // 交错扫描: 每 0.25s 左右找一次目标
@@ -1207,7 +1208,7 @@ export class BotController {
       true,
       this.losOk,
     ) && (this.tacticMode === 'cover' || this.tacticMode === 'search' || this.tacticMode === 'retreat')) {
-      this.reloadT = reloadGun?.def.reloadTime ?? 0;
+      this.reloadT = reloadGun ? reloadDuration(reloadGun, reloadGun.mag <= 0) : 0;
     }
     // 交战姿态仅在掩体/稳固射击点使用，移动和近战保持站立。
     if (!meleeOnly && this.engageCrouch && dist > 20 && (nav.reached || this.tacticMode === 'cover')) {
@@ -1323,7 +1324,7 @@ export class BotController {
     this.dir.subVectors(this.aim, this.eye).normalize();
     if (game.fireWeapon(c, this.eye, this.dir, 0)) {
       this.fireTimer = gun.def.fireInterval;
-      if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = gun.def.reloadTime;
+      if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = reloadDuration(gun, true);
     }
   }
 
@@ -1367,7 +1368,7 @@ export class BotController {
         this.dir.subVectors(this.aim, this.eye).normalize();
         if (game.fireWeapon(c, this.eye, this.dir, 0)) {
           this.fireTimer = gun.def.fireInterval * 1.6;
-          if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = gun.def.reloadTime;
+          if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = reloadDuration(gun, true);
         }
       }
     } else {
@@ -1496,7 +1497,7 @@ export class BotController {
       false,
       false,
     )) {
-      this.reloadT = reloadGun?.def.reloadTime ?? 0;
+      this.reloadT = reloadGun ? reloadDuration(reloadGun, reloadGun.mag <= 0) : 0;
     }
 
     targetDist = this.hasMoveTarget

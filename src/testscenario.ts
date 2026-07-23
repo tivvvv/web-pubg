@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { emptyAttachments } from './attachments';
+import { canAttach, emptyAttachments, magSizeOf } from './attachments';
 import { ARMORS } from './armor';
 import { findSwimBank } from './botnav';
 import { LOOT_CAP } from './loot';
@@ -9,6 +9,7 @@ import { MELEE, WEAPONS } from './weapons';
 import { riverZAt, WATER_Y } from './world';
 import { parseRandomSeed, setRandomSeed } from './random';
 import { REGIONS, regionOrWilderness } from './regions';
+import type { AttachmentId, GunState } from './types';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
@@ -40,6 +41,13 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
 
 export function parseScenarioId(value: string | null): ScenarioId {
   return SCENARIO_IDS.includes(value as ScenarioId) ? value as ScenarioId : 'combat';
+}
+
+export function parseCombatMagazine(value: string | null, capacity: number): number {
+  if (value === null) return capacity;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return capacity;
+  return Math.min(capacity, Math.floor(parsed));
 }
 
 function scenarioFromUrl(): ScenarioId | null {
@@ -94,6 +102,32 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   }
   panel.innerHTML = `<strong>TEST / ${id.toUpperCase()}</strong><span>${SCENARIO_TEXT[id]}</span>`;
   document.body.appendChild(panel);
+  if (id === 'combat') {
+    const publishCombat = (): void => {
+      if (!panel.isConnected) return;
+      const controller = game.playerCtl;
+      const character = controller?.char;
+      const gun = character?.heldGun();
+      const target = game.bots[0]?.char;
+      if (controller && character && gun) {
+        panel.dataset.combatWeapon = gun.def.id;
+        panel.dataset.combatMagazine = String(gun.mag);
+        panel.dataset.combatReserve = String(character.ammo[gun.def.ammo]);
+        panel.dataset.combatMuzzle = gun.att.muzzle ?? 'none';
+        panel.dataset.combatSight = gun.att.sight ?? 'none';
+        panel.dataset.combatReloading = String(controller.reloading);
+        panel.dataset.combatSpread = controller.spreadRad.toFixed(5);
+        panel.dataset.combatShotRecent = String(game.nowSec - character.lastShotT < 0.5);
+        panel.dataset.combatLoudShotRecent = String(game.nowSec - character.lastLoudShotT < 0.5);
+      }
+      if (target) {
+        panel.dataset.combatTargetHp = Math.max(0, target.hp).toFixed(1);
+        panel.dataset.combatTargetAlive = String(target.alive);
+      }
+      window.requestAnimationFrame(publishCombat);
+    };
+    window.requestAnimationFrame(publishCombat);
+  }
   if (id === 'bottactics') {
     const stateHistory = game.bots.slice(0, 4).map(() => new Set<string>());
     const publishTactics = (): void => {
@@ -507,20 +541,33 @@ function setupSwim(game: Game): void {
 }
 
 function setupCombat(game: Game): void {
-  const sightParam = new URLSearchParams(window.location.search).get('sight');
-  const sight = sightParam === 'reddot' || sightParam === 'scope4' ? sightParam : 'scope2';
+  const params = new URLSearchParams(window.location.search);
+  const weaponParam = params.get('weapon');
+  const weaponId = weaponParam && weaponParam in WEAPONS ? weaponParam as keyof typeof WEAPONS : 'rifle';
+  const def = WEAPONS[weaponId];
+  const sightParam = params.get('sight');
+  let sight: AttachmentId | null = sightParam === 'reddot' || sightParam === 'scope4' ? sightParam : 'scope2';
+  if (!canAttach(weaponId, sight)) sight = canAttach(weaponId, 'reddot') ? 'reddot' : null;
+  const muzzleParam = params.get('muzzle');
+  const requestedMuzzle = muzzleParam === 'suppressor' || muzzleParam === 'none' ? muzzleParam : 'comp';
+  const muzzle: AttachmentId | null =
+    requestedMuzzle !== 'none' && canAttach(weaponId, requestedMuzzle) ? requestedMuzzle : null;
+  const useExtendedMag = canAttach(weaponId, 'extmag');
   const lane = testLane(game);
   const [playerX, playerZ, targetX, targetZ] = lane;
   setGroundPlayer(game, playerX, playerZ);
   const player = game.playerCtl;
   if (!player) return;
   const c = player.char;
-  c.guns[0] = {
-    def: WEAPONS.rifle,
-    mag: 40,
-    att: { ...emptyAttachments(), sight, mag: 'extmag', muzzle: 'comp' },
+  const gun: GunState = {
+    def,
+    mag: def.magSize,
+    att: { ...emptyAttachments(), sight, mag: useExtendedMag ? 'extmag' as const : null, muzzle },
   };
-  c.ammo.rifle = 180;
+  gun.mag = magSizeOf(gun);
+  gun.mag = parseCombatMagazine(params.get('mag'), gun.mag);
+  c.guns[0] = gun;
+  c.ammo[def.ammo] = Math.max(60, def.magSize * 6);
   c.curSlot = 0;
   player.yaw = Math.atan2(targetX - playerX, targetZ - playerZ);
 
@@ -538,6 +585,19 @@ function setupCombat(game: Game): void {
     target.char.pos.y + target.char.chestHeight() - (c.pos.y + c.eyeHeight()),
     Math.hypot(targetX - playerX, targetZ - playerZ),
   );
+  const requestedBurst = Math.min(12, Math.max(0, Math.floor(Number(params.get('burst')) || 0)));
+  if (requestedBurst > 0) {
+    const stopMagazine = Math.max(0, gun.mag - requestedBurst);
+    const runBurst = (): void => {
+      if (!target.char.alive || gun.mag <= stopMagazine) {
+        game.input.lmb = false;
+        return;
+      }
+      game.input.lmb = true;
+      window.requestAnimationFrame(runBurst);
+    };
+    window.setTimeout(() => window.requestAnimationFrame(runBurst), 600);
+  }
 }
 
 function setupBotTactics(game: Game): void {

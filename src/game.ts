@@ -82,7 +82,10 @@ import { TeammateController } from './teammate';
 import { VEHICLE_SPEC, VehicleManager, type Vehicle } from './vehicles';
 import type { AmmoType, DestructibleLike, GameStats, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
-import { AMMO_BOX, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan, makeShotResult, pelletFalloff } from './weapons';
+import {
+  AMMO_BOX, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan,
+  makeShotResult, pelletFalloff, weaponMaxRange,
+} from './weapons';
 import { MUZZLE_SCALE } from './weaponmodels';
 import { buildTransportPlane } from './planemodel';
 import { WATER_Y, World, type StaticHit } from './world';
@@ -1217,24 +1220,32 @@ export class Game {
     if (!gun || gun.mag <= 0) return false;
     gun.mag--;
     shooter.lastShotT = this.now;
-    if (!isSuppressed(gun)) shooter.lastLoudShotT = this.now;
+    const suppressed = isSuppressed(gun);
+    if (!suppressed) shooter.lastLoudShotT = this.now;
     shooter.muzzleWorld(this.tmpMuzzle);
-    this.effects.muzzleFlash(this.tmpMuzzle, MUZZLE_SCALE[gun.def.id]);
+    this.effects.muzzleFlash(this.tmpMuzzle, MUZZLE_SCALE[gun.def.id] * (suppressed ? 0.22 : 1));
+    this.effects.casingEject(this.tmpMuzzle, gun.def.id);
     const pellets = gun.def.pellets ?? 1;
-    // 霰弹: 固定锥形散布(不吃机瞄), 枪口烟; 单发枪保持原逻辑
-    const cone = pellets > 1 ? gun.def.spreadHip : spread;
+    const maxDist = weaponMaxRange(gun.def);
+    // 霰弹保留最低弹丸锥角，但玩家 ADS、姿态和移动仍会真实影响散布。
+    const cone = pellets > 1 ? (spread > 0 ? Math.max(gun.def.spreadAim, spread) : gun.def.spreadHip) : spread;
     if (pellets > 1) this.effects.impactDust(this.tmpMuzzle);
     let anyChar = false;
     let anyHead = false;
     let anyKill = false;
+    let anyNearMiss = false;
+    let nearMissPan = 0;
     for (let p = 0; p < pellets; p++) {
       this.tmpA.copy(dir);
       applySpread(this.tmpA, cone, this.tmpEnd);
-      hitscan(this.world, this.chars, shooter, origin, this.tmpA, 260, this.staticHit, this.shotRes);
+      hitscan(this.world, this.chars, shooter, origin, this.tmpA, maxDist, this.staticHit, this.shotRes);
       const res = this.shotRes;
+      let travelT = res.hit ? res.t : maxDist;
+      let hitPlayer = false;
       // 载具命中判定: 命中比当前更近且非"打中该车司机"时, 视为车身中弹
-      const vHit = this.vehicles.raycast(origin, this.tmpA, res.hit ? res.t : 260);
+      const vHit = this.vehicles.raycast(origin, this.tmpA, travelT);
       if (vHit && (!res.hit || vHit.t < res.t) && !(res.char && res.char === vHit.v.driver && res.t < vHit.t + 0.6)) {
+        travelT = vHit.t;
         this.tmpEnd.copy(origin).addScaledVector(this.tmpA, vHit.t);
         if (pellets === 1) this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
         this.effects.impactSpark(this.tmpEnd);
@@ -1243,16 +1254,19 @@ export class Game {
         if (pellets === 1) this.effects.tracer(this.tmpMuzzle, res.point, 0xffd27a);
         if (res.char) {
           const victim = res.char;
+          hitPlayer = victim.isPlayer;
           const dmg = gun.def.damage * pelletFalloff(gun.def, res.t) * (res.head ? gun.def.headMult : 1)
             * (!shooter.isPlayer && victim.isPlayer ? BOT_VS_PLAYER_DMG : 1);
           if (dmg > 0) {
             this.effects.impactBlood(res.point);
+            const appliedDamage = this.damageChar(victim, dmg, res.head, shooter);
             if (shooter.isPlayer) {
-              this.damageDealt += dmg;
-              anyChar = true;
-              if (res.head) anyHead = true;
+              this.damageDealt += appliedDamage;
+              if (appliedDamage > 0) {
+                anyChar = true;
+                if (res.head) anyHead = true;
+              }
             }
-            this.damageChar(victim, dmg, res.head, shooter);
             if (!victim.alive && shooter.isPlayer) anyKill = true;
           }
         } else if (res.surface === 'door' || res.surface === 'window') {
@@ -1273,8 +1287,40 @@ export class Game {
         // 弹着点入水: 白色溅沫
         if (res.point.y < WATER_Y) this.effects.splash(res.point);
       } else if (pellets === 1) {
-        this.tmpEnd.copy(origin).addScaledVector(this.tmpA, 260);
+        this.tmpEnd.copy(origin).addScaledVector(this.tmpA, maxDist);
         this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
+      }
+      // 未命中玩家但弹道从身边掠过时播放一次方向性呼啸，增强对来火方向和危险距离的感知。
+      const playerTarget = !shooter.isPlayer ? this.player?.char : null;
+      if (pellets === 1 && playerTarget?.alive && !hitPlayer) {
+        playerTarget.chestPos(this.tmpP);
+        const relX = this.tmpP.x - origin.x;
+        const relY = this.tmpP.y - origin.y;
+        const relZ = this.tmpP.z - origin.z;
+        const along = clamp(relX * this.tmpA.x + relY * this.tmpA.y + relZ * this.tmpA.z, 0, travelT);
+        if (along > 2) {
+          const closeX = origin.x + this.tmpA.x * along;
+          const closeY = origin.y + this.tmpA.y * along;
+          const closeZ = origin.z + this.tmpA.z * along;
+          const missX = closeX - this.tmpP.x;
+          const missY = closeY - this.tmpP.y;
+          const missZ = closeZ - this.tmpP.z;
+          const missDist = Math.hypot(missX, missY, missZ);
+          if (missDist > 0.45 && missDist < 2.4) {
+            anyNearMiss = true;
+            const cam = this.player?.camera;
+            if (cam) {
+              const e = cam.matrixWorld.elements;
+              nearMissPan = clamp(
+                ((closeX - cam.position.x) * (e[0] ?? 1) +
+                  (closeY - cam.position.y) * (e[1] ?? 0) +
+                  (closeZ - cam.position.z) * (e[2] ?? 0)) / Math.max(missDist, 0.01),
+                -1,
+                1,
+              );
+            }
+          }
+        }
       }
     }
     // 命中反馈(玩家): 每发只响一次(霰弹多颗合并)
@@ -1283,19 +1329,20 @@ export class Game {
       this.hud.hitmarker(anyHead ? 'head' : 'hit');
     }
     if (anyKill) this.hud.hitmarker('kill');
+    if (anyNearMiss) this.audio.bulletWhiz(nearMissPan);
     // 音效: 他人枪声按距离/方位衰减
     if (shooter.isPlayer) {
-      this.audio.shot(gun.def.id, 0, 0);
+      this.audio.shot(gun.def.id, 0, 0, suppressed);
     } else if (this.player) {
       const cam = this.player.camera;
       this.tmpEnd.subVectors(shooter.pos, cam.position);
       const dist = this.tmpEnd.length();
-      if (dist < 220) {
+      if (dist < (suppressed ? 75 : 220)) {
         this.tmpEnd.divideScalar(dist || 1);
         const e = cam.matrixWorld.elements;
         this.tmpRight.set(e[0] ?? 1, e[1] ?? 0, e[2] ?? 0);
         const pan = this.tmpRight.dot(this.tmpEnd);
-        this.audio.shot(gun.def.id, dist, pan);
+        this.audio.shot(gun.def.id, dist, pan, suppressed);
       }
     }
     return true;
@@ -1517,12 +1564,12 @@ export class Game {
       this.effects.impactBlood(this.tmpEnd);
       let dmg = m.damage;
       if (!attacker.isPlayer && best.isPlayer) dmg *= BOT_VS_PLAYER_DMG;
+      const appliedDamage = this.damageChar(best, dmg, false, attacker);
       if (attacker.isPlayer) {
-        this.damageDealt += dmg;
+        this.damageDealt += appliedDamage;
         this.audio.hit(false);
         this.hud.hitmarker('hit');
       }
-      this.damageChar(best, dmg, false, attacker);
       if (!best.alive && attacker.isPlayer) this.hud.hitmarker('kill');
     } else {
       // 无角色命中: 尝试打破面前的门/窗
@@ -1554,8 +1601,8 @@ export class Game {
 
   // ---- 伤害/击杀 ----
 
-  damageChar(victim: Character, dmg: number, head: boolean, attacker: Character | null, via?: string, ignoreArmor = false): void {
-    if (!victim.alive) return;
+  damageChar(victim: Character, dmg: number, head: boolean, attacker: Character | null, via?: string, ignoreArmor = false): number {
+    if (!victim.alive) return 0;
     // 护具减伤: 子弹/近战有效; 爆炸与毒圈无视护甲
     if (!ignoreArmor) {
       const armor = head ? victim.helmet : victim.vest;
@@ -1566,6 +1613,9 @@ export class Game {
         if (armor.durability <= 0) this.breakArmor(victim, head ? 'helmet' : 'vest');
       }
     }
+    dmg = Math.max(0, dmg);
+    const healthBefore = victim.knocked ? victim.knockHp : victim.hp;
+    const appliedDamage = Math.min(healthBefore, dmg);
     victim.lastAttackerId = attacker?.id ?? 0;
     victim.lastHitX = attacker ? attacker.pos.x : 0;
     victim.lastHitZ = attacker ? attacker.pos.z : 0;
@@ -1582,7 +1632,7 @@ export class Game {
     if (victim.knocked) {
       victim.knockHp -= dmg;
       if (victim.knockHp <= 0) this.kill(victim, attacker, head, via);
-      return;
+      return appliedDamage;
     }
     victim.hp -= dmg;
     if (victim.hp <= 0) {
@@ -1594,6 +1644,7 @@ export class Game {
         this.kill(victim, attacker, head, via);
       }
     }
+    return appliedDamage;
   }
 
   // 流血致死(击倒血归零): 记最近攻击者

@@ -1,5 +1,6 @@
 // 特效: 曳光弹 / 枪口火光 / 命中粒子(全部对象池, 零逐帧分配)
 import * as THREE from 'three';
+import type { WeaponId } from './types';
 
 const TRACER_CAP = 48;
 const FLASH_CAP = 8;
@@ -269,6 +270,11 @@ export class Effects {
   impactDust(p: THREE.Vector3): void { this.burst(p, 9, 0.62, 0.55, 0.42, 2.4); }
   impactSpark(p: THREE.Vector3): void { this.burst(p, 7, 1.0, 0.8, 0.35, 4.2); }
   impactBlood(p: THREE.Vector3): void { this.burst(p, 10, 0.75, 0.08, 0.06, 2.6); }
+  casingEject(p: THREE.Vector3, weaponId: WeaponId): void {
+    const count = weaponId === 'shotgun' ? 2 : 1;
+    const speed = weaponId === 'sniper' || weaponId === 'shotgun' ? 2.7 : 2.1;
+    this.burst(p, count, 0.92, 0.65, 0.2, speed);
+  }
   // 木门窗: 子弹命中木屑
   impactWood(p: THREE.Vector3): void { this.burst(p, 8, 0.55, 0.4, 0.22, 2.8); }
   // 玻璃: 子弹命中碎屑

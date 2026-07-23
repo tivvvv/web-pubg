@@ -11,32 +11,32 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   pistol: {
     id: 'pistol', name: 'P92 手枪', damage: 16, headMult: 2, fireInterval: 0.24,
     auto: false, magSize: 12, reloadTime: 1.3, spreadHip: 0.016, spreadAim: 0.007,
-    recoil: 0.012, zoom: 1.25, tier: 1, ammo: 'pistol',
+    recoil: 0.012, zoom: 1.25, tier: 1, ammo: 'pistol', falloff: [30, 90, 0.55, 170],
   },
   rifle: {
     id: 'rifle', name: 'M416 步枪', damage: 22, headMult: 2, fireInterval: 0.125,
     auto: true, magSize: 30, reloadTime: 2.0, spreadHip: 0.02, spreadAim: 0.0075,
-    recoil: 0.0135, zoom: 1.35, tier: 3, ammo: 'rifle',
+    recoil: 0.0135, zoom: 1.35, tier: 3, ammo: 'rifle', falloff: [70, 180, 0.72, 300],
   },
   akm: {
     id: 'akm', name: 'AKM 突击步枪', damage: 27, headMult: 2, fireInterval: 0.115,
     auto: true, magSize: 30, reloadTime: 2.15, spreadHip: 0.022, spreadAim: 0.008,
-    recoil: 0.018, zoom: 1.35, tier: 3.35, ammo: 'rifle',
+    recoil: 0.018, zoom: 1.35, tier: 3.35, ammo: 'rifle', falloff: [60, 170, 0.7, 290],
   },
   smg: {
     id: 'smg', name: 'UMP 冲锋枪', damage: 13, headMult: 2, fireInterval: 0.077,
     auto: true, magSize: 32, reloadTime: 1.7, spreadHip: 0.028, spreadAim: 0.013,
-    recoil: 0.0085, zoom: 1.3, tier: 2, ammo: 'smg',
+    recoil: 0.0085, zoom: 1.3, tier: 2, ammo: 'smg', falloff: [25, 90, 0.48, 170],
   },
   dmr: {
     id: 'dmr', name: 'Mini14 精确射手步枪', damage: 39, headMult: 2, fireInterval: 0.19,
     auto: false, magSize: 20, reloadTime: 2.2, spreadHip: 0.026, spreadAim: 0.003,
-    recoil: 0.024, zoom: 1.55, tier: 3.65, ammo: 'rifle', falloff: [90, 190, 0.72, 260],
+    recoil: 0.024, zoom: 1.55, tier: 3.65, ammo: 'rifle', falloff: [100, 220, 0.75, 340],
   },
   sniper: {
     id: 'sniper', name: 'AWM 狙击枪', damage: 85, headMult: 2, fireInterval: 1.5,
     auto: false, magSize: 5, reloadTime: 2.8, spreadHip: 0.035, spreadAim: 0.0012,
-    recoil: 0.05, zoom: 4, tier: 4, ammo: 'sniper',
+    recoil: 0.05, zoom: 4, tier: 4, ammo: 'sniper', falloff: [160, 300, 0.85, 520],
   },
   shotgun: {
     id: 'shotgun', name: 'S686 双管霰弹枪', damage: 11, headMult: 2, fireInterval: 0.3,
@@ -55,6 +55,10 @@ export function pelletFalloff(def: WeaponDef, t: number): number {
   if (t >= zero) return 0;
   if (t <= min) return 1 - (1 - minF) * ((t - full) / (min - full));
   return minF * (1 - (t - min) / (zero - min));
+}
+
+export function weaponMaxRange(def: WeaponDef): number {
+  return def.falloff?.[3] ?? 260;
 }
 
 export const MELEE: Record<MeleeId, MeleeDef> = {

@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { AMMO_BOX, AMMO_LOOT_KIND, MELEE, WEAPONS, ammoTypeFromLoot, applySpread, pelletFalloff } from '../src/weapons';
+import {
+  AMMO_BOX, AMMO_LOOT_KIND, MELEE, WEAPONS, ammoTypeFromLoot, applySpread, pelletFalloff,
+  weaponMaxRange,
+} from '../src/weapons';
 
 describe('武器数据与弹道边界', () => {
   it('全部枪械拥有可用弹匣射速散布和弹药映射', () => {
@@ -18,9 +21,13 @@ describe('武器数据与弹道边界', () => {
     }
   });
 
-  it('霰弹和精确射手步枪衰减连续且单调', () => {
-    for (const def of [WEAPONS.shotgun, WEAPONS.dmr]) {
+  it('全部枪械的距离衰减连续单调且射程边界一致', () => {
+    for (const def of Object.values(WEAPONS)) {
       const [full, min, minFactor, zero] = def.falloff as [number, number, number, number];
+      expect(full).toBeGreaterThan(0);
+      expect(min).toBeGreaterThan(full);
+      expect(zero).toBeGreaterThan(min);
+      expect(weaponMaxRange(def)).toBe(zero);
       expect(pelletFalloff(def, full)).toBe(1);
       expect(pelletFalloff(def, min)).toBeCloseTo(minFactor, 8);
       expect(pelletFalloff(def, zero)).toBe(0);
@@ -32,7 +39,8 @@ describe('武器数据与弹道边界', () => {
         previous = factor;
       }
     }
-    expect(pelletFalloff(WEAPONS.rifle, 1000)).toBe(1);
+    expect(pelletFalloff(WEAPONS.smg, 120)).toBeLessThan(pelletFalloff(WEAPONS.rifle, 120));
+    expect(pelletFalloff(WEAPONS.sniper, 250)).toBeGreaterThan(pelletFalloff(WEAPONS.rifle, 250));
   });
 
   it('散布保持单位向量且零散布不改变方向', () => {

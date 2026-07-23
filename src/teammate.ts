@@ -20,6 +20,7 @@ import { AgentNavigator, allyBlocksShot, findCoverPoint, findSwimBank } from './
 import type { DestructibleLike } from './types';
 import { WATER_Y } from './world';
 import { squadFormationTarget, type SquadMateOrderState } from './squadcommands';
+import { reloadDuration } from './gunplay';
 
 const ENGAGE_RANGE = 60;
 const FOCUS_RANGE = 180;
@@ -238,7 +239,7 @@ export class TeammateController {
         c.ammo[gun.def.ammo] -= take;
       }
     } else if (gun && gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) {
-      this.reloadT = gun.def.reloadTime;
+      this.reloadT = reloadDuration(gun, true);
     }
     this.healCd -= dt;
     if (this.healCd <= 0 && !this.target && !c.knocked) {
@@ -754,7 +755,7 @@ export class TeammateController {
     this.dir.subVectors(this.aim, this.eye).normalize();
     if (game.fireWeapon(c, this.eye, this.dir, 0)) {
       this.fireTimer = gun.def.fireInterval;
-      if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = gun.def.reloadTime;
+      if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.reloadT = reloadDuration(gun, true);
     }
   }
 

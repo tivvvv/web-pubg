@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { emptyAttachments } from '../src/attachments';
-import { calculateWeaponSpread, scopeModeOf, smoothAimProgress } from '../src/gunplay';
+import {
+  calculateRecoilImpulse, calculateWeaponSpread, reloadDuration, scopeModeOf, smoothAimProgress,
+  WEAPON_RECOIL,
+} from '../src/gunplay';
 import { WEAPONS } from '../src/weapons';
 
 const rifle = { def: WEAPONS.rifle, mag: 30, att: emptyAttachments() };
@@ -30,5 +33,49 @@ describe('枪械操控模型', () => {
     expect(scopeModeOf({ ...rifle, att: { ...emptyAttachments(), sight: 'scope2' } }, 1)).toBe('scope2');
     expect(scopeModeOf({ ...rifle, att: { ...emptyAttachments(), sight: 'scope4' } }, 1)).toBe('scope4');
     expect(scopeModeOf(rifle, 0.5)).toBe('none');
+  });
+
+  it('连续后坐遵循稳定横向骨架且补偿器和姿态真实生效', () => {
+    const out = { vertical: 0, horizontal: 0, bloom: 0, gunKick: 0 };
+    const standing = { ...calculateRecoilImpulse(out, rifle, 1, 'stand', 2, 0) };
+    const leftStep = { ...calculateRecoilImpulse(out, rifle, 1, 'stand', 1, 0) };
+    const prone = { ...calculateRecoilImpulse(out, rifle, 1, 'prone', 2, 0) };
+    const compensated = {
+      def: WEAPONS.rifle,
+      mag: 30,
+      att: { ...emptyAttachments(), muzzle: 'comp' as const },
+    };
+    const compensatedKick = { ...calculateRecoilImpulse(out, compensated, 1, 'stand', 2, 0) };
+
+    expect(standing.horizontal).toBeGreaterThan(0);
+    expect(leftStep.horizontal).toBeLessThan(0);
+    expect(prone.vertical).toBeLessThan(standing.vertical);
+    expect(compensatedKick.vertical).toBeCloseTo(standing.vertical * 0.7, 8);
+    expect(compensatedKick.horizontal).toBeCloseTo(standing.horizontal * 0.7, 8);
+  });
+
+  it('空仓换弹慢于战术换弹且扩容弹匣增加操作时间', () => {
+    const normal = { def: WEAPONS.rifle, mag: 12, att: emptyAttachments() };
+    const extended = {
+      def: WEAPONS.rifle,
+      mag: 0,
+      att: { ...emptyAttachments(), mag: 'extmag' as const },
+    };
+    expect(reloadDuration(normal, false)).toBeLessThan(reloadDuration(normal, true));
+    expect(reloadDuration(extended, true)).toBeGreaterThan(reloadDuration(normal, true));
+    expect(reloadDuration(
+      { def: WEAPONS.shotgun, mag: 0, att: emptyAttachments() },
+      true,
+    )).toBe(WEAPONS.shotgun.reloadTime);
+  });
+
+  it('每种枪械都有独立且有效的后坐恢复参数', () => {
+    for (const profile of Object.values(WEAPON_RECOIL)) {
+      expect(profile.pitchRecovery).toBeGreaterThan(0);
+      expect(profile.yawRecovery).toBeGreaterThan(0);
+      expect(profile.bloomRecovery).toBeGreaterThan(0);
+    }
+    expect(WEAPON_RECOIL.smg.pitchRecovery).toBeGreaterThan(WEAPON_RECOIL.akm.pitchRecovery);
+    expect(WEAPON_RECOIL.sniper.gunKick).toBeGreaterThan(WEAPON_RECOIL.pistol.gunKick);
   });
 });

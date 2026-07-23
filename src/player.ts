@@ -11,12 +11,12 @@ import { WATER_Y, WORLD_HALF } from './world';
 import { driveVehicleStep, VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { clamp, lerp, turnToward } from './utils';
-import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, recoilFactorOf, sightZoomOf } from './attachments';
+import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, sightZoomOf } from './attachments';
 import { random } from './random';
 import type { Game } from './game';
-import type { WeaponId } from './types';
 import {
-  aimBlend, baseWeaponSpread, calculateAimSway, calculateWeaponSpread, scopeModeOf, smoothAimProgress,
+  aimBlend, calculateAimSway, calculateRecoilImpulse, calculateWeaponSpread, reloadDuration, scopeModeOf,
+  smoothAimProgress, WEAPON_RECOIL,
 } from './gunplay';
 
 const BASE_FOV = 75;
@@ -26,23 +26,6 @@ const FREEFALL_STEER_RESPONSE = 5; // 自由落体转向响应
 const CANOPY_STEER_SPEED = 12;
 const CANOPY_STEER_RESPONSE = 1.6;
 const AIR_STEER_DRAG = 1.2; // 松开方向键后保留少量惯性
-
-interface RecoilFeel {
-  vertical: number;
-  horizontal: number;
-  bloom: number;
-  gunKick: number;
-}
-
-const RECOIL_FEEL: Record<WeaponId, RecoilFeel> = {
-  pistol: { vertical: 0.95, horizontal: 0.22, bloom: 0.32, gunKick: 0.045 },
-  rifle: { vertical: 1.0, horizontal: 0.42, bloom: 0.46, gunKick: 0.055 },
-  akm: { vertical: 1.18, horizontal: 0.5, bloom: 0.52, gunKick: 0.07 },
-  smg: { vertical: 0.78, horizontal: 0.5, bloom: 0.52, gunKick: 0.045 },
-  dmr: { vertical: 1.16, horizontal: 0.25, bloom: 0.3, gunKick: 0.085 },
-  sniper: { vertical: 1.35, horizontal: 0.16, bloom: 0.2, gunKick: 0.12 },
-  shotgun: { vertical: 1.2, horizontal: 0.3, bloom: 0.16, gunKick: 0.1 },
-};
 
 export class PlayerController {
   readonly char: Character;
@@ -65,8 +48,10 @@ export class PlayerController {
   private aimF = 0;
   private aimTime = 0;
   private aimSway = { pitch: 0, yaw: 0 };
+  private recoilImpulse = { vertical: 0, horizontal: 0, bloom: 0, gunKick: 0 };
   private fireTimer = 0;
   private reloadT = 0;
+  private reloadTotal = 0;
   private camDist = 3.4;
   private fov = BASE_FOV;
   private hv = new THREE.Vector2(); // 空降水平速度
@@ -127,9 +112,11 @@ export class PlayerController {
     const zoomScale = this.fov / BASE_FOV;
     this.yaw -= dx * 0.0021 * zoomScale;
     this.pitch = clamp(this.pitch - dy * 0.0021 * zoomScale, -1.25, 1.35);
-    this.recoilP *= Math.exp(-9 * dt);
-    this.recoilY *= Math.exp(-12 * dt);
-    this.shotBloom *= Math.exp(-(this.aiming ? 8.5 : 6) * dt);
+    const heldForRecovery = c.heldGun();
+    const recovery = heldForRecovery ? WEAPON_RECOIL[heldForRecovery.def.id] : WEAPON_RECOIL.rifle;
+    this.recoilP *= Math.exp(-recovery.pitchRecovery * dt);
+    this.recoilY *= Math.exp(-recovery.yawRecovery * dt);
+    this.shotBloom *= Math.exp(-recovery.bloomRecovery * (this.aiming ? 1 : 0.76) * dt);
     this.recoilRestT = Math.max(0, this.recoilRestT - dt);
     if (this.recoilRestT <= 0) this.recoilChain = Math.max(0, this.recoilChain - dt * 10);
     this.landDip *= Math.exp(-11 * dt);
@@ -318,9 +305,12 @@ export class PlayerController {
         gun.mag += take;
         c.ammo[gun.def.ammo] -= take;
         this.reloading = false;
+        this.reloadTotal = 0;
       }
     }
-    c.reload01 = this.reloading && gun ? clamp(1 - this.reloadT / gun.def.reloadTime, 0.01, 1) : 0;
+    c.reload01 = this.reloading && gun && this.reloadTotal > 0
+      ? clamp(1 - this.reloadT / this.reloadTotal, 0.01, 1)
+      : 0;
     const pressedEdge = input.consumeFirePressed();
     // 切离投掷栏时收起轨迹预览
     if (c.curSlot !== 4 && this.throwHold) {
@@ -360,23 +350,24 @@ export class PlayerController {
           this.startReload(game);
         } else if (game.playerShot()) {
           this.fireTimer = gun.def.fireInterval;
-          const feel = RECOIL_FEEL[gun.def.id];
-          const stanceControl = c.stance === 'crouch' ? 0.82 : c.stance === 'prone' ? 0.62 : 1;
-          const aimControl = lerp(1, 0.88, aimBlend(this.aimF));
-          const chainF = 1 + Math.min(this.recoilChain, 10) * 0.025;
-          const recoil = gun.def.recoil * recoilFactorOf(gun) * stanceControl * aimControl;
-          const verticalKick = recoil * feel.vertical * chainF;
-          const horizontalKick = (random() * 2 - 1) * recoil * feel.horizontal * (0.75 + chainF * 0.25);
-          this.recoilP += verticalKick;
-          this.recoilY += horizontalKick;
+          const impulse = calculateRecoilImpulse(
+            this.recoilImpulse,
+            gun,
+            this.aimF,
+            c.stance,
+            this.recoilChain,
+            random() * 2 - 1,
+          );
+          this.recoilP += impulse.vertical;
+          this.recoilY += impulse.horizontal;
           // 少量永久枪口上跳需要玩家压枪, 大部分瞬时反馈会自动回正
-          this.pitch = clamp(this.pitch + verticalKick * 0.2, -1.25, 1.35);
-          this.yaw += horizontalKick * 0.12;
+          this.pitch = clamp(this.pitch + impulse.vertical * 0.2, -1.25, 1.35);
+          this.yaw += impulse.horizontal * 0.12;
           this.recoilChain++;
           this.recoilRestT = Math.max(0.2, gun.def.fireInterval * 1.7);
-          const baseSpread = baseWeaponSpread(gun, this.aimF);
-          this.shotBloom = Math.min(0.032, this.shotBloom + baseSpread * feel.bloom);
-          c.gunKick = Math.max(c.gunKick, feel.gunKick * lerp(1, 0.8, aimBlend(this.aimF)));
+          this.shotBloom = Math.min(0.032, this.shotBloom + impulse.bloom);
+          c.gunKick = Math.max(c.gunKick, impulse.gunKick);
+          if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.startReload(game);
           acted = true;
         }
       }
@@ -758,7 +749,8 @@ export class PlayerController {
     const gun = this.char.heldGun();
     if (!gun || this.reloading || gun.mag >= magSizeOf(gun) || this.char.ammo[gun.def.ammo] <= 0) return;
     this.reloading = true;
-    this.reloadT = gun.def.reloadTime;
+    this.reloadTotal = reloadDuration(gun, gun.mag <= 0);
+    this.reloadT = this.reloadTotal;
     if (gun.def.id === 'shotgun') game.audio.reloadShotgun();
     else game.audio.reload();
   }
@@ -769,6 +761,11 @@ export class PlayerController {
     if (i < 3 && !c.guns[i]) return;
     c.curSlot = i;
     this.reloading = false;
+    this.reloadT = 0;
+    this.reloadTotal = 0;
+    this.recoilChain = 0;
+    this.recoilRestT = 0;
+    this.shotBloom = 0;
     this.fireTimer = Math.max(this.fireTimer, 0.25);
     game.audio.reload();
   }

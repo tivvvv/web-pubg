@@ -142,9 +142,11 @@ export class AudioSys {
   }
 
   // dist: 与听者距离, pan: 相对左右(-1..1)
-  shot(kind: WeaponId, dist: number, pan: number): void {
+  shot(kind: WeaponId, dist: number, pan: number, suppressed = false): void {
     if (!this.ctx) return;
-    const att = clamp(1.35 / (1 + dist * 0.028), 0.015, 1);
+    const distanceAtt = clamp(1.35 / (1 + dist * 0.028), 0.015, 1);
+    const att = distanceAtt * (suppressed ? 0.24 : 1);
+    if (suppressed) this.noiseBurst(0.08 * distanceAtt, pan, 2400, 1.5, 0.045);
     switch (kind) {
       case 'pistol':
         this.noiseBurst(0.5 * att, pan, 1100, 0.9, 0.11);
@@ -176,6 +178,11 @@ export class AudioSys {
         this.thump(0.6 * att, pan, 120, 30, 0.3);
         break;
     }
+  }
+
+  bulletWhiz(pan: number): void {
+    this.noiseBurst(0.2, pan, 3600, 1.35, 0.11);
+    this.thump(0.055, pan, 520, 180, 0.07);
   }
 
   hit(head: boolean): void {
