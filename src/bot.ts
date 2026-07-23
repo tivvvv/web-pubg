@@ -14,8 +14,8 @@ import { angleDiff, clamp, rand, randInt, turnToward } from './utils';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import type { Game } from './game';
 import {
-  AgentNavigator, findBridgeExit, findCoverPoint, findEmergencyNavPoint, findLocalEscape, findSwimBank,
-  findVehicleRiverWaypoint,
+  AgentNavigator, findBridgeExit, findCoverPoint, findEmergencyNavPoint, findLocalEscape, findShoreExitPoint,
+  findSwimBank, findVehicleRiverWaypoint,
 } from './botnav';
 import {
   chooseCombatMode, chooseStrategicMode, preferredCombatRange, selectCombatGunSlot,
@@ -42,6 +42,7 @@ function signedAngleDelta(current: number, target: number): number {
 export class BotController {
   readonly char: Character;
   trainingIdle = false; // 固定测试场景专用, 普通对局始终为 false
+  trainingPassive = false; // 回归场景可保留完整导航, 但隔离真实交战造成的姿态干扰
   private state: 'wander' | 'engage' = 'wander';
   private target: Character | null = null;
   private scanT: number;
@@ -67,6 +68,10 @@ export class BotController {
   private swimLastX = 0;
   private swimLastZ = 0;
   private hasSwimBank = false;
+  private shoreExitPoint = new THREE.Vector2();
+  private shoreDryPoint = new THREE.Vector3();
+  private shoreExitT = 0;
+  private shoreCooldownT = 0;
   private lastKnown = new THREE.Vector3();
   // 破门: 被门/窗挡路计时
   private blockT = 0;
@@ -218,6 +223,7 @@ export class BotController {
     this.fireTimer = Math.max(0, this.fireTimer - dt);
     this.postCombatT = Math.max(0, this.postCombatT - dt);
     this.blockedLootT = Math.max(0, this.blockedLootT - dt);
+    this.shoreCooldownT = Math.max(0, this.shoreCooldownT - dt);
     if (this.blockedLoot && (!this.blockedLoot.active || this.blockedLootT <= 0)) this.blockedLoot = null;
     this.vehicleCooldown = Math.max(0, this.vehicleCooldown - dt);
     if (this.driving) {
@@ -234,11 +240,24 @@ export class BotController {
     // 游泳状态: 深水中只朝岸游, 不索敌/开火/拾取
     const wasSwimming = c.swimming;
     game.updateSwim(c);
+    if (!wasSwimming && c.swimming && this.shoreCooldownT > 0) {
+      // 上岸后的短时间内若碰撞修正把脚底推回水线, 回到最近的干燥落脚点继续离岸.
+      // 不让单帧入水重新启动整套游泳寻岸状态, 这是岸边站立/游泳抽搐的主要来源.
+      c.swimming = false;
+      c.swimDip = 0;
+      c.pos.copy(this.shoreDryPoint);
+      c.groundH = c.pos.y;
+      c.grounded = true;
+      c.speed2d = 0;
+    }
     if (c.swimming) {
       if (!wasSwimming) {
         this.cancelReload();
+        this.target = null;
+        this.state = 'wander';
         this.navigator.reset(c);
         this.hasSwimBank = false;
+        this.shoreExitT = 0;
         this.swimRepathT = 0;
         this.swimStuckT = 0;
         this.swimLastX = c.pos.x;
@@ -249,6 +268,36 @@ export class BotController {
     }
     if (wasSwimming) {
       this.navigator.reset(c);
+      if (findShoreExitPoint(
+        this.shoreExitPoint,
+        c.pos.x,
+        c.pos.z,
+        this.swimBank.x,
+        this.swimBank.y,
+        game.world,
+      )) {
+        this.shoreDryPoint.set(
+          this.shoreExitPoint.x,
+          game.world.getHeight(this.shoreExitPoint.x, this.shoreExitPoint.y),
+          this.shoreExitPoint.y,
+        );
+        this.shoreExitT = 3.2;
+        this.shoreCooldownT = 6;
+      }
+    }
+    if (this.shoreExitT > 0) {
+      this.shoreExitT = Math.max(0, this.shoreExitT - dt);
+      this.navigationIntent = true;
+      this.navigator.move(
+        c,
+        this.shoreExitPoint.x,
+        this.shoreExitPoint.y,
+        4.4,
+        dt,
+        game.world,
+        { stopDistance: 0.55, turnRate: 5, allowWater: false, neighbors: game.chars },
+      );
+      return;
     }
     // 翻越中: 脚本位移
     c.vaultCd = Math.max(0, c.vaultCd - dt);
@@ -946,6 +995,10 @@ export class BotController {
 
   private scan(game: Game): void {
     const c = this.char;
+    if (this.trainingPassive) {
+      this.target = null;
+      return;
+    }
     // 非交战时使用综合最优枪, 交战时按目标距离选枪
     const currentDistance = this.target?.alive
       ? Math.hypot(this.target.pos.x - c.pos.x, this.target.pos.z - c.pos.z)
@@ -962,6 +1015,9 @@ export class BotController {
     let heardScore = Infinity;
     for (const other of game.chars) {
       if (!other.alive || other === c) continue;
+      if (this.shoreCooldownT > 0 && (
+        other.swimming || game.world.getHeight(other.pos.x, other.pos.z) < WATER_Y - SWIM_EXIT_DEPTH
+      )) continue;
       const d = Math.hypot(other.pos.x - c.pos.x, other.pos.z - c.pos.z);
       const shotAge = game.nowSec - other.lastLoudShotT;
       if (shotAge >= 0 && shotAge < 1.4 && d < 115) {
@@ -1552,6 +1608,9 @@ export class BotController {
         ? rotation === 'immediate' ? 5.7 : 5.1
         : this.strategicMode === 'hunt' ? 4.7
           : tier === 0 ? 4.6 : 4.0;
+      // 搜刮和巡逻不能为了抄近路反复踩进岸边浅水. 只有明确跨区转移或追猎时才允许规划水路.
+      const allowStrategicWater = this.shoreCooldownT <= 0 &&
+        (this.strategicMode === 'rotate' || this.strategicMode === 'hunt');
       const nav = this.navigator.move(
         c,
         navGoalX,
@@ -1562,6 +1621,7 @@ export class BotController {
         {
           stopDistance: 1.25,
           turnRate: 4.5,
+          allowWater: allowStrategicWater,
           allowDrop: c.pos.y - game.world.getHeight(c.pos.x, c.pos.z) > 1.6,
           neighbors: game.chars,
         },

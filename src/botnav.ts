@@ -241,6 +241,41 @@ export function findSwimBank(
   return false;
 }
 
+// 游泳状态刚结束时继续向岸内找一个短距离安全点。控制器在到达前暂停索敌，
+// 避免角色刚站起就因战斗/跟随目标在水中而立即折返，造成岸边姿态反复切换。
+export function findShoreExitPoint(
+  out: THREE.Vector2,
+  x: number,
+  z: number,
+  bankX: number,
+  bankZ: number,
+  world: SwimBankWorld,
+): boolean {
+  let dx = bankX - x;
+  let dz = bankZ - z;
+  const length = Math.hypot(dx, dz);
+  if (length < 0.05) return false;
+  dx /= length;
+  dz /= length;
+  const sideX = -dz;
+  const sideZ = dx;
+  // 游泳状态允许在浅滩提前结束, 但后续离岸目标必须是真正高出水面的干地.
+  // 否则角色会站在浅水阈值边缘, 被地形和邻居碰撞反复切回游泳状态.
+  const bankMinH = WATER_Y + 0.02;
+  for (const forward of [6.4, 5.2, 4, 3.2, 2.4, 1.6, 0.8, 0] as const) {
+    for (const lateral of [0, 0.8, -0.8, 1.6, -1.6] as const) {
+      const tx = clamp(bankX + dx * forward + sideX * lateral, -WORLD_HALF + 2, WORLD_HALF - 2);
+      const tz = clamp(bankZ + dz * forward + sideZ * lateral, -WORLD_HALF + 2, WORLD_HALF - 2);
+      const height = world.getHeight(tx, tz);
+      if (height < bankMinH || height > WATER_Y + 3.6) continue;
+      if (!world.pointFree(tx, tz, 0.55, bankMinH, WATER_Y + 3.6)) continue;
+      out.set(tx, tz);
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface NavOptions {
   stopDistance?: number;
   turnRate?: number;

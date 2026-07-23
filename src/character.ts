@@ -1079,6 +1079,56 @@ export const BOT_SHIRTS = [
   0x4ec2b2, 0xc27d4e, 0x7dc24e,
 ];
 
+function hasPhysicalBody(c: Character): boolean {
+  return c.alive && c.group.visible && c.airPose === null;
+}
+
+// 角色间只在同一高度层做软分离。每轮分离后重新约束到静态碰撞体外，
+// 避免门口聚集时把角色推入墙内、下一帧又被墙推出而形成穿模和抽搐。
+export function separateCharacterBodies(
+  characters: readonly Character[],
+  resolveStatic: (character: Character) => void,
+  passes = 2,
+): number {
+  const moved = new Set<Character>();
+  let movedCount = 0;
+  for (let pass = 0; pass < passes; pass++) {
+    moved.clear();
+    for (let i = 0; i < characters.length; i++) {
+      const a = characters[i] as Character;
+      if (!hasPhysicalBody(a)) continue;
+      for (let j = i + 1; j < characters.length; j++) {
+        const b = characters[j] as Character;
+        if (!hasPhysicalBody(b) || Math.abs(a.pos.y - b.pos.y) > 1.35) continue;
+        let dx = b.pos.x - a.pos.x;
+        let dz = b.pos.z - a.pos.z;
+        const rr = a.radius + b.radius;
+        let d2 = dx * dx + dz * dz;
+        if (d2 >= rr * rr) continue;
+        if (d2 < 1e-8) {
+          // 完全重叠时使用角色 id 生成稳定方向，不能直接跳过并永久叠在一起。
+          const angle = ((a.id * 73856093 + b.id * 19349663) >>> 0) / 0xffffffff * Math.PI * 2;
+          dx = Math.cos(angle) * 0.001;
+          dz = Math.sin(angle) * 0.001;
+          d2 = dx * dx + dz * dz;
+        }
+        const d = Math.sqrt(d2);
+        const push = (rr - d) * 0.5 / d;
+        a.pos.x -= dx * push;
+        a.pos.z -= dz * push;
+        b.pos.x += dx * push;
+        b.pos.z += dz * push;
+        moved.add(a);
+        moved.add(b);
+      }
+    }
+    if (moved.size === 0) break;
+    movedCount += moved.size;
+    for (const c of moved) resolveStatic(c);
+  }
+  return movedCount;
+}
+
 // 共享位移入口: 游泳走水面浮动, 否则常规重力位移
 export function moveChar(
   c: Character,

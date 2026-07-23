@@ -565,7 +565,8 @@ export class Buildings {
 
   // 家具和隔墙生成后统一校正拾取点，避免物资刷进实体或门板中。
   private sanitizeLootSpots(world: World): void {
-    const radius = 0.2;
+    // 物资本体外还有 0.42m 光环，保留 0.3m 实体净距避免模型贴墙穿插。
+    const radius = 0.3;
     const offsets: ReadonlyArray<readonly [number, number]> = [
       [0, 0], [0.75, 0], [-0.75, 0], [0, 0.75], [0, -0.75],
       [1.1, 1.1], [-1.1, 1.1], [1.1, -1.1], [-1.1, -1.1],

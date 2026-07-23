@@ -16,7 +16,7 @@ import { random } from './random';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { THROWABLES, WEAPONS, ammoTypeFromLoot } from './weapons';
 import { angleDiff, clamp, rand, turnToward } from './utils';
-import { AgentNavigator, allyBlocksShot, findCoverPoint, findSwimBank } from './botnav';
+import { AgentNavigator, allyBlocksShot, findCoverPoint, findShoreExitPoint, findSwimBank } from './botnav';
 import type { DestructibleLike, GunState } from './types';
 import { WATER_Y } from './world';
 import { squadFormationTarget, type SquadMateOrderState } from './squadcommands';
@@ -62,6 +62,10 @@ export class TeammateController {
   private swimRepathT = 0;
   private swimLastX = 0;
   private swimLastZ = 0;
+  private shoreExitPoint = new THREE.Vector2();
+  private shoreDryPoint = new THREE.Vector3();
+  private shoreExitT = 0;
+  private shoreCooldownT = 0;
   private blockedDoor: DestructibleLike | null = null;
   private blockCheckT = 0;
   private blockT = 0;
@@ -111,6 +115,7 @@ export class TeammateController {
     }
     const player = game.playerCtl;
     if (!player) return;
+    this.shoreCooldownT = Math.max(0, this.shoreCooldownT - dt);
     this.syncSquadOrder(game);
 
     // ---- 空降 ----
@@ -173,11 +178,20 @@ export class TeammateController {
     // ---- 游泳: 跟随玩家渡河, 不交战不拾取 ----
     const wasSwimming = c.swimming;
     game.updateSwim(c);
+    if (!wasSwimming && c.swimming && this.shoreCooldownT > 0) {
+      c.swimming = false;
+      c.swimDip = 0;
+      c.pos.copy(this.shoreDryPoint);
+      c.groundH = c.pos.y;
+      c.grounded = true;
+      c.speed2d = 0;
+    }
     if (c.swimming) {
       this.commandState = 'swimming';
       if (!wasSwimming) {
         this.cancelTransientActions();
         this.hasSwimBank = false;
+        this.shoreExitT = 0;
         this.swimRepathT = 0;
         this.swimLastX = c.pos.x;
         this.swimLastZ = c.pos.z;
@@ -188,6 +202,41 @@ export class TeammateController {
     }
     if (wasSwimming) {
       this.navigator.reset(c);
+      if (findShoreExitPoint(
+        this.shoreExitPoint,
+        c.pos.x,
+        c.pos.z,
+        this.swimBank.x,
+        this.swimBank.y,
+        game.world,
+      )) {
+        this.shoreDryPoint.set(
+          this.shoreExitPoint.x,
+          game.world.getHeight(this.shoreExitPoint.x, this.shoreExitPoint.y),
+          this.shoreExitPoint.y,
+        );
+        this.shoreExitT = 3.2;
+        this.shoreCooldownT = 6;
+      }
+    }
+    if (this.shoreExitT > 0) {
+      this.commandState = 'following';
+      this.shoreExitT = Math.max(0, this.shoreExitT - dt);
+      this.navigator.move(
+        c,
+        this.shoreExitPoint.x,
+        this.shoreExitPoint.y,
+        4.4,
+        dt,
+        game.world,
+        { stopDistance: 0.55, turnRate: 5, allowWater: false, neighbors: game.chars },
+      );
+      return;
+    }
+    if (this.shoreCooldownT > 0 && player.char.swimming) {
+      this.commandState = 'following';
+      moveChar(c, 0, 0, dt, game.world);
+      return;
     }
 
     // ---- 倒地: 缓慢爬离伤害来源(圈外优先爬向圈心) ----

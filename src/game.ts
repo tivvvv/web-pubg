@@ -68,7 +68,9 @@ import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWei
 import { BotController, BOT_NAMES } from './bot';
 import { BombardmentSystem } from './bombardment';
 import type { Destructible } from './buildings';
-import { Character, BOT_SHIRTS, shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH } from './character';
+import {
+  Character, BOT_SHIRTS, separateCharacterBodies, shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH,
+} from './character';
 import { Effects } from './effects';
 import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathcrate';
 import { Hud, shouldShowSwimmingStatus, type BackpackData, type SquadHudRow } from './hud';
@@ -746,6 +748,15 @@ export class Game {
     const dirZ = Math.sin(this.flightAngle);
     const pts: { x: number; z: number }[] = Array.from({ length: SQUAD_SIZE }, () => ({ x: 0, z: 0 }));
     const dropCounts = emptyDropRegionCounts();
+    const dropPointFree = (x: number, z: number): boolean =>
+      this.world.pointFree(x, z, 0.68, WATER_Y + 0.7, 12);
+    const dropPointSeparated = (x: number, z: number, separation = DROP_MIN_SEPARATION): boolean => {
+      for (let i = SQUAD_SIZE; i < pts.length; i++) {
+        const point = pts[i] as { x: number; z: number };
+        if (dist2D(point.x, point.z, x, z) < separation) return false;
+      }
+      return true;
+    };
     let guard = 0;
     while (pts.length < TOTAL && guard++ < 5000) {
       const region = selectDropRegion(this.flightAngle, dropCounts, random());
@@ -760,20 +771,12 @@ export class Game {
         z = region.z + Math.sin(angle) * distance;
         if (flightLineDistance(x, z, this.flightAngle) > DROP_MAX_FLIGHT_DISTANCE) continue;
         if (regionOrWilderness(x, z).id !== region.id) continue;
-        if (!this.world.pointFree(x, z, 0.5, WATER_Y + 0.7, 12)) continue;
+        if (!dropPointFree(x, z)) continue;
         sampled = true;
         break;
       }
       if (!sampled) continue;
-      let ok = true;
-      for (let i = SQUAD_SIZE; i < pts.length; i++) {
-        const p = pts[i] as { x: number; z: number };
-        if (dist2D(p.x, p.z, x, z) < DROP_MIN_SEPARATION) {
-          ok = false;
-          break;
-        }
-      }
-      if (!ok) continue;
+      if (!dropPointSeparated(x, z)) continue;
       pts.push({ x, z });
       dropCounts[region.id as keyof typeof dropCounts]++;
     }
@@ -783,7 +786,7 @@ export class Game {
       const x = rand(-320, 320);
       const z = rand(-320, 320);
       if (flightLineDistance(x, z, this.flightAngle) > DROP_MAX_FLIGHT_DISTANCE) continue;
-      if (!this.world.pointFree(x, z, 0.5, WATER_Y + 0.4, 13)) continue;
+      if (!dropPointFree(x, z) || !dropPointSeparated(x, z)) continue;
       const fallbackRegion = regionOrWilderness(x, z);
       if (fallbackRegion.id !== 'wilderness') {
         const id = fallbackRegion.id as keyof typeof dropCounts;
@@ -792,8 +795,20 @@ export class Game {
       }
       pts.push({ x, z });
     }
-    // 极端兜底(几乎不可能触发)
-    while (pts.length < TOTAL) pts.push({ x: rand(-60, 60), z: rand(-60, 60) });
+    // 极端兜底使用确定性安全网格, 仍不允许把角色塞入树木/建筑或相互重叠.
+    for (let x = -300; x <= 300 && pts.length < TOTAL; x += 24) {
+      for (let z = -300; z <= 300 && pts.length < TOTAL; z += 24) {
+        if (flightLineDistance(x, z, this.flightAngle) > DROP_MAX_FLIGHT_DISTANCE + 35) continue;
+        if (!dropPointFree(x, z) || !dropPointSeparated(x, z)) continue;
+        pts.push({ x, z });
+      }
+    }
+    for (let x = -300; x <= 300 && pts.length < TOTAL; x += 16) {
+      for (let z = -300; z <= 300 && pts.length < TOTAL; z += 16) {
+        if (!dropPointFree(x, z) || !dropPointSeparated(x, z, 12)) continue;
+        pts.push({ x, z });
+      }
+    }
 
     // 玩家: 进入舱内航线阶段(航线角已在出生点采样时确定)
     this.player.char.team = 'squad';
@@ -1085,26 +1100,7 @@ export class Game {
   }
 
   private separateChars(): void {
-    const cs = this.chars;
-    for (let i = 0; i < cs.length; i++) {
-      const a = cs[i] as Character;
-      if (!a.alive || !a.group.visible) continue;
-      for (let j = i + 1; j < cs.length; j++) {
-        const b = cs[j] as Character;
-        if (!b.alive || !b.group.visible) continue;
-        const dx = b.pos.x - a.pos.x;
-        const dz = b.pos.z - a.pos.z;
-        const rr = a.radius + b.radius;
-        const d2 = dx * dx + dz * dz;
-        if (d2 >= rr * rr || d2 < 1e-8) continue;
-        const d = Math.sqrt(d2);
-        const push = (rr - d) * 0.5 / d;
-        a.pos.x -= dx * push;
-        a.pos.z -= dz * push;
-        b.pos.x += dx * push;
-        b.pos.z += dz * push;
-      }
-    }
+    separateCharacterBodies(this.chars, (c) => this.world.resolveCollision(c.pos, c.radius));
   }
 
   // ---- 游泳状态机(玩家/bot/队友共用, 各控制器每帧调用一次) ----

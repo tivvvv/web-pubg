@@ -2,11 +2,11 @@ import * as THREE from 'three';
 import { canAttach, emptyAttachments, magSizeOf } from './attachments';
 import { ARMORS } from './armor';
 import { findSwimBank } from './botnav';
-import { LOOT_CAP } from './loot';
+import { isGunKind, lootPointClear, LOOT_CAP } from './loot';
 import type { Game } from './game';
 import { VEHICLE_SPEC } from './vehicles';
 import { MELEE, WEAPONS } from './weapons';
-import { riverZAt, WATER_Y } from './world';
+import { riverZAt, WATER_Y, WORLD_HALF } from './world';
 import { parseRandomSeed, setRandomSeed } from './random';
 import { REGIONS, regionOrWilderness } from './regions';
 import type { AttachmentId, GunState } from './types';
@@ -16,13 +16,14 @@ import {
 } from './stability';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'combat', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
+  'stairs', 'swim', 'botswim', 'combat', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
 const SCENARIO_TEXT: Record<ScenarioId, string> = {
   stairs: '楼梯回归: 检查楼层接缝, 楼梯净空和上下楼碰撞',
   swim: '游泳回归: 检查入水姿态, Shift 加速和连续上岸',
+  botswim: '机器人游泳回归: 多机器人同时入水上岸, 检查状态抖动, 反向抽搐和岸边碰撞',
   combat: '枪战回归: M416 + 全套配件, 检查 ADS, 后坐和命中反馈',
   bottactics: '机器人战术: 同时检查交战, 恢复, 搜索和圈外转移',
   botvehicle: '机器人载具: 检查搜车, 上车, 长途转移, 绕障和到点下车',
@@ -63,6 +64,22 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.tacticalCoverCount = String(game.world.tacticalCoverCount);
   panel.dataset.mapSiteCount = String(game.world.mapSites.length);
   panel.dataset.mapLootSpotCount = String(game.world.mapLootSpots.length);
+  let terrainMin = Infinity;
+  let terrainMax = -Infinity;
+  let terrainNonFinite = 0;
+  for (let x = -WORLD_HALF; x <= WORLD_HALF; x += 8) {
+    for (let z = -WORLD_HALF; z <= WORLD_HALF; z += 8) {
+      const height = game.world.getHeight(x, z);
+      if (!Number.isFinite(height)) {
+        terrainNonFinite++;
+        continue;
+      }
+      terrainMin = Math.min(terrainMin, height);
+      terrainMax = Math.max(terrainMax, height);
+    }
+  }
+  panel.dataset.terrainHeightRange = `${terrainMin.toFixed(2)},${terrainMax.toFixed(2)}`;
+  panel.dataset.terrainNonFinite = String(terrainNonFinite);
   const regionIds = [...REGIONS.map((region) => region.id), 'wilderness'];
   const countByRegion = (points: readonly { x: number; z: number }[]): string => JSON.stringify(
     Object.fromEntries(regionIds.map((id) => [
@@ -82,9 +99,84 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.botDropTargets = JSON.stringify(
     game.bots.map((bot) => ({ x: Number(bot.dropTarget.x.toFixed(1)), z: Number(bot.dropTarget.z.toFixed(1)) })),
   );
+  panel.dataset.botDropIssues = game.bots.flatMap((bot, index) => {
+    const { x, z } = bot.dropTarget;
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return [`${index}:non-finite`];
+    const height = game.world.getHeight(x, z);
+    if (height < WATER_Y + 0.05) return [`${index}:water:${x.toFixed(1)},${z.toFixed(1)}`];
+    if (!game.world.pointFree(x, z, 0.65, WATER_Y + 0.2, 17)) {
+      return [`${index}:blocked:${x.toFixed(1)},${z.toFixed(1)}`];
+    }
+    return [];
+  }).join('|');
   panel.dataset.regionVehicleCounts = countByRegion(
     game.vehicles.list.map((vehicle) => ({ x: vehicle.pos.x, z: vehicle.pos.z })),
   );
+  panel.dataset.buildingArchCounts = JSON.stringify(
+    Object.fromEntries(
+      ['cottage1', 'cottage2', 'terrace', 'apartment', 'barn', 'shop', 'gym'].map((arch) => [
+        arch,
+        game.world.buildings.plots.filter((plot) => plot.arch === arch).length,
+      ]),
+    ),
+  );
+  const lootKinds: Record<string, number> = {};
+  const weaponsByRegion: Record<string, Record<string, number>> = Object.fromEntries(
+    regionIds.map((region) => [region, {}]),
+  );
+  const lootIssues: string[] = [];
+  const activeLoot = game.loot.items.filter((item) => item.active);
+  for (let index = 0; index < activeLoot.length; index++) {
+    const item = activeLoot[index];
+    if (!item) continue;
+    lootKinds[item.kind] = (lootKinds[item.kind] ?? 0) + 1;
+    const x = item.group.position.x;
+    const z = item.group.position.z;
+    const y = item.baseY - 1;
+    const region = regionOrWilderness(x, z).id;
+    if (isGunKind(item.kind)) {
+      const counts = weaponsByRegion[region] ?? (weaponsByRegion[region] = {});
+      counts[item.kind] = (counts[item.kind] ?? 0) + 1;
+    }
+    if (![x, y, z].every(Number.isFinite)) {
+      lootIssues.push(`${index}:${item.kind}:non-finite`);
+      continue;
+    }
+    const support = game.world.groundHeight(x, z, y + 0.32);
+    if (Math.abs(support - y) > 0.34) {
+      lootIssues.push(`${index}:${item.kind}:support:${(support - y).toFixed(2)}:${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`);
+    }
+    if (!lootPointClear(game.world, x, y, z)) {
+      const blocker = game.world.aabbs.find((box) => {
+        if (box.off || box.tag === 'floor' || box.tag === 'roof' || y >= box.maxY - 0.02 || y + 0.8 <= box.minY) {
+          return false;
+        }
+        const dx = Math.max(box.minX - x, 0, x - box.maxX);
+        const dz = Math.max(box.minZ - z, 0, z - box.maxZ);
+        return dx * dx + dz * dz < 0.24 * 0.24;
+      })?.tag ?? game.world.cyls.find((cylinder) => {
+        if (y >= cylinder.y1 - 0.02 || y + 0.8 <= cylinder.y0) return false;
+        const dx = x - cylinder.x;
+        const dz = z - cylinder.z;
+        return dx * dx + dz * dz < (0.24 + cylinder.r) ** 2;
+      })?.tag ?? 'unknown';
+      lootIssues.push(`${index}:${item.kind}:blocked:${blocker}:${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`);
+    }
+  }
+  for (let i = 0; i < activeLoot.length; i++) {
+    const a = activeLoot[i];
+    if (!a) continue;
+    for (let j = i + 1; j < activeLoot.length; j++) {
+      const b = activeLoot[j];
+      if (!b || Math.abs(a.baseY - b.baseY) > 0.7) continue;
+      if (Math.hypot(a.group.position.x - b.group.position.x, a.group.position.z - b.group.position.z) < 0.34) {
+        lootIssues.push(`${i}:${j}:overlap`);
+      }
+    }
+  }
+  panel.dataset.lootKindCounts = JSON.stringify(lootKinds);
+  panel.dataset.regionWeaponCounts = JSON.stringify(weaponsByRegion);
+  panel.dataset.lootAuditIssues = lootIssues.join('|');
   if (id === 'maptour') {
     const requested = new URLSearchParams(window.location.search).get('region');
     const site = game.world.mapSites.find((candidate) => candidate.region === requested) ?? game.world.mapSites[0];
@@ -172,6 +264,60 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       window.requestAnimationFrame(publishTactics);
     };
     window.requestAnimationFrame(publishTactics);
+  }
+  if (id === 'botswim') {
+    const bots = game.bots.slice(0, 4);
+    const lastSwimming = bots.map((bot) => bot.char.swimming);
+    const lastGrounded = bots.map((bot) => bot.char.grounded);
+    const swimFlips = bots.map(() => 0);
+    const groundFlips = bots.map(() => 0);
+    const reversals = bots.map(() => 0);
+    const lastX = bots.map((bot) => bot.char.pos.x);
+    const lastZ = bots.map((bot) => bot.char.pos.z);
+    const lastDx = bots.map(() => 0);
+    const lastDz = bots.map(() => 0);
+    const publishBotSwim = (): void => {
+      if (!panel.isConnected) return;
+      for (let i = 0; i < bots.length; i++) {
+        const bot = bots[i];
+        if (!bot) continue;
+        const c = bot.char;
+        if (c.swimming !== lastSwimming[i]) {
+          swimFlips[i] = (swimFlips[i] ?? 0) + 1;
+          lastSwimming[i] = c.swimming;
+        }
+        if (c.grounded !== lastGrounded[i]) {
+          groundFlips[i] = (groundFlips[i] ?? 0) + 1;
+          lastGrounded[i] = c.grounded;
+        }
+        const dx = c.pos.x - (lastX[i] ?? c.pos.x);
+        const dz = c.pos.z - (lastZ[i] ?? c.pos.z);
+        const dl = Math.hypot(dx, dz);
+        const previousLength = Math.hypot(lastDx[i] ?? 0, lastDz[i] ?? 0);
+        if (dl > 0.015 && previousLength > 0.015 &&
+          (dx * (lastDx[i] ?? 0) + dz * (lastDz[i] ?? 0)) / (dl * previousLength) < -0.72) {
+          reversals[i] = (reversals[i] ?? 0) + 1;
+        }
+        if (dl > 0.015) {
+          lastDx[i] = dx;
+          lastDz[i] = dz;
+        }
+        lastX[i] = c.pos.x;
+        lastZ[i] = c.pos.z;
+      }
+      panel.dataset.botSwimStates = bots.map((bot) => `${bot.char.swimming ? 'swim' : bot.char.grounded ? 'ground' : 'air'}:${bot.tacticalState}`).join('|');
+      panel.dataset.botSwimPositions = bots.map((bot) => `${bot.char.pos.x.toFixed(2)},${bot.char.pos.y.toFixed(2)},${bot.char.pos.z.toFixed(2)}`).join('|');
+      panel.dataset.botSwimSpeeds = bots.map((bot) => bot.char.speed2d.toFixed(2)).join('|');
+      panel.dataset.botSwimPoseX = bots.map((bot) => bot.char.parts.inner.rotation.x.toFixed(3)).join('|');
+      panel.dataset.botSwimHealth = bots.map((bot) => Math.max(0, bot.char.hp).toFixed(1)).join('|');
+      panel.dataset.botSwimAlive = bots.map((bot) => String(bot.char.alive)).join('|');
+      panel.dataset.botSwimAirPose = bots.map((bot) => bot.char.airPose ?? 'none').join('|');
+      panel.dataset.botSwimFlips = swimFlips.join(',');
+      panel.dataset.botGroundFlips = groundFlips.join(',');
+      panel.dataset.botDirectionReversals = reversals.join(',');
+      window.requestAnimationFrame(publishBotSwim);
+    };
+    window.requestAnimationFrame(publishBotSwim);
   }
   if (id === 'botvehicle') {
     const vehicleStateHistory = new Set<string>();
@@ -568,6 +714,74 @@ function setupSwim(game: Game): void {
   if (params.get('auto') === '1') {
     game.input.keys.add('KeyW');
     game.input.keys.add('ShiftLeft');
+  }
+}
+
+function setupBotSwim(game: Game): void {
+  const waterX = 0;
+  const waterZ = riverZAt(waterX);
+  const observerBank = new THREE.Vector2();
+  findSwimBank(observerBank, waterX, waterZ, waterX, waterZ + 80, game.world);
+  const observerDx = observerBank.x - waterX;
+  const observerDz = observerBank.y - waterZ;
+  const observerLength = Math.hypot(observerDx, observerDz) || 1;
+  let playerX = observerBank.x + observerDx / observerLength * 5;
+  let playerZ = observerBank.y + observerDz / observerLength * 5;
+  for (let distance = 5; distance <= 11; distance += 1.5) {
+    const x = observerBank.x + observerDx / observerLength * distance;
+    const z = observerBank.y + observerDz / observerLength * distance;
+    if (!game.world.pointFree(x, z, 0.65, WATER_Y + 0.2, 17)) continue;
+    playerX = x;
+    playerZ = z;
+    break;
+  }
+  setGroundPlayer(game, playerX, playerZ);
+  const player = game.playerCtl;
+  if (player) {
+    player.yaw = Math.atan2(waterX - playerX, waterZ - playerZ);
+    player.pitch = 0.03;
+  }
+  game.zone.center.set(observerBank.x, observerBank.y);
+  game.zone.nextCenter.copy(game.zone.center);
+  game.zone.radius = 200;
+  game.zone.nextRadius = 200;
+  game.zone.state = 'done';
+  game.zoneArmed = true;
+
+  const offsets = [-7.5, -2.5, 2.5, 7.5] as const;
+  for (let i = 0; i < offsets.length; i++) {
+    const bot = game.bots[i];
+    const x = offsets[i];
+    if (!bot || x === undefined) continue;
+    const centerZ = riverZAt(x);
+    const bank = new THREE.Vector2();
+    findSwimBank(bank, x, centerZ, observerBank.x, observerBank.y, game.world);
+    const dx = bank.x - x;
+    const dz = bank.y - centerZ;
+    const length = Math.hypot(dx, dz) || 1;
+    let swimX: number = x;
+    let swimZ: number = centerZ;
+    for (let distance = Math.min(13, length); distance >= 3; distance -= 0.5) {
+      const sx = bank.x - dx / length * distance;
+      const sz = bank.y - dz / length * distance;
+      if (WATER_Y - game.world.getHeight(sx, sz) <= 1.35) continue;
+      swimX = sx;
+      swimZ = sz;
+      break;
+    }
+    bot.jumpS = -1;
+    bot.descent = null;
+    bot.trainingIdle = false;
+    bot.trainingPassive = true;
+    bot.char.alive = true;
+    bot.char.hp = 100;
+    bot.char.airPose = null;
+    bot.char.group.visible = true;
+    bot.char.pos.set(swimX, WATER_Y - 0.78, swimZ);
+    bot.char.groundH = WATER_Y - 0.03;
+    bot.char.grounded = false;
+    bot.char.swimming = true;
+    bot.char.yaw = Math.atan2(bank.x - swimX, bank.y - swimZ);
   }
 }
 
@@ -1089,6 +1303,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   if (id !== 'parachute' && id !== 'stability' && id !== 'squadcommand') parkSquad(game);
   if (id === 'stairs') setupStairs(game);
   else if (id === 'swim') setupSwim(game);
+  else if (id === 'botswim') setupBotSwim(game);
   else if (id === 'combat') setupCombat(game);
   else if (id === 'bottactics') setupBotTactics(game);
   else if (id === 'botvehicle') setupBotVehicle(game);

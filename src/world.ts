@@ -1604,8 +1604,10 @@ export class World {
         const x = site.resolvedX + Math.cos(angle) * distance;
         const z = site.resolvedZ + Math.sin(angle) * distance;
         if (!this.pointFree(x, z, 0.42, WATER_Y + 0.25, 17)) continue;
+        const terrainY = this.getHeight(x, z);
         this.mapLootSpots.push({
-          x, y: this.getHeight(x, z), z,
+          // 地标附近可能有矮台、栈板或台阶, 物资应落在可站立顶面而不是埋进其下方.
+          x, y: this.groundHeight(x, z, terrainY + 1.2), z,
           premium: i < site.premiumSpots,
           region: site.region,
           siteId: site.id,

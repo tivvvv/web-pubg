@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import {
-  findBridgeExit, findEmergencyNavPoint, findLocalEscape, findSwimBank, findVehicleRiverWaypoint,
+  findBridgeExit, findEmergencyNavPoint, findLocalEscape, findShoreExitPoint, findSwimBank,
+  findVehicleRiverWaypoint,
 } from '../src/botnav';
 import {
   shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
@@ -27,6 +28,34 @@ describe('游泳上岸点搜索', () => {
     const out = new THREE.Vector2();
     expect(findSwimBank(out, 0, 0, 20, 0, world)).toBe(false);
     expect(out.x).toBeGreaterThan(0);
+  });
+
+  it('上岸后继续选择岸内安全点而不是立即折返水中', () => {
+    const world = {
+      getHeight: (_x: number, z: number) => z >= 8 ? WATER_Y + 0.2 : WATER_Y - 2,
+      pointFree: () => true,
+    };
+    const out = new THREE.Vector2();
+    expect(findShoreExitPoint(out, 0, 0, 0, 8, world)).toBe(true);
+    expect(out.y).toBeGreaterThan(8);
+  });
+
+  it('岸内被障碍封死时不会返回不安全脱离点', () => {
+    const world = {
+      getHeight: () => WATER_Y + 0.2,
+      pointFree: () => false,
+    };
+    const out = new THREE.Vector2();
+    expect(findShoreExitPoint(out, 0, 0, 0, 8, world)).toBe(false);
+  });
+
+  it('不会把仍在水面以下的浅滩当作稳定离岸点', () => {
+    const world = {
+      getHeight: () => WATER_Y - 0.1,
+      pointFree: () => true,
+    };
+    const out = new THREE.Vector2();
+    expect(findShoreExitPoint(out, 0, 0, 0, 8, world)).toBe(false);
   });
 
   it('严格区分深水入水和浅滩上岸阈值', () => {

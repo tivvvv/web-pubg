@@ -27,6 +27,40 @@ export interface LootItem {
 export const LOOT_CAP = 240; // 室内配对 + 野外补齐 + 野外武器/弹药 + 空投内容物
 export const CORE_LOOT_TARGET = 206; // 24 人轻量局的地图初始物资总量, 为死亡盒和空投保留对象池余量
 
+type LootPlacementWorld = Pick<World, 'aabbs' | 'cyls'>;
+
+function outdoorLootGround(world: World, x: number, z: number): number {
+  const terrain = world.getHeight(x, z);
+  return world.groundHeight(x, z, terrain + 1.2);
+}
+
+// 拾取物只需要较小的占地空间，但必须避开同高度的墙、门窗、树木和岩石。
+// 地板与屋顶是承托面，不应被当作嵌入；不同楼层的碰撞体也不影响当前位置。
+export function lootPointClear(
+  world: LootPlacementWorld,
+  x: number,
+  y: number,
+  z: number,
+  radius = 0.24,
+): boolean {
+  const top = y + 0.8;
+  for (const c of world.cyls) {
+    if (y >= c.y1 - 0.02 || top <= c.y0) continue;
+    const dx = x - c.x;
+    const dz = z - c.z;
+    const rr = radius + c.r;
+    if (dx * dx + dz * dz < rr * rr) return false;
+  }
+  for (const b of world.aabbs) {
+    if (b.off || b.tag === 'floor' || b.tag === 'roof') continue;
+    if (y >= b.maxY - 0.02 || top <= b.minY) continue;
+    const dx = Math.max(b.minX - x, 0, x - b.maxX);
+    const dz = Math.max(b.minZ - z, 0, z - b.maxZ);
+    if (dx * dx + dz * dz < radius * radius) return false;
+  }
+  return true;
+}
+
 // 共享几何/材质
 const GEO = {
   ammo: new THREE.BoxGeometry(0.26, 0.18, 0.2),
@@ -301,7 +335,7 @@ export class LootManager {
       const region = regionOrWilderness(x, z);
       if (this.activeCountInRegion(region.id) >= region.lootBudget) continue;
       const kind = this.rollKind('wild', region.tier, region.profile);
-      const y = world.getHeight(x, z);
+      const y = outdoorLootGround(world, x, z);
       const item = this.spawn(kind, x, y, z);
       if (!item) break;
       count++;
@@ -338,7 +372,7 @@ export class LootManager {
       }
       if (!separated) continue;
       const kind = this.rollKind('wild', region.tier, region.profile);
-      const item = this.spawn(kind, x, world.getHeight(x, z), z);
+      const item = this.spawn(kind, x, outdoorLootGround(world, x, z), z);
       if (!item) break;
       spawned++;
       current++;
@@ -354,12 +388,43 @@ export class LootManager {
   private pairAmmo(world: World, kind: LootKind, x: number, y: number, z: number, chance: number, sampleTerrain = false): number {
     if (!isGunKind(kind)) return 0;
     if (random() >= chance) return 0;
-    const a = random() * Math.PI * 2;
-    const d = 0.8 + random() * 1.2;
-    const ax = x + Math.cos(a) * d;
-    const az = z + Math.sin(a) * d;
-    const it = this.spawn(AMMO_LOOT_KIND[WEAPONS[kind].ammo], ax, sampleTerrain ? world.getHeight(ax, az) : y, az);
-    return it ? 1 : 0;
+    const sourceRegion = regionOrWilderness(x, z).id;
+    const sourcePlot = sampleTerrain ? null : world.buildings.plots.find((plot) => (
+      x > plot.minX + 2 && x < plot.maxX - 2 && z > plot.minZ + 2 && z < plot.maxZ - 2
+    ));
+    const phase = random() * Math.PI * 2;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const a = phase + attempt * 2.399963;
+      const d = 0.82 + ((attempt * 0.37 + random() * 0.24) % 1.12);
+      const ax = x + Math.cos(a) * d;
+      const az = z + Math.sin(a) * d;
+      if (regionOrWilderness(ax, az).id !== sourceRegion) continue;
+      if (sourcePlot && (
+        ax <= sourcePlot.minX + 2.35 || ax >= sourcePlot.maxX - 2.35 ||
+        az <= sourcePlot.minZ + 2.35 || az >= sourcePlot.maxZ - 2.35
+      )) continue;
+      const ay = sampleTerrain ? world.getHeight(ax, az) : y;
+      const localRise = sampleTerrain
+        ? Math.max(
+          Math.abs(world.getHeight(ax + 0.35, az) - ay),
+          Math.abs(world.getHeight(ax - 0.35, az) - ay),
+          Math.abs(world.getHeight(ax, az + 0.35) - ay),
+          Math.abs(world.getHeight(ax, az - 0.35) - ay),
+        )
+        : 0;
+      if (sampleTerrain && (
+        localRise > 0.2 ||
+        !world.pointFree(ax, az, 0.24, WATER_Y + 0.25, 16)
+      )) continue;
+      const support = world.groundHeight(ax, az, ay + 0.32);
+      if (Math.abs(support - ay) > 0.34 || !lootPointClear(world, ax, ay, az)) continue;
+      if (this.items.some((item) => item.active &&
+        Math.abs(item.baseY - (ay + 1)) < 0.9 &&
+        Math.hypot(item.group.position.x - ax, item.group.position.z - az) < 0.52)) continue;
+      const it = this.spawn(AMMO_LOOT_KIND[WEAPONS[kind].ammo], ax, ay, az);
+      return it ? 1 : 0;
+    }
+    return 0;
   }
 
   // 野外枪支稀有度: 手枪/冲锋枪常见, 步枪少见, 狙击稀有, 霰弹补充近战位
@@ -473,7 +538,7 @@ export class LootManager {
       const region = regionOrWilderness(a.x, a.z);
       if (this.activeCountInRegion(region.id) >= region.lootBudget) continue;
       const kind = this.rollOutdoorGun(region.tier, region.profile);
-      const y = world.getHeight(a.x, a.z);
+      const y = outdoorLootGround(world, a.x, a.z);
       const it = this.spawn(kind, a.x, y, a.z);
       if (!it) break;
       it.outdoor = true;
@@ -489,7 +554,7 @@ export class LootManager {
       const region = regionOrWilderness(a.x, a.z);
       if (this.activeCountInRegion(region.id) >= region.lootBudget) continue;
       const kind = this.rollAmmo();
-      const y = world.getHeight(a.x, a.z);
+      const y = outdoorLootGround(world, a.x, a.z);
       const it = this.spawn(kind, a.x, y, a.z);
       if (!it) break;
       it.outdoor = true;
