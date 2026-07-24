@@ -31,11 +31,12 @@ export interface StrategicDecisionInput {
   needsGear: boolean;
   recentThreat: boolean;
   postCombat: boolean;
+  recoverHpThreshold?: number;
 }
 
 export function chooseStrategicMode(input: StrategicDecisionInput): BotStrategicMode {
   if (input.rotation !== 'none') return 'rotate';
-  if (input.hp < 58 && input.hasHeal) return 'recover';
+  if (input.hp < (input.recoverHpThreshold ?? 58) && input.hasHeal) return 'recover';
   if (input.postCombat) return 'postcombat';
   if (input.recentThreat) return 'hunt';
   if (!input.hasGun || !input.hasAmmo || input.needsGear) return 'loot';

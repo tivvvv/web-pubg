@@ -66,6 +66,7 @@ import { KnockSys } from './knock';
 import { AudioSys } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
 import { BotController, BOT_NAMES } from './bot';
+import { buildBotDifficultyDeck } from './botdifficulty';
 import { BombardmentSystem } from './bombardment';
 import type { Destructible } from './buildings';
 import {
@@ -809,6 +810,7 @@ export class Game {
         pts.push({ x, z });
       }
     }
+    const botDifficultyDeck = buildBotDifficultyDeck(TOTAL - SQUAD_SIZE, random);
 
     // 玩家: 进入舱内航线阶段(航线角已在出生点采样时确定)
     this.player.char.team = 'squad';
@@ -850,14 +852,20 @@ export class Game {
         continue;
       }
       // 敌方 bot ×20(同机跳伞: 按投放点在航线上的投影里程错峰出舱)
-      const bot = new BotController(BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`, BOT_SHIRTS[(i - 1) % BOT_SHIRTS.length] ?? 0x888888);
+      const difficulty = botDifficultyDeck[i - SQUAD_SIZE] ?? 'regular';
+      const bot = new BotController(
+        BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`,
+        BOT_SHIRTS[(i - 1) % BOT_SHIRTS.length] ?? 0x888888,
+        difficulty,
+      );
       bot.char.pos.copy(this.player.char.pos); // 在机舱内(隐藏)
       bot.char.yaw = rand(0, Math.PI * 2);
       bot.char.airPose = 'sit';
       bot.char.group.visible = false;
       bot.jumpS = clamp(500 + p.x * dirX + p.z * dirZ + rand(-55, 55), 40, 950);
       bot.dropTarget.set(p.x, 0, p.z);
-      if (random() < 0.3) bot.char.throwables.frag = 1; // 30% bot 携带 1 颗手雷
+      if (random() < bot.difficulty.fragCarryChance) bot.char.throwables.frag = 1;
+      if (random() < bot.difficulty.smokeCarryChance) bot.char.throwables.smoke = 1;
       if (random() < 0.5) bot.char.heals.bandage = 1 + Math.floor(random() * 2); // 50% 带 1~2 绷带
       if (random() < 0.35) bot.char.pack = { level: random() < 0.7 ? 1 : 2 }; // 35% 带 L1~L2 背包
       // 40% bot 开局自带 L1~L2 头盔/防弹衣

@@ -99,6 +99,15 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.botDropTargets = JSON.stringify(
     game.bots.map((bot) => ({ x: Number(bot.dropTarget.x.toFixed(1)), z: Number(bot.dropTarget.z.toFixed(1)) })),
   );
+  panel.dataset.botDifficultyTiers = game.bots.map((bot) => bot.difficultyTier).join(',');
+  panel.dataset.botDifficultyCounts = JSON.stringify(
+    Object.fromEntries(
+      (['rookie', 'regular', 'veteran', 'elite'] as const).map((tier) => [
+        tier,
+        game.bots.filter((bot) => bot.difficultyTier === tier).length,
+      ]),
+    ),
+  );
   panel.dataset.botDropIssues = game.bots.flatMap((bot, index) => {
     const { x, z } = bot.dropTarget;
     if (!Number.isFinite(x) || !Number.isFinite(z)) return [`${index}:non-finite`];
@@ -256,6 +265,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
         if (bot) stateHistory[i]?.add(bot.tacticalState);
       }
       panel.dataset.botStates = bots.map((bot) => bot.tacticalState).join('|');
+      panel.dataset.botTacticsDifficulties = bots.map((bot) => bot.difficultyTier).join('|');
       panel.dataset.botStateHistory = stateHistory.map((states) => [...states].join(',')).join('|');
       panel.dataset.botHealth = bots.map((bot) => Math.round(bot.char.hp)).join('|');
       panel.dataset.botPositions = bots.map((bot) => `${bot.char.pos.x.toFixed(1)},${bot.char.pos.z.toFixed(1)}`).join('|');

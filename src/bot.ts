@@ -27,8 +27,10 @@ import { findTacticalRouteWaypoint, type TacticalRoute } from './tactics';
 import { random } from './random';
 import { driveVehicleStep, seatWorld, VEHICLE_SPEC, type Vehicle } from './vehicles';
 import { reloadDuration } from './gunplay';
+import {
+  botAimSigma, botDifficultyProfile, type BotDifficultyProfile, type BotDifficultyTier,
+} from './botdifficulty';
 
-const ENGAGE_DIST = 92;
 // bot 降落伞配色(哑光低饱和, 按角色 id 轮换; 队友另用绿色系)
 const BOT_CANOPIES = [0x7a8a6a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a, 0x8a6e62] as const;
 
@@ -41,6 +43,7 @@ function signedAngleDelta(current: number, target: number): number {
 
 export class BotController {
   readonly char: Character;
+  readonly difficulty: BotDifficultyProfile;
   trainingIdle = false; // 固定测试场景专用, 普通对局始终为 false
   trainingPassive = false; // 回归场景可保留完整导航, 但隔离真实交战造成的姿态干扰
   private state: 'wander' | 'engage' = 'wander';
@@ -51,6 +54,7 @@ export class BotController {
   private shotT = 0;
   private burstCd = 0;
   private fireTimer = 0;
+  private meleeThinkT = 0;
   private reloadT = 0;
   private reloadTotal = 0;
   private losT = 0;
@@ -133,9 +137,10 @@ export class BotController {
   private dir = new THREE.Vector3();
   private aim = new THREE.Vector3();
 
-  constructor(name: string, shirtColor: number) {
+  constructor(name: string, shirtColor: number, difficulty: BotDifficultyTier = 'regular') {
     this.char = new Character(name, false, shirtColor);
-    this.scanT = random() * 0.3;
+    this.difficulty = botDifficultyProfile(difficulty);
+    this.scanT = random() * this.difficulty.scanMax;
     const roleRoll = random();
     this.routeRole = roleRoll < 0.34 ? 'advance' : roleRoll < 0.67 ? 'flank' : 'defend';
   }
@@ -156,6 +161,14 @@ export class BotController {
     if (this.driving) return 'vehicle:drive';
     if (this.vehicleTarget) return 'vehicle:board';
     return this.state === 'engage' ? `combat:${this.tacticMode}` : this.strategicMode;
+  }
+
+  get difficultyTier(): BotDifficultyTier {
+    return this.difficulty.id;
+  }
+
+  private nextScanDelay(): number {
+    return rand(this.difficulty.scanMin, this.difficulty.scanMax);
   }
 
   get hasNavigationIntent(): boolean {
@@ -221,6 +234,7 @@ export class BotController {
       return;
     }
     this.fireTimer = Math.max(0, this.fireTimer - dt);
+    this.meleeThinkT = Math.max(0, this.meleeThinkT - dt);
     this.postCombatT = Math.max(0, this.postCombatT - dt);
     this.blockedLootT = Math.max(0, this.blockedLootT - dt);
     this.shoreCooldownT = Math.max(0, this.shoreCooldownT - dt);
@@ -229,7 +243,7 @@ export class BotController {
     if (this.driving) {
       this.scanT -= dt;
       if (this.scanT <= 0) {
-        this.scanT = 0.25 + random() * 0.08;
+        this.scanT = this.nextScanDelay();
         this.scan(game);
       }
       this.updateVehicleDrive(dt, game);
@@ -326,7 +340,7 @@ export class BotController {
     // 交错扫描: 每 0.25s 左右找一次目标
     this.scanT -= dt;
     if (this.scanT <= 0) {
-      this.scanT = 0.25 + random() * 0.08;
+      this.scanT = this.nextScanDelay();
       this.scan(game);
     }
 
@@ -1010,7 +1024,7 @@ export class BotController {
 
     c.eyePos(this.eye);
     let nearest: Character | null = null;
-    let bestScore = ENGAGE_DIST;
+    let bestScore = this.difficulty.detectionDistance;
     let heard: Character | null = null;
     let heardScore = Infinity;
     for (const other of game.chars) {
@@ -1020,7 +1034,7 @@ export class BotController {
       )) continue;
       const d = Math.hypot(other.pos.x - c.pos.x, other.pos.z - c.pos.z);
       const shotAge = game.nowSec - other.lastLoudShotT;
-      if (shotAge >= 0 && shotAge < 1.4 && d < 115) {
+      if (shotAge >= 0 && shotAge < 1.4 && d < this.difficulty.hearingDistance) {
         const score = d + shotAge * 18;
         if (score < heardScore) {
           heard = other;
@@ -1028,10 +1042,11 @@ export class BotController {
         }
       }
       // 灌木隐蔽: 目标在灌木足迹内按姿态压缩可侦距离; 开火暴露 2s 恢复常规
-      let detect = ENGAGE_DIST;
+      let detect = this.difficulty.detectionDistance;
       if (game.world.inBush(other.pos.x, other.pos.z) && game.nowSec - other.lastShotT > 2) {
-        if (other.stance === 'prone') detect = other.speed2d < 0.3 ? 12 : 40;
-        else if (other.stance === 'crouch') detect = other.speed2d < 0.3 ? 40 : 65;
+        const perceptionScale = this.difficulty.detectionDistance / 88;
+        if (other.stance === 'prone') detect = Math.min(detect, (other.speed2d < 0.3 ? 12 : 40) * perceptionScale);
+        else if (other.stance === 'crouch') detect = Math.min(detect, (other.speed2d < 0.3 ? 40 : 65) * perceptionScale);
       }
       if (d >= detect) continue;
       other.chestPos(this.tgtPos);
@@ -1048,10 +1063,10 @@ export class BotController {
     if (nearest) {
       if (this.target !== nearest) {
         this.target = nearest;
-        this.reactT = rand(0.3, 0.8);
+        this.reactT = rand(this.difficulty.reactionMin, this.difficulty.reactionMax);
         this.burstLeft = 0;
         this.burstCd = 0;
-        this.engageCrouch = random() < 0.15; // 15% 概率本次交战蹲下对枪
+        this.engageCrouch = random() < this.difficulty.crouchChance;
         this.tacticT = 0;
         this.navigator.reset(c);
       }
@@ -1117,7 +1132,8 @@ export class BotController {
       this.lastKnown.copy(t.pos);
     } else {
       this.lostT += dt;
-      if (this.lostT > 2.5 || dist > ENGAGE_DIST + 20) {
+      if (this.lostT > this.difficulty.lostTargetSeconds ||
+        dist > this.difficulty.detectionDistance + 20) {
         this.target = null;
         this.state = 'wander';
         c.setStance('stand');
@@ -1134,10 +1150,11 @@ export class BotController {
 
     // 扔雷: 持步枪/冲锋枪, 目标在 8-30m 且几乎静止超过 2.5s, 扔出唯一一颗手雷
     const gunId = c.heldGun()?.def.id;
-    if (!this.fragUsed && c.throwables.frag > 0 && this.losOk &&
+    if (Number.isFinite(this.difficulty.fragStillSeconds) &&
+      !this.fragUsed && c.throwables.frag > 0 && this.losOk &&
       (gunId === 'rifle' || gunId === 'akm' || gunId === 'dmr' || gunId === 'smg') && dist >= 8 && dist <= 30) {
       if (t.speed2d < 0.6) this.stillT += dt; else this.stillT = 0;
-      if (this.stillT > 2.5) {
+      if (this.stillT > this.difficulty.fragStillSeconds) {
         this.throwFrag(t, dist, game);
         return;
       }
@@ -1149,7 +1166,7 @@ export class BotController {
     // 目标点短时间保持, 避免逐帧左右翻转.
     const rotation = this.rotationUrgency(game);
     const terminalDuel = game.zone.state === 'done' && game.aliveCount <= 3;
-    if (!terminalDuel && shouldDeploySmoke({
+    if (!terminalDuel && this.difficulty.useSmoke && shouldDeploySmoke({
       hasSmoke: c.throwables.smoke > 0,
       alreadyUsed: this.smokeUsed,
       hp: c.hp,
@@ -1165,10 +1182,10 @@ export class BotController {
     const shouldRefreshTactic = this.tacticT <= 0 ||
       (rotation === 'immediate' && this.tacticMode !== 'rotate');
     if (shouldRefreshTactic) {
-      this.tacticT = rand(0.75, 1.35);
-      this.strafeDir = random() < 0.35 ? -this.strafeDir : this.strafeDir;
+      this.tacticT = rand(this.difficulty.tacticMin, this.difficulty.tacticMax);
+      this.strafeDir = random() < this.difficulty.strafeFlipChance ? -this.strafeDir : this.strafeDir;
       let coverAvailable = false;
-      const wantsCover = !meleeOnly && (this.reloadT > 0 || c.hp < 42);
+      const wantsCover = !meleeOnly && (this.reloadT > 0 || c.hp < this.difficulty.coverHpThreshold);
       if (wantsCover && findCoverPoint(this.tacticPoint, c, t, game.world, 14) &&
         !game.zone.isOutside(this.tacticPoint.x, this.tacticPoint.y)) {
         coverAvailable = true;
@@ -1295,7 +1312,7 @@ export class BotController {
       c.setStance('stand');
     }
     if (this.losOk && !meleeOnly) {
-      c.yaw = turnToward(c.yaw, desiredYaw, 7.5 * dt);
+      c.yaw = turnToward(c.yaw, desiredYaw, 7.5 * this.difficulty.turnSpeedScale * dt);
     }
 
     // 攻击
@@ -1324,14 +1341,17 @@ export class BotController {
     }
     if (meleeOnly) {
       if (dist < c.melee.def.range * 1.05) {
-        c.yaw = turnToward(c.yaw, desiredYaw, 10 * dt);
-        if (angleDiff(c.yaw, desiredYaw) < 0.3) game.meleeAttack(c);
+        c.yaw = turnToward(c.yaw, desiredYaw, 10 * this.difficulty.turnSpeedScale * dt);
+        if (this.meleeThinkT <= 0 && angleDiff(c.yaw, desiredYaw) < 0.3) {
+          game.meleeAttack(c);
+          this.meleeThinkT = rand(this.difficulty.meleeThinkMin, this.difficulty.meleeThinkMax);
+        }
       }
       return;
     }
     const gun = c.heldGun();
     if (!gun || this.reloadT > 0 || !this.losOk) return;
-    if (angleDiff(c.yaw, desiredYaw) > 0.22) return;
+    if (angleDiff(c.yaw, desiredYaw) > this.difficulty.fireAngle) return;
     if (gun.def.id === 'shotgun' && dist > 26) return; // 霰弹只在近距离开火(远则继续逼近)
 
     if (this.burstLeft > 0) {
@@ -1339,13 +1359,18 @@ export class BotController {
       if (this.shotT <= 0 && this.fireTimer <= 0) {
         this.fireAt(t, dist, game);
         this.burstLeft--;
-        this.shotT = gun.def.fireInterval * rand(1.35, 1.9);
-        if (this.burstLeft <= 0) this.burstCd = rand(0.5, 1.1);
+        this.shotT = gun.def.fireInterval *
+          rand(this.difficulty.shotCadenceMin, this.difficulty.shotCadenceMax);
+        if (this.burstLeft <= 0) {
+          this.burstCd = rand(this.difficulty.burstPauseMin, this.difficulty.burstPauseMax);
+        }
       }
     } else {
       this.burstCd -= dt;
       if (this.burstCd <= 0) {
-        this.burstLeft = gun.def.auto ? randInt(3, 6) : 1;
+        this.burstLeft = gun.def.auto
+          ? randInt(this.difficulty.burstMin, this.difficulty.burstMax)
+          : 1;
       }
     }
   }
@@ -1394,7 +1419,7 @@ export class BotController {
     c.eyePos(this.eye);
     t.chestPos(this.aim);
     // 距离/移动相关误差
-    const sigma = 0.028 + dist * 0.00055 + (t.speed2d > 5 ? 0.024 : 0) + (t.isPlayer ? 0.007 : 0);
+    const sigma = botAimSigma(this.difficulty, dist, t.speed2d, t.isPlayer);
     const errR = dist * Math.tan(sigma) * Math.sqrt(random());
     const errA = random() * Math.PI * 2;
     this.aim.x += Math.cos(errA) * errR;
@@ -1484,6 +1509,7 @@ export class BotController {
       needsGear,
       recentThreat: this.investigateT > 0,
       postCombat: this.postCombatT > 0,
+      recoverHpThreshold: this.difficulty.recoverHpThreshold,
     });
     if (this.strategicMode !== 'rotate' && this.strategicMode !== 'hunt' && this.strategicMode !== 'patrol') {
       this.releaseVehicleTarget();
@@ -1523,17 +1549,33 @@ export class BotController {
     // 搜索阶段优先恢复品, 弹药和可用武器, 再补护具与背包.
     let gearFound = false;
     if (rotation === 'none' && this.strategicMode === 'loot' && this.lootScanT <= 0) {
-      this.lootScanT = tier === 0 ? 0.35 : 0.75;
+      this.lootScanT = (tier === 0 ? 0.35 : 0.75) * this.difficulty.lootScanScale;
       if (c.hp < 65 && !hasHeal) {
-        const item = game.loot.nearestRecovery(c.pos.x, c.pos.y, c.pos.z, 42);
+        const item = game.loot.nearestRecovery(
+          c.pos.x,
+          c.pos.y,
+          c.pos.z,
+          42 * this.difficulty.lootRangeScale,
+        );
         if (item) gearFound = this.setLootTarget(game, item);
       }
       if (!gearFound && needAmmo) {
-        const ai = game.loot.nearestAmmoOfType(c.pos.x, c.pos.y, c.pos.z, 45, needAmmo);
+        const ai = game.loot.nearestAmmoOfType(
+          c.pos.x,
+          c.pos.y,
+          c.pos.z,
+          45 * this.difficulty.lootRangeScale,
+          needAmmo,
+        );
         if (ai) gearFound = this.setLootTarget(game, ai);
       }
       if (!gearFound && tier < 3) {
-        const item = game.loot.nearestWeapon(c.pos.x, c.pos.y, c.pos.z, tier === 0 ? 50 : 16);
+        const item = game.loot.nearestWeapon(
+          c.pos.x,
+          c.pos.y,
+          c.pos.z,
+          (tier === 0 ? 50 : 16) * this.difficulty.lootRangeScale,
+        );
         if (item) {
           const k = item.kind;
           if (isWeaponKind(k) && this.wantsWeapon(k)) {
@@ -1542,11 +1584,21 @@ export class BotController {
         }
       }
       if (!gearFound && (!c.helmet || !c.vest || c.helmet.level < 3 || c.vest.level < 3)) {
-        const ai = game.loot.nearestArmor(c.pos.x, c.pos.y, c.pos.z, 26);
+        const ai = game.loot.nearestArmor(
+          c.pos.x,
+          c.pos.y,
+          c.pos.z,
+          26 * this.difficulty.lootRangeScale,
+        );
         if (ai && this.wantsArmor(ai.kind)) gearFound = this.setLootTarget(game, ai);
       }
       if (!gearFound && (!c.pack || c.pack.level < 3)) {
-        const item = game.loot.nearestPack(c.pos.x, c.pos.y, c.pos.z, 24);
+        const item = game.loot.nearestPack(
+          c.pos.x,
+          c.pos.y,
+          c.pos.z,
+          24 * this.difficulty.lootRangeScale,
+        );
         const level = item ? packLevelFromLoot(item.kind) : null;
         if (item && level && level > (c.pack?.level ?? 0)) {
           gearFound = this.setLootTarget(game, item);

@@ -62,6 +62,8 @@ describe('机器人战术决策', () => {
     expect(chooseStrategicMode({ ...base, recentThreat: true, needsGear: true })).toBe('hunt');
     expect(chooseStrategicMode({ ...base, hasAmmo: false })).toBe('loot');
     expect(chooseStrategicMode(base)).toBe('patrol');
+    expect(chooseStrategicMode({ ...base, hp: 64, hasHeal: true, recoverHpThreshold: 68 })).toBe('recover');
+    expect(chooseStrategicMode({ ...base, hp: 64, hasHeal: true, recoverHpThreshold: 50 })).toBe('patrol');
   });
 
   it('战斗状态可切换转移, 掩体, 搜索, 进攻和后撤', () => {
