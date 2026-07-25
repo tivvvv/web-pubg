@@ -6,6 +6,7 @@ import type { HealId } from './heals';
 import type { WeatherKind } from './environment';
 import type { ScopeMode } from './gunplay';
 import { SQUAD_ORDER_LABELS, type SquadOrderKind } from './squadcommands';
+import type { PlayerFlowCue, PlayerFlowTone } from './playerflow';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -14,6 +15,22 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 export type HitKind = 'hit' | 'head' | 'kill';
+export type ToastTone = PlayerFlowTone;
+
+const TOAST_PRIORITY: Record<ToastTone, number> = {
+  info: 0,
+  success: 1,
+  warning: 2,
+  danger: 3,
+};
+
+export function toastShouldInterrupt(current: ToastTone, incoming: ToastTone): boolean {
+  return TOAST_PRIORITY[incoming] >= TOAST_PRIORITY[current];
+}
+
+export function selectQueuedToast<T extends { tone: ToastTone }>(queued: T | null, incoming: T): T {
+  return !queued || toastShouldInterrupt(queued.tone, incoming.tone) ? incoming : queued;
+}
 
 export function shouldShowSwimmingStatus(swimming: boolean, descentActive: boolean): boolean {
   return swimming && !descentActive;
@@ -68,6 +85,9 @@ export class Hud {
   private dmgArc = el('dmg-arc');
   private blastFlash = el('blast-flash');
   private toastEl = el('toast');
+  private flowCue = el('flow-cue');
+  private flowCueTitle = el('flow-cue-title');
+  private flowCueDetail = el('flow-cue-detail');
   private zoneTint = el('zone-tint');
   private hud = el('hud');
   private pickupPrompt = el('pickup-prompt');
@@ -100,6 +120,8 @@ export class Hud {
   };
 
   private toastTimer = 0;
+  private toastTone: ToastTone = 'info';
+  private queuedToast: { message: string; tone: ToastTone } | null = null;
   private hitTimer = 0;
   private dmgTimer = 0;
   private blastTimer = 0;
@@ -124,6 +146,7 @@ export class Hud {
   private crosshairKey = '';
   private zoneTintKey: boolean | null = null;
   private squadOrderKey = '';
+  private flowCueKey = '';
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
@@ -150,14 +173,16 @@ export class Hud {
     this.hud.classList.toggle('hidden', name === 'start');
   }
 
-  setDeath(stats: GameStats): void {
+  setDeath(stats: GameStats, detail: string): void {
+    el('death-reason').textContent = detail;
     el('death-placement').textContent = `#${stats.placement} / 24`;
     el('death-kills').textContent = String(stats.kills);
     el('death-damage').textContent = String(Math.round(stats.damage));
     el('death-time').textContent = fmtTime(stats.timeSec);
   }
 
-  setWin(stats: GameStats): void {
+  setWin(stats: GameStats, detail: string): void {
+    el('win-detail').textContent = detail;
     el('win-kills').textContent = String(stats.kills);
     el('win-damage').textContent = String(Math.round(stats.damage));
     el('win-time').textContent = fmtTime(stats.timeSec);
@@ -236,6 +261,21 @@ export class Hud {
     this.countsKey = key;
     this.aliveEl.textContent = `剩余 ${alive}`;
     this.killsEl.textContent = `击杀 ${kills}`;
+  }
+
+  setFlowCue(cue: PlayerFlowCue | null): void {
+    const key = cue ? `${cue.tone}|${cue.title}|${cue.detail}` : 'hidden';
+    if (key === this.flowCueKey) return;
+    this.flowCueKey = key;
+    if (!cue) {
+      this.flowCue.classList.remove('show');
+      delete this.flowCue.dataset.tone;
+      return;
+    }
+    this.flowCueTitle.textContent = cue.title;
+    this.flowCueDetail.textContent = cue.detail;
+    this.flowCue.dataset.tone = cue.tone;
+    this.flowCue.classList.add('show');
   }
 
   setZoneStatus(text: string, urgent: boolean): void {
@@ -507,12 +547,31 @@ export class Hud {
     this.blastTimer = 0.58;
   }
 
-  toast(msg: string): void {
-    this.toastEl.textContent = msg;
+  private showToast(message: string, tone: ToastTone): void {
+    this.toastEl.textContent = message;
+    this.toastEl.dataset.tone = tone;
     this.toastEl.classList.remove('show');
     void this.toastEl.offsetWidth;
     this.toastEl.classList.add('show');
+    this.toastTone = tone;
     this.toastTimer = 1.8;
+  }
+
+  toast(message: string, tone: ToastTone = 'info'): void {
+    if (this.toastTimer > 0 && !toastShouldInterrupt(this.toastTone, tone)) {
+      this.queuedToast = selectQueuedToast(this.queuedToast, { message, tone });
+      return;
+    }
+    this.showToast(message, tone);
+  }
+
+  resetFeedback(): void {
+    this.toastTimer = 0;
+    this.queuedToast = null;
+    this.toastTone = 'info';
+    this.toastEl.classList.remove('show');
+    delete this.toastEl.dataset.tone;
+    this.setFlowCue(null);
   }
 
   setCrosshair(spreadPx: number, visible: boolean): void {
@@ -546,7 +605,14 @@ export class Hud {
     }
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;
-      if (this.toastTimer <= 0) this.toastEl.classList.remove('show');
+      if (this.toastTimer <= 0) {
+        this.toastEl.classList.remove('show');
+        if (this.queuedToast) {
+          const queued = this.queuedToast;
+          this.queuedToast = null;
+          this.showToast(queued.message, queued.tone);
+        }
+      }
     }
     if (this.dmgTimer > 0) {
       this.dmgTimer -= dt;

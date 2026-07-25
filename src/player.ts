@@ -745,6 +745,7 @@ export class PlayerController {
     c.removeCanopy();
     game.audio.windStop();
     game.audio.jumpLand();
+    game.onPlayerLanded();
   }
 
   private updateDescent(dt: number, input: Input, game: Game): void {

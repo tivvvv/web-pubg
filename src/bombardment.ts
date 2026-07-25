@@ -292,7 +292,7 @@ export class BombardmentSystem {
     this.timer = WARNING_DURATION;
     this.marker.visible = true;
     this.syncMarkerToTerrain(game);
-    game.hud.toast('附近出现轰炸区');
+    game.hud.toast('附近出现轰炸区', 'warning');
     game.audio.warn();
   }
 
@@ -300,7 +300,7 @@ export class BombardmentSystem {
     this.state = 'active';
     this.timer = ACTIVE_DURATION;
     this.shellTimer = 0;
-    game.hud.toast('轰炸开始');
+    game.hud.toast('轰炸开始', 'danger');
   }
 
   private pickCenter(game: Game): boolean {

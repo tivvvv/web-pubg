@@ -110,6 +110,7 @@ import { parseBoundedTestInteger } from './stability';
 import {
   squadAimScore, SquadCommandSystem, SQUAD_ORDER_LABELS, type SquadOrder, type SquadOrderKind,
 } from './squadcommands';
+import { playerDeathDetail, resolvePlayerFlowCue, shouldCelebrateFirstGun } from './playerflow';
 
 const TOTAL = MATCH_PLAYER_COUNT;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
@@ -184,6 +185,10 @@ export class Game {
   private damageDealt = 0;
   private deathT = -1;
   private playerPlacement = TOTAL;
+  private playerDeathDetailText = '你被淘汰';
+  private playerLandedAt = -1;
+  private playerArmedAt = -1;
+  private jumpReadyAnnounced = false;
   private zoneDmgT = 0;
   private zoneTickT = 0;
   private minimapT = 0;
@@ -713,6 +718,12 @@ export class Game {
   // 玩家跳伞(手动/自动): 启动毒圈计时
   onPlayerJump(): void {
     this.zoneArmed = true;
+    this.hud.toast('已离开飞机, 留意开伞高度', 'info');
+  }
+
+  onPlayerLanded(): void {
+    this.playerLandedAt = this.now;
+    this.hud.toast('已着陆, 搜寻武器和护具', 'success');
   }
 
   // 运输机只有位于当前白圈内时允许玩家主动跳伞
@@ -900,6 +911,10 @@ export class Game {
     this.damageDealt = 0;
     this.deathT = -1;
     this.playerPlacement = TOTAL;
+    this.playerDeathDetailText = '你被淘汰';
+    this.playerLandedAt = -1;
+    this.playerArmedAt = -1;
+    this.jumpReadyAnnounced = false;
     this.zoneDmgT = 0;
     this.minimapT = 0;
     this.healT = -1;
@@ -929,7 +944,7 @@ export class Game {
     this.hud.setSwimming(false);
     this.hud.setSquadOrder('follow');
     this.hud.showScreen(null);
-    this.hud.toast('飞机正在接近安全区');
+    this.hud.resetFeedback();
     this.state = 'playing';
     this.onResize();
     this.input.requestLock();
@@ -1063,7 +1078,7 @@ export class Game {
       }
     }
     if (this.zone.justBeganShrink) {
-      this.hud.toast('毒圈开始缩小！');
+      this.hud.toast('毒圈开始缩小!', 'warning');
       this.audio.warn();
     }
     this.updateZoneDamage(dt);
@@ -1702,7 +1717,9 @@ export class Game {
     else victim.vest = null;
     this.tmpEnd.set(victim.pos.x, victim.pos.y + 1.2, victim.pos.z);
     this.soundAt(this.tmpEnd, (d, p) => this.audio.armorBreak(d, p));
-    if (victim.isPlayer) this.hud.toast(kind === 'helmet' ? '头盔已损坏' : '防弹衣已损坏');
+    if (victim.isPlayer) {
+      this.hud.toast(kind === 'helmet' ? '头盔已损坏' : '防弹衣已损坏', 'warning');
+    }
   }
 
   private kill(victim: Character, attacker: Character | null, head: boolean, via?: string): void {
@@ -1736,16 +1753,22 @@ export class Game {
       this.hud.killFeed(via ? `${ns(victim)} 死于${via}` : `${ns(victim)} 被安全区吞噬`);
     }
     if (victim.team === 'squad' && !victim.isPlayer) {
-      this.hud.toast(`队友 ${victim.name} 被淘汰`);
+      this.hud.toast(`队友 ${victim.name} 被淘汰`, 'warning');
     }
     if (attacker?.isPlayer) {
       this.audio.kill();
-      this.hud.toast(`你淘汰了 ${victim.name}`);
+      this.hud.toast(`你淘汰了 ${victim.name}`, 'success');
     }
     this.hud.setCounts(this.aliveCount, this.player?.char.kills ?? 0);
 
     if (victim.isPlayer) {
       this.playerPlacement = placement;
+      this.playerDeathDetailText = playerDeathDetail({
+        attackerName: attacker?.name ?? null,
+        via: via ?? null,
+        headshot: head,
+        selfInflicted: attacker === victim,
+      });
       this.deathT = 1.6;
     } else {
       this.checkWin();
@@ -1768,12 +1791,14 @@ export class Game {
       timeSec: this.now,
       placement: 1,
     };
-    this.hud.setWin(stats);
+    const squadAlive = 1 + this.mates.filter((mate) => mate.char.alive).length;
+    this.hud.setWin(stats, `小队存活 ${squadAlive}/4 · 成功坚持到最后`);
     this.hud.showScreen('win');
     this.hud.setCrosshair(0, false);
     this.hud.setScope('none');
     this.hud.setZoneTint(false);
     this.hud.setPickupPrompt(null);
+    this.hud.resetFeedback();
     this.audio.kill();
     this.input.exitLock();
   }
@@ -1789,13 +1814,14 @@ export class Game {
       timeSec: this.now,
       placement: this.playerPlacement,
     };
-    this.hud.setDeath(stats);
+    this.hud.setDeath(stats, this.playerDeathDetailText);
     this.hud.setKnocked(false);
     this.hud.showScreen('death');
     this.hud.setCrosshair(0, false);
     this.hud.setScope('none');
     this.hud.setZoneTint(false);
     this.hud.setPickupPrompt(null);
+    this.hud.resetFeedback();
     this.promptDoor = null;
     this.hud.setHealCast(-1);
     this.input.exitLock();
@@ -1881,10 +1907,16 @@ export class Game {
   // F 搜索死亡盒: 自动装备更优物品并按当前负重拿取消耗品，拿不下的保留在盒内。
   private lootDeathCrate(c: Character, crate: DeathCrate): void {
     if (!crate.active) return;
+    const hadGun = c.hasGun();
     const taken = autoLootDeathCrate(c, crate);
+    const firstGun = c.isPlayer && c.hasGun() && shouldCelebrateFirstGun(hadGun, this.playerArmedAt);
+    if (firstGun) this.playerArmedAt = this.now;
     this.deathCrates.consumeIfEmpty(crate);
     if (taken > 0) {
-      this.hud.toast(`已搜索 ${crate.owner} 的盒子`);
+      this.hud.toast(
+        firstGun ? `已搜索 ${crate.owner} 的盒子并获得武器` : `已搜索 ${crate.owner} 的盒子`,
+        firstGun ? 'success' : 'info',
+      );
       this.audio.pickup();
       this.refreshBackpack();
     } else {
@@ -2097,6 +2129,7 @@ export class Game {
     }
     if (!isGunKind(kind)) return false;
 
+    const hadGun = c.hasGun();
     const def = WEAPONS[kind];
     // 目标栏位
     let slot: number;
@@ -2129,7 +2162,9 @@ export class Game {
     c.curSlot = slot;
     this.loot.consume(item);
     if (c.isPlayer) {
-      this.hud.toast(`拾取 ${def.name}`);
+      const firstGun = shouldCelebrateFirstGun(hadGun, this.playerArmedAt);
+      if (firstGun) this.playerArmedAt = this.now;
+      this.hud.toast(`拾取 ${def.name}`, firstGun ? 'success' : 'info');
       this.audio.pickup();
     }
     return true;
@@ -2141,6 +2176,13 @@ export class Game {
     const player = this.player as PlayerController;
     const c = player.char;
     const flightJumpReady = player.descent === 'plane' && this.isInsideFlightJumpZone(c.pos.x, c.pos.z);
+    const inPlane = player.descent === 'plane';
+    const outside = !inPlane && this.zone.isOutside(c.pos.x, c.pos.z);
+    if (flightJumpReady && !this.jumpReadyAnnounced) {
+      this.jumpReadyAnnounced = true;
+      this.hud.toast('跳伞窗口已开启, 按 F 跳伞', 'success');
+      this.audio.warn();
+    }
     this.hud.setHP(c.hp);
     this.hud.setHeals(`绷带×${c.heals.bandage}  医疗包×${c.heals.medkit}  饮料×${c.heals.drink}`);
     // 空降仪表与提示
@@ -2234,8 +2276,6 @@ export class Game {
     }
 
     // 毒圈状态
-    const inPlane = player.descent === 'plane';
-    const outside = !inPlane && this.zone.isOutside(c.pos.x, c.pos.z);
     if (inPlane) {
       this.hud.setZoneStatus(flightJumpReady ? '飞机已进入安全区' : '等待飞机进入安全区', false);
     } else if (outside && c.alive) {
@@ -2244,6 +2284,19 @@ export class Game {
       this.hud.setZoneStatus(this.zone.statusText(), this.zone.state === 'shrink');
     }
     this.hud.setZoneTint(outside && c.alive);
+    this.hud.setFlowCue(this.state === 'playing' && c.alive
+      ? resolvePlayerFlowCue({
+        descent: player.descent,
+        jumpReady: flightJumpReady,
+        outsideZone: outside,
+        knocked: c.knocked,
+        hasGun: c.guns.some((gunState) => gunState !== null),
+        hp: c.hp,
+        healCount: c.heals.bandage + c.heals.medkit + c.heals.drink,
+        secondsSinceLanded: this.playerLandedAt < 0 ? -1 : this.now - this.playerLandedAt,
+        secondsSinceArmed: this.playerArmedAt < 0 ? -1 : this.now - this.playerArmedAt,
+      })
+      : null);
     this.hud.setBombardment(this.bombardment.hudText(), this.bombardment.state === 'active');
     const region = regionOrWilderness(c.pos.x, c.pos.z);
     const mapSite = this.world.mapSiteAt(c.pos.x, c.pos.z);

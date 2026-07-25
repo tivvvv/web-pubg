@@ -63,7 +63,7 @@ export class KnockSys {
     } else {
       g.hud.killFeed(`<span class="kf-knock">${ns(c)} 被安全区击倒</span>`);
     }
-    if (!c.isPlayer) g.hud.toast(`队友 ${c.name} 被击倒!`);
+    if (!c.isPlayer) g.hud.toast(`队友 ${c.name} 被击倒!`, 'warning');
     g.audio.warn();
   }
 
