@@ -207,6 +207,56 @@ export class World {
       roughness: 0.96,
       metalness: 0,
     });
+    const terrainWetU = { value: 0 };
+    const terrainCloudU = { value: 0.18 };
+    const terrainTimeU = this.timeU;
+    terrainMat.userData.surfaceUniforms = {
+      wetness: terrainWetU,
+      cloudiness: terrainCloudU,
+    };
+    terrainMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = terrainTimeU;
+      shader.uniforms.uWetness = terrainWetU;
+      shader.uniforms.uCloudiness = terrainCloudU;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vTerrainWorld;')
+        .replace(
+          '#include <worldpos_vertex>',
+          '#include <worldpos_vertex>\n  vTerrainWorld = worldPosition.xyz;',
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+uniform float uTime;
+uniform float uWetness;
+uniform float uCloudiness;
+varying vec3 vTerrainWorld;`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+  // 小尺度颜色起伏打散大色块，大尺度缓慢云影让晴天和阴雨天拥有不同地表层次。
+  float terrainFine = sin(vTerrainWorld.x * 1.73 + sin(vTerrainWorld.z * 0.91))
+    * cos(vTerrainWorld.z * 2.11 - vTerrainWorld.x * 0.47) * 0.5 + 0.5;
+  float cloudWave = sin(vTerrainWorld.x * 0.012 + uTime * 0.018)
+    + cos(vTerrainWorld.z * 0.015 - uTime * 0.014)
+    + sin((vTerrainWorld.x + vTerrainWorld.z) * 0.007 + uTime * 0.009);
+  float cloudMask = smoothstep(0.12, 1.3, cloudWave);
+  float wetNoise = sin(vTerrainWorld.x * 0.43 + vTerrainWorld.z * 0.19)
+    * cos(vTerrainWorld.z * 0.37 - vTerrainWorld.x * 0.11) * 0.5 + 0.5;
+  float wetPatch = smoothstep(0.36, 0.82, wetNoise);
+  diffuseColor.rgb *= 0.97 + terrainFine * 0.05;
+  diffuseColor.rgb *= 1.0 - uCloudiness * cloudMask * 0.085;
+  diffuseColor.rgb *= 1.0 - uWetness * wetPatch * 0.1;`,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+  roughnessFactor = mix(roughnessFactor, 0.54, uWetness * wetPatch * 0.62);`,
+        );
+    };
+    terrainMat.customProgramCacheKey = () => 'terrain-surface-weather-v1';
     const terrain = new THREE.Mesh(geo, terrainMat);
     terrain.receiveShadow = true;
     scene.add(terrain);
@@ -248,16 +298,21 @@ export class World {
         .replace(
           '#include <dithering_fragment>',
           `float waterBand = sin(vWaterPos.x * 0.11 + uTime * 0.9) * cos(vWaterPos.y * 0.085 - uTime * 0.72);
+  float crossBand = sin((vWaterPos.x + vWaterPos.y) * 0.058 - uTime * 0.54)
+    * cos((vWaterPos.x - vWaterPos.y) * 0.072 + uTime * 0.68);
   vec2 rainGrid = floor(vWaterPos * 0.19);
   vec2 rainCell = fract(vWaterPos * 0.19) - 0.5;
   float rainSeed = fract(sin(dot(rainGrid, vec2(12.9898, 78.233))) * 43758.5453);
   float rainRipple = smoothstep(0.15, 0.0, abs(length(rainCell) - fract(uTime * 0.72 + rainSeed) * 0.15));
+  float waterFresnel = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 3.0);
   gl_FragColor.rgb += vec3(0.035, 0.075, 0.085) * smoothstep(0.6, 0.98, waterBand);
+  gl_FragColor.rgb += vec3(0.025, 0.055, 0.072) * smoothstep(0.7, 0.98, crossBand);
+  gl_FragColor.rgb += vec3(0.065, 0.105, 0.125) * waterFresnel * 0.55;
   gl_FragColor.rgb += vec3(0.08, 0.11, 0.13) * rainRipple * uRain * 0.55;
   #include <dithering_fragment>`,
         );
     };
-    waterMat.customProgramCacheKey = () => 'water-bob-rain-v3';
+    waterMat.customProgramCacheKey = () => 'water-bob-rain-v4';
     const water = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800, 72, 72), waterMat);
     water.rotation.x = -Math.PI / 2;
     water.position.y = WATER_Y;

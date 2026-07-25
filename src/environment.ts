@@ -32,6 +32,34 @@ export interface EnvironmentLighting {
   exposure: number;
 }
 
+export interface EnvironmentSurfaceDetail {
+  wetness: number;
+  cloudiness: number;
+  moteOpacity: number;
+}
+
+export function environmentSurfaceDetail(
+  rain: number,
+  wet: number,
+  cloud: number,
+  daylight: number,
+): EnvironmentSurfaceDetail {
+  const rain01 = clamp(rain, 0, 1);
+  const wet01 = clamp(wet, 0, 1);
+  const cloud01 = clamp(cloud, 0, 1);
+  const day01 = clamp(daylight, 0, 1);
+  return {
+    wetness: Math.max(wet01, rain01 * 0.88),
+    cloudiness: cloud01,
+    // 晴朗白天最容易看到空气中的微尘，降雨、厚云和夜晚都会自然压低它。
+    moteOpacity: clamp(
+      (1 - rain01) * (0.15 + day01 * 0.85) * (1 - cloud01 * 0.55) * 0.24,
+      0,
+      0.24,
+    ),
+  };
+}
+
 export function environmentLighting(
   daylight: number,
   light: number,
@@ -116,6 +144,9 @@ export class EnvironmentSystem {
   private readonly rainPos: Float32Array;
   private readonly rainSpeed: Float32Array;
   private readonly rainSeed: Float32Array;
+  private readonly airMotes: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  private readonly motePos: Float32Array;
+  private readonly moteDrift: Float32Array;
   private readonly zenith = new THREE.Color();
   private readonly horizon = new THREE.Color();
   private readonly fogColor = new THREE.Color();
@@ -194,6 +225,53 @@ export class EnvironmentSystem {
     this.rain.renderOrder = 4;
     this.rain.visible = false;
     scene.add(this.rain);
+
+    // 单 draw-call 的近景空气微尘，补足清朗环境的空间纵深；雨天和夜间自动收敛。
+    const moteCount = navigator.hardwareConcurrency <= 4 ? 80 : 140;
+    this.motePos = new Float32Array(moteCount * 3);
+    this.moteDrift = new Float32Array(moteCount * 2);
+    const moteRng = mulberry32(49127);
+    for (let i = 0; i < moteCount; i++) {
+      const o = i * 3;
+      this.motePos[o] = (moteRng() * 2 - 1) * 30;
+      this.motePos[o + 1] = -3 + moteRng() * 17;
+      this.motePos[o + 2] = (moteRng() * 2 - 1) * 30;
+      this.moteDrift[i * 2] = 0.025 + moteRng() * 0.055;
+      this.moteDrift[i * 2 + 1] = (moteRng() * 2 - 1) * 0.03;
+    }
+    const moteGeo = new THREE.BufferGeometry();
+    moteGeo.setAttribute('position', new THREE.BufferAttribute(this.motePos, 3));
+    const moteCanvas = document.createElement('canvas');
+    moteCanvas.width = 32;
+    moteCanvas.height = 32;
+    const moteCtx = moteCanvas.getContext('2d');
+    if (moteCtx) {
+      const glow = moteCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
+      glow.addColorStop(0, 'rgba(255,255,255,0.9)');
+      glow.addColorStop(0.28, 'rgba(255,255,255,0.42)');
+      glow.addColorStop(1, 'rgba(255,255,255,0)');
+      moteCtx.fillStyle = glow;
+      moteCtx.fillRect(0, 0, 32, 32);
+    }
+    const moteTexture = new THREE.CanvasTexture(moteCanvas);
+    moteTexture.colorSpace = THREE.SRGBColorSpace;
+    const moteMat = new THREE.PointsMaterial({
+      color: 0xffe4b5,
+      size: 0.075,
+      map: moteTexture,
+      transparent: true,
+      opacity: 0,
+      alphaTest: 0.025,
+      depthWrite: false,
+      sizeAttenuation: true,
+      fog: true,
+      blending: THREE.AdditiveBlending,
+    });
+    this.airMotes = new THREE.Points(moteGeo, moteMat);
+    this.airMotes.frustumCulled = false;
+    this.airMotes.renderOrder = 3;
+    this.airMotes.visible = false;
+    scene.add(this.airMotes);
     this.reset();
   }
 
@@ -245,6 +323,7 @@ export class EnvironmentSystem {
     this.updateLightning(simDt);
     this.applyAtmosphere(shadowAnchor);
     this.updateRain(dt, camPos);
+    this.updateAirMotes(dt, camPos);
     this.syncSnapshot(this.snapshot.daylight);
   }
 
@@ -331,6 +410,20 @@ export class EnvironmentSystem {
       groundDay * (0.94 + daylight * 0.06),
     );
     this.terrainMat.roughness = 0.96 - this.current.wet * 0.16;
+    const surface = environmentSurfaceDetail(
+      this.current.rain,
+      this.current.wet,
+      this.current.cloud,
+      daylight,
+    );
+    const surfaceUniforms = this.terrainMat.userData.surfaceUniforms as {
+      wetness: { value: number };
+      cloudiness: { value: number };
+    } | undefined;
+    if (surfaceUniforms) {
+      surfaceUniforms.wetness.value = surface.wetness;
+      surfaceUniforms.cloudiness.value = surface.cloudiness;
+    }
     this.waterMat.color.copy(this.nightWater).lerp(this.dayWater, daylight).lerp(this.stormWater, this.current.cloud * 0.34);
     this.waterMat.specular.setHex(moon ? 0x6f91b7 : 0xbde8ef);
     this.waterMat.shininess = 90 + this.current.wet * 45;
@@ -340,6 +433,32 @@ export class EnvironmentSystem {
 
     this.snapshot.daylight = daylight;
     this.snapshot.exposure = lighting.exposure;
+  }
+
+  private updateAirMotes(dt: number, camPos: THREE.Vector3): void {
+    const surface = environmentSurfaceDetail(
+      this.current.rain,
+      this.current.wet,
+      this.current.cloud,
+      this.snapshot.daylight,
+    );
+    this.airMotes.visible = surface.moteOpacity > 0.012;
+    this.airMotes.material.opacity = surface.moteOpacity;
+    this.airMotes.material.color.setHex(this.snapshot.daylight > 0.28 ? 0xffe4b5 : 0xaec8e8);
+    this.airMotes.position.copy(camPos);
+    if (!this.airMotes.visible) return;
+    for (let i = 0; i < this.moteDrift.length / 2; i++) {
+      const o = i * 3;
+      let y = (this.motePos[o + 1] as number) + (this.moteDrift[i * 2] as number) * dt;
+      let x = (this.motePos[o] as number) + (this.moteDrift[i * 2 + 1] as number) * dt;
+      if (y > 14) y = -3;
+      if (x > 30) x = -30;
+      else if (x < -30) x = 30;
+      this.motePos[o] = x;
+      this.motePos[o + 1] = y;
+    }
+    const attr = this.airMotes.geometry.getAttribute('position') as THREE.BufferAttribute;
+    attr.needsUpdate = true;
   }
 
   private updateRain(dt: number, camPos: THREE.Vector3): void {

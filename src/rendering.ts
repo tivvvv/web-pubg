@@ -45,6 +45,7 @@ export class GameRenderer {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, RENDER_QUALITY.maxPixelRatio));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = RENDER_QUALITY.shadows;
+    // three.js 新版的 PCF 已内置可调半径软化，避免使用已废弃的 PCFSoftShadowMap。
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = RENDER_QUALITY.baseExposure;

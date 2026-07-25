@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { advancePoseBlend, Character, ownModelVisibility } from '../src/character';
 import { emptyAttachments } from '../src/attachments';
-import { environmentLighting } from '../src/environment';
+import { environmentLighting, environmentSurfaceDetail } from '../src/environment';
 import { RENDER_QUALITY } from '../src/rendering';
 import { WEAPONS } from '../src/weapons';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
@@ -141,6 +141,23 @@ describe('画面回归保护', () => {
     expect(clearNight.exposure).toBeCloseTo(1.29, 5);
     expect(rainyNight.hemiIntensity).toBeGreaterThan(clearNight.hemiIntensity);
     expect(rainyNight.exposure).toBeGreaterThanOrEqual(clearNight.exposure);
+  });
+
+  it('天气同步驱动地表湿润, 云影和空气微尘强度', () => {
+    const clearDay = environmentSurfaceDetail(0, 0, 0.18, 1);
+    const rainyDay = environmentSurfaceDetail(0.76, 0.82, 0.9, 1);
+    const clearNight = environmentSurfaceDetail(0, 0, 0.18, 0);
+
+    expect(clearDay.wetness).toBe(0);
+    expect(rainyDay.wetness).toBeCloseTo(0.82, 5);
+    expect(rainyDay.cloudiness).toBeCloseTo(0.9, 5);
+    expect(clearDay.moteOpacity).toBeGreaterThan(rainyDay.moteOpacity);
+    expect(clearDay.moteOpacity).toBeGreaterThan(clearNight.moteOpacity);
+    expect(environmentSurfaceDetail(2, -1, 3, 2)).toEqual({
+      wetness: 0.88,
+      cloudiness: 1,
+      moteOpacity: 0,
+    });
   });
 
   it('性能优化不能降低核心渲染质量基线', () => {

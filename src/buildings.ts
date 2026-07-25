@@ -61,6 +61,46 @@ const BOUND = 265;
 const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
 const DOOR_TWEEN = 0.3;                   // 开关门动画时长(秒)
 
+// 在单个实例化材质中增加墙面颗粒、底部积尘和朝上面的轻微提亮，不增加建筑绘制调用。
+function enhanceStructureMaterial(mat: THREE.MeshStandardMaterial): void {
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vStructureLocal;\nvarying vec3 vStructureWorld;\nvarying vec3 vStructureNormal;',
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n  vStructureLocal = position;\n  vStructureNormal = objectNormal;',
+      )
+      .replace(
+        '#include <worldpos_vertex>',
+        '#include <worldpos_vertex>\n  vStructureWorld = worldPosition.xyz;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vStructureLocal;\nvarying vec3 vStructureWorld;\nvarying vec3 vStructureNormal;',
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+  float structureGrain = sin(vStructureWorld.x * 2.17 + vStructureWorld.y * 0.73)
+    * cos(vStructureWorld.z * 1.93 - vStructureWorld.y * 0.51) * 0.5 + 0.5;
+  float baseDust = 1.0 - smoothstep(-0.5, 0.34, vStructureLocal.y);
+  float verticalFace = 1.0 - abs(normalize(vStructureNormal).y);
+  float fineStreak = smoothstep(0.68, 0.98,
+    sin(vStructureWorld.x * 0.71 + vStructureWorld.z * 0.53) * 0.5 + 0.5);
+  float structureTone = 0.975 + structureGrain * 0.04;
+  structureTone -= baseDust * verticalFace * 0.045;
+  structureTone -= fineStreak * verticalFace * 0.018;
+  structureTone += max(normalize(vStructureNormal).y, 0.0) * 0.025;
+  diffuseColor.rgb *= structureTone;`,
+      );
+  };
+  mat.customProgramCacheKey = () => 'building-surface-detail-v1';
+}
+
 // 门从操作者所在一侧向远离操作者的方向打开，避免门扇迎面扫过角色。
 export function doorOpenAngleForActor(
   axis: 'x' | 'z',
@@ -173,7 +213,15 @@ export class Buildings {
   private plateGeoX = new THREE.BoxGeometry(0.09, 0.16, 0.02);
   private plateGeoZ = new THREE.BoxGeometry(0.02, 0.16, 0.09);
   private paneMat = new THREE.MeshStandardMaterial({
-    color: PANE_C, transparent: true, opacity: 0.48, depthWrite: false, roughness: 0.2, metalness: 0.12,
+    color: PANE_C,
+    emissive: 0x18313b,
+    emissiveIntensity: 0.32,
+    transparent: true,
+    opacity: 0.57,
+    depthWrite: false,
+    roughness: 0.14,
+    metalness: 0.22,
+    side: THREE.DoubleSide,
   });
 
   // ── 区域规划 (确定性种子; 城区/竞技场/农场/密林/山地/渔村定点) ──────────────
@@ -310,7 +358,8 @@ export class Buildings {
 
     // 合并实例化为一个 InstancedMesh
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.87, metalness: 0 });
+    enhanceStructureMaterial(mat);
     const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, insts.length));
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
