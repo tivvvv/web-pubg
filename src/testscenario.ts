@@ -16,7 +16,7 @@ import {
 } from './stability';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'botswim', 'combat', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
+  'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -25,6 +25,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   swim: '游泳回归: 检查入水姿态, Shift 加速和连续上岸',
   botswim: '机器人游泳回归: 多机器人同时入水上岸, 检查状态抖动, 反向抽搐和岸边碰撞',
   combat: '枪战回归: M416 + 全套配件, 检查 ADS, 后坐和命中反馈',
+  effects: '特效验收: 循环检查爆炸火球, 冲击波, 烟柱, 弹着烟尘和近距离屏幕反馈',
   bottactics: '机器人战术: 同时检查交战, 恢复, 搜索和圈外转移',
   botvehicle: '机器人载具: 检查搜车, 上车, 长途转移, 绕障和到点下车',
   squadcommand: '小队指令: 检查前往, 警戒, 集火, 跟随和三人队形',
@@ -859,6 +860,56 @@ function setupCombat(game: Game): void {
   }
 }
 
+function setupEffects(game: Game): void {
+  const lane = testLane(game);
+  const direction = laneDirection(lane);
+  setGroundPlayer(game, lane[0], lane[1]);
+  const player = game.playerCtl;
+  if (!player) return;
+  player.yaw = direction.yaw;
+  player.pitch = 0.02;
+  game.zoneArmed = true;
+
+  const blastPoint = new THREE.Vector3();
+  const smokePoint = new THREE.Vector3();
+  const dustPoint = new THREE.Vector3();
+  const stationary = new THREE.Vector3();
+  const sideX = -direction.z;
+  const sideZ = direction.x;
+  const playCycle = (): void => {
+    blastPoint.set(
+      lane[0] + direction.x * 15 - sideX * 2.4,
+      0,
+      lane[1] + direction.z * 15 - sideZ * 2.4,
+    );
+    blastPoint.y = game.world.getHeight(blastPoint.x, blastPoint.z) + 0.05;
+    game.effects.explosion(blastPoint, 1.15);
+    game.addBlastFrom(blastPoint);
+
+    smokePoint.set(
+      lane[0] + direction.x * 13 + sideX * 3.6,
+      0,
+      lane[1] + direction.z * 13 + sideZ * 3.6,
+    );
+    smokePoint.y = game.world.getHeight(smokePoint.x, smokePoint.z) + 0.08;
+    game.grenades.spawn(player.char, 'smoke', smokePoint, stationary, 0);
+
+    for (let i = -2; i <= 2; i++) {
+      dustPoint.set(
+        lane[0] + direction.x * (9 + i * 0.45) + sideX * i * 0.42,
+        0,
+        lane[1] + direction.z * (9 + i * 0.45) + sideZ * i * 0.42,
+      );
+      dustPoint.y = game.world.getHeight(dustPoint.x, dustPoint.z) + 0.04;
+      game.effects.impactDust(dustPoint);
+      game.effects.impactMark(dustPoint, stationary, 'terrain');
+    }
+  };
+
+  window.setTimeout(playCycle, 620);
+  window.setInterval(playCycle, 2200);
+}
+
 function setupBotTactics(game: Game): void {
   setGroundPlayer(game, 0, 180);
   const player = game.playerCtl;
@@ -1315,6 +1366,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'swim') setupSwim(game);
   else if (id === 'botswim') setupBotSwim(game);
   else if (id === 'combat') setupCombat(game);
+  else if (id === 'effects') setupEffects(game);
   else if (id === 'bottactics') setupBotTactics(game);
   else if (id === 'botvehicle') setupBotVehicle(game);
   else if (id === 'squadcommand') setupSquadCommand(game);

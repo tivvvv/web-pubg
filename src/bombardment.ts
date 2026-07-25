@@ -417,11 +417,11 @@ export class BombardmentSystem {
   }
 
   private impact(point: THREE.Vector3, game: Game): void {
-    game.effects.explosion(point);
+    game.effects.explosion(point, 1.35);
     game.effects.burst(point, 34, 0.48, 0.34, 0.2, 9.5);
     game.effects.burst(point, 18, 0.16, 0.15, 0.14, 4.2);
     game.soundAt(point, (dist, pan) => game.audio.artilleryImpact(dist, pan));
-    game.addShakeFrom(point);
+    game.addBlastFrom(point);
     this.placeCrater(point, game);
 
     for (const c of game.chars) {

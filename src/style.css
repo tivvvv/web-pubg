@@ -1108,6 +1108,36 @@ body {
   }
 }
 
+/* 近距离爆炸: 短促暖色曝光 + 暗角冲击, 强度按距离衰减 */
+#blast-flash {
+  --blast-strength: 0;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(255, 238, 184, 0.72) 0%, rgba(255, 137, 50, 0.24) 28%, transparent 62%),
+    radial-gradient(circle at 50% 50%, transparent 32%, rgba(35, 13, 5, 0.56) 100%);
+}
+
+#blast-flash.show {
+  animation: blast-flash 0.58s ease-out forwards;
+}
+
+@keyframes blast-flash {
+  0% {
+    opacity: calc(var(--blast-strength) * 0.95);
+    filter: brightness(1.35);
+  }
+  18% {
+    opacity: calc(var(--blast-strength) * 0.55);
+  }
+  100% {
+    opacity: 0;
+    filter: brightness(1);
+  }
+}
+
 /* 读条/进度条圆角微光 */
 .heal-bar,
 .buff-bar {

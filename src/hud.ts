@@ -66,6 +66,7 @@ export class Hud {
   private scopeMode: ScopeMode = 'none';
   private hitmarkerEl = el('hitmarker');
   private dmgArc = el('dmg-arc');
+  private blastFlash = el('blast-flash');
   private toastEl = el('toast');
   private zoneTint = el('zone-tint');
   private hud = el('hud');
@@ -101,6 +102,7 @@ export class Hud {
   private toastTimer = 0;
   private hitTimer = 0;
   private dmgTimer = 0;
+  private blastTimer = 0;
   private healCountsKey = '';
   private environmentKey = '';
   private bombardmentKey = '';
@@ -497,6 +499,14 @@ export class Hud {
     this.dmgTimer = 0.7;
   }
 
+  flashBlast(strength: number): void {
+    this.blastFlash.style.setProperty('--blast-strength', Math.max(0, Math.min(1, strength)).toFixed(2));
+    this.blastFlash.classList.remove('show');
+    void this.blastFlash.offsetWidth;
+    this.blastFlash.classList.add('show');
+    this.blastTimer = 0.58;
+  }
+
   toast(msg: string): void {
     this.toastEl.textContent = msg;
     this.toastEl.classList.remove('show');
@@ -541,6 +551,10 @@ export class Hud {
     if (this.dmgTimer > 0) {
       this.dmgTimer -= dt;
       if (this.dmgTimer <= 0) this.dmgArc.style.opacity = '0';
+    }
+    if (this.blastTimer > 0) {
+      this.blastTimer -= dt;
+      if (this.blastTimer <= 0) this.blastFlash.classList.remove('show');
     }
   }
 }

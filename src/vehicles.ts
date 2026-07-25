@@ -535,9 +535,9 @@ export class VehicleManager {
     v.exploded = true;
     v.dead = true;
     v.speed = 0;
-    game.effects.explosion(v.pos);
+    game.effects.explosion(v.pos, 1.15);
     game.soundAt(v.pos, (d, p) => game.audio.explosion(d, p));
-    game.addShakeFrom(v.pos);
+    game.addBlastFrom(v.pos);
     for (const c of game.chars) {
       if (!c.alive) continue;
       const d = Math.hypot(c.pos.x - v.pos.x, c.pos.y + 0.9 - v.pos.y, c.pos.z - v.pos.z);
@@ -569,8 +569,7 @@ export class VehicleManager {
         v.fireT -= dt;
         if (v.fireT <= 0) {
           v.fireT = 0.22;
-          game.effects.burst(v.pos, 7, 1.0, 0.62, 0.2, 4.2);
-          game.effects.burst(v.pos, 4, 0.3, 0.3, 0.32, 2.4);
+          game.effects.vehicleFire(v.pos);
         }
         if (v.burnT <= 0) {
           v.burnT = -1;

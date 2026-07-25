@@ -72,7 +72,7 @@ import type { Destructible } from './buildings';
 import {
   Character, BOT_SHIRTS, separateCharacterBodies, shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH,
 } from './character';
-import { Effects } from './effects';
+import { blastScreenStrength, Effects } from './effects';
 import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathcrate';
 import { Hud, shouldShowSwimmingStatus, type BackpackData, type SquadHudRow } from './hud';
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
@@ -1300,10 +1300,13 @@ export class Game {
           }
         } else if (res.surface === 'terrain' || res.surface === 'floor') {
           this.effects.impactDust(res.point);
+          this.effects.impactMark(res.point, this.tmpA, res.surface);
         } else if (res.surface === 'rock') {
           this.effects.impactRock(res.point);
+          this.effects.impactMark(res.point, this.tmpA, res.surface);
         } else {
           this.effects.impactSpark(res.point);
+          if (res.surface) this.effects.impactMark(res.point, this.tmpA, res.surface);
         }
         // 弹着点入水: 白色溅沫
         if (res.point.y < WATER_Y) this.effects.splash(res.point);
@@ -1527,6 +1530,15 @@ export class Game {
     const d = Math.hypot(pos.x - this.player.char.pos.x, pos.y - this.player.char.pos.y, pos.z - this.player.char.pos.z);
     const amp = clamp(3.5 / (1 + d * 0.09), 0, 1.5);
     this.shakeAmp = Math.max(this.shakeAmp, amp);
+  }
+
+  // 爆炸专用反馈: 保留距离衰减震动, 额外加入短促曝光; 普通载具碰撞不会误触发爆闪。
+  addBlastFrom(pos: THREE.Vector3): void {
+    this.addShakeFrom(pos);
+    if (!this.player) return;
+    const d = Math.hypot(pos.x - this.player.char.pos.x, pos.y - this.player.char.pos.y, pos.z - this.player.char.pos.z);
+    const flash = blastScreenStrength(d);
+    if (flash > 0.04) this.hud.flashBlast(flash);
   }
 
   // 视线遮挡: 地形/建筑 + 烟幕球(bot 索敌共用)

@@ -412,13 +412,14 @@ export class GrenadeManager {
     c.r = 0.5;
     c.drift.set((random() - 0.5) * 0.5, 0, (random() - 0.5) * 0.5);
     for (let i = 0; i < c.seed.length; i++) c.seed[i] = random() * 2 - 1;
+    game.effects.smokePop(s.pos);
     game.soundAt(s.pos, (d, p) => game.audio.hiss(d, p));
   }
 
   private explode(s: GrenadeSlot, game: Game): void {
     game.effects.explosion(s.pos);
     game.soundAt(s.pos, (d, p) => game.audio.explosion(d, p));
-    game.addShakeFrom(s.pos);
+    game.addBlastFrom(s.pos);
     // 伤害: 中心 110 → 9m 处 15, 不分敌我(含投掷者); 小队爆炸免伤
     for (const c of game.chars) {
       if (!c.alive) continue;
