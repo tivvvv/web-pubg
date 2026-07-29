@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import type { GunAttachments, MeleeId, ThrowableId, WeaponId } from './types';
+import { applySurfaceAsset } from './assets';
 
 export type WeaponModelId = WeaponId | Exclude<MeleeId, 'fists'> | ThrowableId;
 
@@ -30,6 +31,12 @@ const MAT_PO = new THREE.MeshStandardMaterial({ color: 0x3d4148, roughness: 0.84
 const MAT_TN = new THREE.MeshStandardMaterial({ color: 0x9a7a52, roughness: 0.82, metalness: 0.02 }); // 木色/沙色家具
 const MAT_FG = new THREE.MeshStandardMaterial({ color: 0x39543a, roughness: 0.68, metalness: 0.18 }); // 手雷墨绿
 const MAT_BD = new THREE.MeshStandardMaterial({ color: 0xc8503c, roughness: 0.62, metalness: 0.12 }); // 烟雾弹色带
+applySurfaceAsset(MAT_DK, 'metal', 5.5, 1);
+applySurfaceAsset(MAT_LT, 'metal', 7.5, 0.85);
+applySurfaceAsset(MAT_PO, 'fabric', 4, 0.5);
+applySurfaceAsset(MAT_TN, 'wood', 4.8, 0.85);
+applySurfaceAsset(MAT_FG, 'metal', 5, 0.45);
+applySurfaceAsset(MAT_BD, 'metal', 5, 0.45);
 
 function b(
   parent: THREE.Group, mat: THREE.Material,

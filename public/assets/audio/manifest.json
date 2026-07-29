@@ -1,0 +1,105 @@
+{
+  "sampleRate": 22050,
+  "files": [
+    {
+      "file": "shot-pistol.wav",
+      "duration": 0.24,
+      "bytes": 10628
+    },
+    {
+      "file": "shot-rifle.wav",
+      "duration": 0.34,
+      "bytes": 15040
+    },
+    {
+      "file": "shot-akm.wav",
+      "duration": 0.4,
+      "bytes": 17684
+    },
+    {
+      "file": "shot-smg.wav",
+      "duration": 0.2,
+      "bytes": 8864
+    },
+    {
+      "file": "shot-dmr.wav",
+      "duration": 0.46,
+      "bytes": 20330
+    },
+    {
+      "file": "shot-sniper.wav",
+      "duration": 0.72,
+      "bytes": 31796
+    },
+    {
+      "file": "shot-shotgun.wav",
+      "duration": 0.58,
+      "bytes": 25622
+    },
+    {
+      "file": "shot-suppressed.wav",
+      "duration": 0.18,
+      "bytes": 7982
+    },
+    {
+      "file": "impact-body.wav",
+      "duration": 0.16,
+      "bytes": 7100
+    },
+    {
+      "file": "impact-head.wav",
+      "duration": 0.18,
+      "bytes": 7982
+    },
+    {
+      "file": "impact-wood.wav",
+      "duration": 0.24,
+      "bytes": 10628
+    },
+    {
+      "file": "impact-glass.wav",
+      "duration": 0.42,
+      "bytes": 18566
+    },
+    {
+      "file": "impact-metal.wav",
+      "duration": 0.3,
+      "bytes": 13274
+    },
+    {
+      "file": "explosion-frag.wav",
+      "duration": 0.9,
+      "bytes": 39734
+    },
+    {
+      "file": "explosion-artillery.wav",
+      "duration": 1.25,
+      "bytes": 55170
+    },
+    {
+      "file": "ui-pickup.wav",
+      "duration": 0.2,
+      "bytes": 8864
+    },
+    {
+      "file": "action-reload.wav",
+      "duration": 0.34,
+      "bytes": 15040
+    },
+    {
+      "file": "movement-footstep.wav",
+      "duration": 0.14,
+      "bytes": 6220
+    },
+    {
+      "file": "movement-splash.wav",
+      "duration": 0.46,
+      "bytes": 20330
+    },
+    {
+      "file": "action-door.wav",
+      "duration": 0.48,
+      "bytes": 21212
+    }
+  ]
+}

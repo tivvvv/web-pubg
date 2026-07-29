@@ -16,6 +16,13 @@ npm test
 npm run build
 ```
 
+## 美术与音效资产
+
+- `public/assets/textures` 保存建筑、地表、木材、金属和布料的轻量可平铺 PNG，运行时作为程序模型的材质细节层。
+- `public/assets/audio` 保存枪声、命中、爆炸、脚步和交互反馈 WAV。关键反馈优先播放采样，资源未就绪时自动回退原有 WebAudio 合成音。
+- `npm run assets:generate` 可确定性重建全部项目自有资产，生成脚本位于 `scripts/generate-assets.mjs`。
+- 测试模式会在 `body` 数据属性发布材质加载数、音效解码数和最近播放的采样，便于真实浏览器回归。
+
 ## 固定测试场景
 
 开发服务器运行后, 可直接打开以下地址重复验证重点系统。测试模式不会请求鼠标锁定。

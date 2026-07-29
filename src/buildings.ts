@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import type { AabbCollider, DestructibleLike } from './types';
 import { riverZAt, type World } from './world';
 import { random } from './random';
+import { applySurfaceAsset } from './assets';
 
 export interface LootSpot {
   x: number; y: number; z: number;
@@ -224,6 +225,12 @@ export class Buildings {
     side: THREE.DoubleSide,
   });
 
+  constructor() {
+    applySurfaceAsset(this.doorMat, 'wood', 2.8, 0.9);
+    applySurfaceAsset(this.postMat, 'wood', 3.4, 0.75);
+    applySurfaceAsset(this.doorTrimMat, 'wood', 4.2, 0.7);
+  }
+
   // ── 区域规划 (确定性种子; 城区/竞技场/农场/密林/山地/渔村定点) ──────────────
   plan(world: World): void {
     const rng = mulberry32(20240);
@@ -360,6 +367,7 @@ export class Buildings {
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.87, metalness: 0 });
     enhanceStructureMaterial(mat);
+    applySurfaceAsset(mat, 'plaster', 2.5, 0.82);
     const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, insts.length));
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();

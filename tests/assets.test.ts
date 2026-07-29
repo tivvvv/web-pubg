@@ -1,0 +1,49 @@
+import { readFileSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import {
+  AUDIO_ASSET_URLS,
+  shotAssetId,
+  SURFACE_ASSET_URLS,
+} from '../src/assets';
+import type { WeaponId } from '../src/types';
+
+const projectFile = (url: string): string => join(process.cwd(), 'public', url);
+
+describe('美术与音效静态资产', () => {
+  it('五类表面材质均为有效轻量 PNG', () => {
+    expect(Object.keys(SURFACE_ASSET_URLS)).toEqual([
+      'plaster', 'terrain', 'wood', 'metal', 'fabric',
+    ]);
+    for (const url of Object.values(SURFACE_ASSET_URLS)) {
+      const bytes = readFileSync(projectFile(url));
+      expect([...bytes.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+      expect(bytes.length).toBeLessThan(96 * 1024);
+    }
+  });
+
+  it('关键音效清单与生成清单一致且保持轻量', () => {
+    const manifest = JSON.parse(
+      readFileSync(join(process.cwd(), 'public/assets/audio/manifest.json'), 'utf8'),
+    ) as { sampleRate: number; files: { file: string; duration: number; bytes: number }[] };
+    const configured = Object.values(AUDIO_ASSET_URLS).map((url) => basename(url)).sort();
+    expect(manifest.sampleRate).toBe(22050);
+    expect(manifest.files.map((entry) => entry.file).sort()).toEqual(configured);
+    let total = 0;
+    for (const url of Object.values(AUDIO_ASSET_URLS)) {
+      const bytes = readFileSync(projectFile(url));
+      expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
+      expect(bytes.subarray(8, 12).toString('ascii')).toBe('WAVE');
+      total += statSync(projectFile(url)).size;
+    }
+    expect(total).toBeLessThan(512 * 1024);
+  });
+
+  it('所有枪械均映射独立枪声且消音器统一使用消音采样', () => {
+    const weapons: WeaponId[] = ['pistol', 'rifle', 'akm', 'smg', 'dmr', 'sniper', 'shotgun'];
+    for (const weapon of weapons) {
+      expect(shotAssetId(weapon, false)).toBe(`shot-${weapon}`);
+      expect(shotAssetId(weapon, true)).toBe('shot-suppressed');
+    }
+  });
+});

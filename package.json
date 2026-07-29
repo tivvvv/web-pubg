@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "assets:generate": "node scripts/generate-assets.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",

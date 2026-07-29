@@ -15,6 +15,7 @@ import {
   type ResolvedMapContentSite,
 } from './mapcontent';
 import { regionAt, regionById, type RegionId } from './regions';
+import { applySurfaceAsset } from './assets';
 
 type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
 type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
@@ -257,6 +258,7 @@ varying vec3 vTerrainWorld;`,
         );
     };
     terrainMat.customProgramCacheKey = () => 'terrain-surface-weather-v1';
+    applySurfaceAsset(terrainMat, 'terrain', 0.065, 0.72);
     const terrain = new THREE.Mesh(geo, terrainMat);
     terrain.receiveShadow = true;
     scene.add(terrain);

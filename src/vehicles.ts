@@ -7,6 +7,7 @@ import { WATER_Y, WORLD_HALF, type World } from './world';
 import type { Character } from './character';
 import type { Game } from './game';
 import { clamp, lerp } from './utils';
+import { applySurfaceAsset } from './assets';
 
 export type VehicleKind = 'car' | 'moto' | 'buggy';
 
@@ -367,6 +368,7 @@ export class Vehicle {
 
   private mat(color: number): THREE.MeshStandardMaterial {
     const m = new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.16 });
+    applySurfaceAsset(m, 'metal', 2.8, 0.62);
     this.mats.push(m);
     return m;
   }

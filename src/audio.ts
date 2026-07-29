@@ -1,6 +1,11 @@
-// WebAudio 全合成音效(无音频文件)
+// WebAudio 静态采样资产 + 程序合成降级。循环环境声继续实时生成，关键反馈优先使用 WAV。
 import type { WeaponId } from './types';
 import { clamp } from './utils';
+import {
+  AUDIO_ASSET_URLS,
+  shotAssetId,
+  type AudioAssetId,
+} from './assets';
 
 export class AudioSys {
   private ctx: AudioContext | null = null;
@@ -10,6 +15,10 @@ export class AudioSys {
   private rainSource: AudioBufferSourceNode | null = null;
   private rainGain: GainNode | null = null;
   private rainLevel = 0;
+  private samples = new Map<AudioAssetId, AudioBuffer>();
+  private sampleLoadStarted = false;
+  private readonly publishTestState = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).has('test');
   muted = false;
 
   // 必须在用户手势中调用
@@ -31,6 +40,7 @@ export class AudioSys {
       const data = this.noiseBuf.getChannelData(0);
       for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
     }
+    void this.loadAssetSamples();
     if (this.ctx.state === 'suspended') void this.ctx.resume();
     if (this.rainLevel > 0.01) this.ensureRainLoop();
   }
@@ -50,6 +60,49 @@ export class AudioSys {
     p.pan.value = clamp(pan, -1, 1);
     p.connect(this.master);
     return p;
+  }
+
+  private async loadAssetSamples(): Promise<void> {
+    if (this.sampleLoadStarted || !this.ctx) return;
+    this.sampleLoadStarted = true;
+    const ctx = this.ctx;
+    const entries = Object.entries(AUDIO_ASSET_URLS) as [AudioAssetId, string][];
+    let errors = 0;
+    await Promise.all(entries.map(async ([id, url]) => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+        if (this.ctx === ctx) this.samples.set(id, buffer);
+      } catch {
+        errors++;
+      }
+    }));
+    if (typeof document !== 'undefined') {
+      document.body.dataset.audioAssetsLoaded = `${this.samples.size}/${entries.length}`;
+      document.body.dataset.audioAssetErrors = String(errors);
+    }
+  }
+
+  private playAsset(id: AudioAssetId, volume: number, pan: number, rate = 1): boolean {
+    if (!this.ctx) return false;
+    const buffer = this.samples.get(id);
+    const dst = this.out(pan);
+    if (!buffer || !dst) return false;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = clamp(rate, 0.72, 1.28);
+    const gain = this.ctx.createGain();
+    gain.gain.value = Math.max(0.001, volume);
+    source.connect(gain).connect(dst);
+    source.start();
+    if (this.publishTestState) {
+      document.body.dataset.lastAudioAsset = id;
+      document.body.dataset.audioAssetPlays = String(
+        Number(document.body.dataset.audioAssetPlays ?? 0) + 1,
+      );
+    }
+    return true;
   }
 
   private ensureRainLoop(): void {
@@ -146,6 +199,11 @@ export class AudioSys {
     if (!this.ctx) return;
     const distanceAtt = clamp(1.35 / (1 + dist * 0.028), 0.015, 1);
     const att = distanceAtt * (suppressed ? 0.24 : 1);
+    const sampleGain: Record<WeaponId, number> = {
+      pistol: 0.54, rifle: 0.64, akm: 0.69, smg: 0.46, dmr: 0.72, sniper: 0.82, shotgun: 0.78,
+    };
+    const assetVolume = distanceAtt * (suppressed ? 0.24 : sampleGain[kind]);
+    if (this.playAsset(shotAssetId(kind, suppressed), assetVolume, pan, 0.96 + Math.random() * 0.08)) return;
     if (suppressed) this.noiseBurst(0.08 * distanceAtt, pan, 2400, 1.5, 0.045);
     switch (kind) {
       case 'pistol':
@@ -186,6 +244,7 @@ export class AudioSys {
   }
 
   hit(head: boolean): void {
+    if (this.playAsset(head ? 'impact-head' : 'impact-body', head ? 0.42 : 0.36, 0, 0.97 + Math.random() * 0.06)) return;
     this.noiseBurst(0.4, 0, head ? 2600 : 320, 1.2, 0.06);
     if (head) this.blip(1400, 900, 0.06, 0.18, 'square');
   }
@@ -196,10 +255,12 @@ export class AudioSys {
   }
 
   pickup(): void {
+    if (this.playAsset('ui-pickup', 0.24, 0)) return;
     this.blip(520, 820, 0.08, 0.2, 'square');
   }
 
   reload(): void {
+    if (this.playAsset('action-reload', 0.34, 0, 0.98 + Math.random() * 0.04)) return;
     this.blip(300, 180, 0.05, 0.15, 'square');
     window.setTimeout(() => this.blip(420, 300, 0.05, 0.15, 'square'), 160);
   }
@@ -252,6 +313,7 @@ export class AudioSys {
   // 木质命中(门未被打破)
   woodHit(dist: number, pan: number): void {
     const att = clamp(1.25 / (1 + dist * 0.03), 0.02, 1);
+    if (this.playAsset('impact-wood', 0.46 * att, pan, 0.94 + Math.random() * 0.1)) return;
     this.noiseBurst(0.42 * att, pan, 320, 1.0, 0.08);
     this.thump(0.3 * att, pan, 150, 70, 0.07);
   }
@@ -259,6 +321,7 @@ export class AudioSys {
   // 门板破碎
   woodBreak(dist: number, pan: number): void {
     const att = clamp(1.3 / (1 + dist * 0.028), 0.02, 1);
+    if (this.playAsset('impact-wood', 0.72 * att, pan, 0.74)) return;
     this.noiseBurst(0.55 * att, pan, 520, 0.7, 0.22);
     this.thump(0.4 * att, pan, 170, 55, 0.18);
   }
@@ -266,12 +329,14 @@ export class AudioSys {
   // 玻璃命中(未碎)
   glassHit(dist: number, pan: number): void {
     const att = clamp(1.25 / (1 + dist * 0.03), 0.02, 1);
+    if (this.playAsset('impact-glass', 0.28 * att, pan, 1.18)) return;
     this.noiseBurst(0.34 * att, pan, 3200, 2.0, 0.06);
   }
 
   // 玻璃破碎
   glassBreak(dist: number, pan: number): void {
     const att = clamp(1.3 / (1 + dist * 0.028), 0.02, 1);
+    if (this.playAsset('impact-glass', 0.62 * att, pan, 0.94 + Math.random() * 0.08)) return;
     this.noiseBurst(0.5 * att, pan, 2600, 1.2, 0.24);
     this.noiseBurst(0.3 * att, pan, 4300, 2.5, 0.3);
   }
@@ -279,6 +344,7 @@ export class AudioSys {
   // 护甲碎裂: 金属崩裂声
   armorBreak(dist: number, pan: number): void {
     const att = clamp(1.4 / (1 + dist * 0.03), 0.02, 1);
+    if (this.playAsset('impact-metal', 0.58 * att, pan, 0.86)) return;
     this.noiseBurst(0.5 * att, pan, 2400, 1.4, 0.18);
     this.noiseBurst(0.3 * att, pan, 3600, 2.2, 0.22);
     this.thump(0.3 * att, pan, 200, 90, 0.12);
@@ -287,6 +353,7 @@ export class AudioSys {
   // 手雷爆炸: 低频轰 + 噪声
   explosion(dist: number, pan: number): void {
     const att = clamp(2.4 / (1 + dist * 0.018), 0.02, 1);
+    if (this.playAsset('explosion-frag', 0.82 * att, pan, 0.96 + Math.random() * 0.05)) return;
     this.noiseBurst(1.0 * att, pan, 160, 0.35, 0.55);
     this.thump(0.9 * att, pan, 85, 24, 0.5);
   }
@@ -314,6 +381,7 @@ export class AudioSys {
   // 炮击比手雷更厚, 叠加低频冲击与中频泥土爆裂
   artilleryImpact(dist: number, pan: number): void {
     const att = clamp(2.8 / (1 + dist * 0.016), 0.02, 1);
+    if (this.playAsset('explosion-artillery', 0.88 * att, pan, 0.94 + Math.random() * 0.04)) return;
     this.noiseBurst(1.0 * att, pan, 125, 0.3, 0.72);
     this.noiseBurst(0.55 * att, pan, 620, 0.65, 0.34);
     this.thump(1.0 * att, pan, 72, 20, 0.62);
@@ -328,9 +396,10 @@ export class AudioSys {
   // 门轴吱呀: 开门升调, 关门降调; 锯齿波 + 11Hz 颤音模拟干涩门轴
   creak(dist: number, pan: number, open: boolean): void {
     if (!this.ctx) return;
+    const att = clamp(1.5 / (1 + dist * 0.035), 0.02, 1);
+    if (this.playAsset('action-door', 0.36 * att, pan, open ? 1 : 0.82)) return;
     const dst = this.out(pan);
     if (!dst) return;
-    const att = clamp(1.5 / (1 + dist * 0.035), 0.02, 1);
     const t = this.ctx.currentTime;
     const dur = 0.45;
     const o = this.ctx.createOscillator();
@@ -384,45 +453,53 @@ export class AudioSys {
   }
 
   step(vol = 1): void {
+    if (this.playAsset('movement-footstep', 0.13 * vol, 0, 0.92 + Math.random() * 0.16)) return;
     this.noiseBurst(0.1 * vol, 0, 240, 0.8, 0.045);
   }
 
   stepAt(dist: number, pan: number, speed: number): void {
     const att = clamp(1.1 / (1 + dist * 0.11), 0.01, 1);
     const pace = clamp((speed - 0.5) / 6.4, 0, 1);
+    if (this.playAsset('movement-footstep', (0.08 + pace * 0.05) * att, pan, 0.88 + pace * 0.16)) return;
     this.noiseBurst((0.07 + pace * 0.055) * att, pan, 210 + pace * 90, 0.85, 0.045);
   }
 
   // 入水扑通(玩家)
   splashIn(): void {
+    if (this.playAsset('movement-splash', 0.56, 0, 0.92)) return;
     this.noiseBurst(0.5, 0, 520, 0.8, 0.28);
     this.thump(0.32, 0, 280, 60, 0.22);
   }
 
   // 出水涉水(玩家)
   splashOut(): void {
+    if (this.playAsset('movement-splash', 0.26, 0, 1.16)) return;
     this.noiseBurst(0.24, 0, 720, 0.9, 0.18);
   }
 
   // 他人入水(距离/方位衰减)
   splashAt(dist: number, pan: number): void {
     const att = clamp(1.25 / (1 + dist * 0.03), 0.02, 1);
+    if (this.playAsset('movement-splash', 0.48 * att, pan, 0.96)) return;
     this.noiseBurst(0.42 * att, pan, 560, 0.8, 0.24);
     this.thump(0.26 * att, pan, 240, 70, 0.18);
   }
 
   // 划水(玩家, 每 ~1.7m 一次)
   swimStroke(): void {
+    if (this.playAsset('movement-splash', 0.12, 0, 1.24)) return;
     this.noiseBurst(0.13, 0, 480, 0.7, 0.15);
   }
 
   // 他人划水(距离/方位衰减)
   swimStrokeAt(dist: number, pan: number): void {
     const att = clamp(1.1 / (1 + dist * 0.035), 0.015, 1);
+    if (this.playAsset('movement-splash', 0.16 * att, pan, 1.24)) return;
     this.noiseBurst(0.2 * att, pan, 480, 0.7, 0.17);
   }
 
   jumpLand(): void {
+    if (this.playAsset('movement-footstep', 0.24, 0, 0.76)) return;
     this.noiseBurst(0.16, 0, 180, 0.8, 0.07);
   }
 
@@ -440,12 +517,14 @@ export class AudioSys {
 
   // 车门
   vehicleDoor(): void {
+    if (this.playAsset('action-door', 0.34, 0, 0.78)) return;
     this.thump(0.35, 0, 160, 70, 0.12);
   }
 
   // 载具撞击
   vehicleImpact(dist: number, pan: number): void {
     const att = clamp(1.6 / (1 + dist * 0.03), 0.02, 1);
+    if (this.playAsset('impact-metal', 0.62 * att, pan, 0.72)) return;
     this.noiseBurst(0.6 * att, pan, 240, 0.8, 0.22);
     this.thump(0.5 * att, pan, 120, 40, 0.2);
   }

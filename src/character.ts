@@ -1,5 +1,6 @@
 // 低多边形人形角色(玩家与 bot 共用) + 背包物品 + 命中体 + 姿态(站/蹲/趴)
 import * as THREE from 'three';
+import { applySurfaceAsset } from './assets';
 import type { AmmoType, ArmorState, GunAttachments, GunState, MeleeState, ThrowableId } from './types';
 import type { HealId } from './heals';
 import { MELEE } from './weapons';
@@ -112,6 +113,11 @@ const MAT = {
   sole: new THREE.MeshStandardMaterial({ color: 0x1b1712, roughness: 0.96 }),
   hair: new THREE.MeshStandardMaterial({ color: 0x3a2a20, roughness: 0.9 }),
 };
+applySurfaceAsset(MAT.boot, 'fabric', 3.6, 0.48);
+applySurfaceAsset(MAT.dark, 'fabric', 3.8, 0.42);
+applySurfaceAsset(MAT.strap, 'fabric', 4.5, 0.58);
+applySurfaceAsset(MAT.glove, 'fabric', 4.2, 0.58);
+applySurfaceAsset(MAT.sole, 'fabric', 4.8, 0.36);
 
 // 裤装配色(bot 按索引错开, 远距可读)
 const PANTS_COLORS = [0x3d4436, 0x37404a, 0x4a3f33, 0x2f3a2f, 0x46464e];
@@ -121,6 +127,7 @@ function shirtMat(color: number): THREE.MeshStandardMaterial {
   let m = shirtCache.get(color);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0 });
+    applySurfaceAsset(m, 'fabric', 3.2, 0.68);
     shirtCache.set(color, m);
   }
   return m;
