@@ -108,7 +108,8 @@ import { GameRenderer } from './rendering';
 import { random } from './random';
 import { parseBoundedTestInteger } from './stability';
 import {
-  squadAimScore, SquadCommandSystem, SQUAD_ORDER_LABELS, type SquadOrder, type SquadOrderKind,
+  squadAimScore, SquadCommandSystem, SquadIntelSystem, SQUAD_ORDER_LABELS, type SquadOrder,
+  type SquadOrderKind,
 } from './squadcommands';
 import { playerDeathDetail, resolvePlayerFlowCue, shouldCelebrateFirstGun } from './playerflow';
 import { regionEventAt, selectRegionEvents, type RegionEvent } from './regionevents';
@@ -142,6 +143,7 @@ export class Game {
   readonly audio: AudioSys;
   readonly input: Input;
   readonly squadCommands: SquadCommandSystem;
+  readonly squadIntel = new SquadIntelSystem();
   regionEvents: RegionEvent[] = [];
   readonly chars: Character[] = [];
   readonly tmpV2 = new THREE.Vector2();
@@ -939,6 +941,7 @@ export class Game {
     this.drinkT = -1;
     this.zoneArmed = false; // 跳伞前毒圈不计时
     this.squadCommands.reset(this.player.char.pos.x, this.player.char.pos.y, this.player.char.pos.z, this.player.yaw);
+    this.squadIntel.reset();
     this.hud.setAltitude(-1, 0);
     this.promptItem = null;
     this.promptDoor = null;
@@ -1065,6 +1068,7 @@ export class Game {
     // 1 输入→玩家
     player.update(dt, this.input, this);
     const focusEnded = this.squadCommands.update(this.now, this.chars);
+    this.squadIntel.update(this.now, this.chars);
     if (focusEnded) this.hud.toast('集火目标已失效, 小队恢复跟随');
     // 2 bots + 队友
     for (const b of this.bots) b.update(dt, this);
@@ -1716,6 +1720,13 @@ export class Game {
       attacker === victim,
     );
     victim.lastAttackerId = attacker?.id ?? 0;
+    if (attacker && attacker.team !== victim.team) {
+      if (attacker.team === 'squad' && victim.team === 'enemy') {
+        this.squadIntel.report(victim, attacker.id, this.now);
+      } else if (victim.team === 'squad' && attacker.team === 'enemy') {
+        this.squadIntel.report(attacker, victim.id, this.now);
+      }
+    }
     victim.lastHitX = attacker ? attacker.pos.x : 0;
     victim.lastHitZ = attacker ? attacker.pos.z : 0;
     if (victim.isPlayer && dmg > 0) this.cancelHeal('受伤打断恢复'); // 新增: 受伤取消读条
@@ -2269,7 +2280,8 @@ export class Game {
     const focusName = order.kind === 'focus'
       ? this.chars.find((candidate) => candidate.id === order.targetId)?.name ?? ''
       : '';
-    this.hud.setSquadOrder(order.kind, focusName);
+    const sharedContact = this.squadIntel.latestTarget(this.now, this.chars);
+    this.hud.setSquadOrder(order.kind, focusName, sharedContact?.name ?? '');
     // 载具仪表(驾驶中显示)
     if (player.driving) {
       const v = player.driving;

@@ -19,7 +19,10 @@ import { angleDiff, clamp, rand, turnToward } from './utils';
 import { AgentNavigator, allyBlocksShot, findCoverPoint, findShoreExitPoint, findSwimBank } from './botnav';
 import type { DestructibleLike, GunState } from './types';
 import { WATER_Y } from './world';
-import { squadFormationTarget, type SquadMateOrderState } from './squadcommands';
+import {
+  squadCombatRole, squadCombatTarget, squadFormationTarget, type SquadCombatRole, type SquadContact,
+  type SquadMateOrderState,
+} from './squadcommands';
 import { reloadDuration } from './gunplay';
 
 const ENGAGE_RANGE = 60;
@@ -32,6 +35,7 @@ export class TeammateController {
   riding: Vehicle | null = null;
   seatIdx = -1;
   commandState: SquadMateOrderState = 'following';
+  readonly combatRole: SquadCombatRole;
   private followAng: number;
   private followDist: number;
   private jumpSlot: number;
@@ -52,7 +56,7 @@ export class TeammateController {
   private navigator = new AgentNavigator();
   private tacticPoint = new THREE.Vector2();
   private tacticT = 0;
-  private tacticMode: 'advance' | 'strafe' | 'retreat' | 'cover' | 'search' = 'advance';
+  private tacticMode: 'advance' | 'strafe' | 'flank' | 'retreat' | 'cover' | 'search' = 'advance';
   private losOk = false;
   private lastKnown = new THREE.Vector3();
   private lootTarget: LootItem | null = null;
@@ -83,6 +87,8 @@ export class TeammateController {
     this.followAng = (jumpSlot - 1) * 0.68;
     this.followDist = rand(4, 9);
     this.jumpSlot = jumpSlot;
+    this.combatRole = squadCombatRole(jumpSlot);
+    this.strafeDir = this.combatRole === 'leftFlank' ? -1 : 1;
   }
 
   private beginReload(gun: GunState, empty: boolean): void {
@@ -341,7 +347,7 @@ export class TeammateController {
     if (this.target) {
       this.commandState = game.squadOrder.kind === 'focus' && game.squadOrder.targetId === this.target.id
         ? 'focusing'
-        : 'engaging';
+        : this.combatRole === 'support' ? 'supporting' : 'flanking';
       this.combat(dt, game);
     } else {
       // 非交战: 先执行玩家指令, 默认状态才顺路拾取并跟随.
@@ -629,6 +635,7 @@ export class TeammateController {
     let best: Character | null = null;
     let bestScore = ENGAGE_RANGE + 40;
     let bestVisible = false;
+    let sharedContact: SquadContact | null = null;
     const playerAttacker = game.playerCtl?.char.lastAttackerId ?? 0;
     const focusId = game.squadOrder.kind === 'focus' ? game.squadOrder.targetId : 0;
     const focus = focusId > 0
@@ -655,6 +662,17 @@ export class TeammateController {
         best = o;
         bestVisible = true;
       }
+      if (!best) {
+        sharedContact = game.squadIntel.bestContact(c, game.nowSec, game.chars);
+        if (sharedContact) {
+          best = game.chars.find((candidate) => candidate.id === sharedContact?.targetId && candidate.alive) ?? null;
+          if (best) {
+            best.chestPos(this.tgt);
+            bestVisible = !game.isLOSBlocked(this.eye, this.tgt, this.dir);
+            this.lastKnown.set(sharedContact.x, sharedContact.y, sharedContact.z);
+          }
+        }
+      }
     }
     if (best) {
       if (this.target !== best) {
@@ -667,7 +685,10 @@ export class TeammateController {
       }
       this.lostT = 0;
       this.losOk = bestVisible;
-      if (bestVisible) this.lastKnown.copy(best.pos);
+      if (bestVisible) {
+        this.lastKnown.copy(best.pos);
+        game.squadIntel.report(best, c.id, game.nowSec);
+      }
     } else if (this.target) {
       this.lostT += 0.25;
       this.losOk = false;
@@ -733,6 +754,10 @@ export class TeammateController {
         const nz = dz / (dist || 1);
         this.tacticPoint.set(c.pos.x - nx * 9, c.pos.z - nz * 9);
         this.tacticMode = 'retreat';
+      } else if (this.combatRole !== 'support') {
+        const flank = squadCombatTarget(c.pos.x, c.pos.z, t.pos.x, t.pos.z, this.jumpSlot, preferred);
+        this.tacticPoint.set(flank.x, flank.z);
+        this.tacticMode = 'flank';
       } else {
         const nx = dx / (dist || 1);
         const nz = dz / (dist || 1);

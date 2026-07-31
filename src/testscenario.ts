@@ -408,6 +408,9 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.squadOrder = order.kind;
       panel.dataset.squadOrderHistory = [...orderHistory].join(',');
       panel.dataset.squadStates = game.squadMates.map((mate) => mate.commandState).join('|');
+      panel.dataset.squadRoles = game.squadMates.map((mate) => mate.combatRole).join('|');
+      panel.dataset.squadSharedContacts = String(game.squadIntel.activeCount);
+      panel.dataset.squadSharedTarget = game.squadIntel.latestTarget(game.nowSec, game.chars)?.name ?? '';
       panel.dataset.squadStateHistory = stateHistory.map((states) => [...states].join(',')).join('|');
       panel.dataset.squadDistances = game.squadMates.map((mate) => mate.commandDistance.toFixed(2)).join('|');
       panel.dataset.squadPositions = game.squadMates

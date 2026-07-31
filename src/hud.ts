@@ -400,8 +400,10 @@ export class Hud {
       .join('');
   }
 
-  setSquadOrder(kind: SquadOrderKind, targetName = ''): void {
-    const detail = kind === 'follow' ? 'G/中键 标记 · H 警戒' : 'J 恢复跟随';
+  setSquadOrder(kind: SquadOrderKind, targetName = '', sharedContactName = ''): void {
+    const detail = sharedContactName && kind !== 'focus'
+      ? `共享接敌: ${sharedContactName} · G 集火`
+      : kind === 'follow' ? 'G/中键 标记 · H 警戒' : 'J 恢复跟随';
     const title = kind === 'focus' && targetName
       ? `${SQUAD_ORDER_LABELS[kind]}: ${targetName}`
       : SQUAD_ORDER_LABELS[kind];

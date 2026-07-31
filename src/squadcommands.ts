@@ -5,7 +5,111 @@ export type SquadOrderKind = 'follow' | 'move' | 'hold' | 'focus';
 
 export type SquadMateOrderState =
   | 'following' | 'moving' | 'holding' | 'focusing' | 'engaging'
-  | 'looting' | 'reviving' | 'safety' | 'swimming' | 'riding' | 'knocked' | 'descent';
+  | 'flanking' | 'supporting' | 'looting' | 'reviving' | 'safety' | 'swimming' | 'riding' | 'knocked' | 'descent';
+
+export type SquadCombatRole = 'leftFlank' | 'support' | 'rightFlank';
+
+export interface SquadContact {
+  readonly targetId: number;
+  readonly reporterId: number;
+  readonly reportedAt: number;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export const SQUAD_CONTACT_TTL = 6;
+
+export function squadCombatRole(memberIndex: number): SquadCombatRole {
+  const index = Math.max(0, Math.min(2, Math.trunc(memberIndex)));
+  return index === 0 ? 'leftFlank' : index === 2 ? 'rightFlank' : 'support';
+}
+
+export function squadCombatTarget(
+  originX: number,
+  originZ: number,
+  targetX: number,
+  targetZ: number,
+  memberIndex: number,
+  preferredDistance: number,
+): { x: number; z: number } {
+  const dx = originX - targetX;
+  const dz = originZ - targetZ;
+  const length = Math.hypot(dx, dz) || 1;
+  const outwardX = dx / length;
+  const outwardZ = dz / length;
+  const rightX = outwardZ;
+  const rightZ = -outwardX;
+  const role = squadCombatRole(memberIndex);
+  const side = role === 'leftFlank' ? -1 : role === 'rightFlank' ? 1 : 0;
+  const radius = preferredDistance * (role === 'support' ? 1.02 : 0.86);
+  const lateral = Math.min(8, Math.max(4, preferredDistance * 0.26)) * side;
+  return {
+    x: targetX + outwardX * radius + rightX * lateral,
+    z: targetZ + outwardZ * radius + rightZ * lateral,
+  };
+}
+
+export class SquadIntelSystem {
+  private readonly contacts = new Map<number, SquadContact>();
+
+  reset(): void {
+    this.contacts.clear();
+  }
+
+  report(target: Character, reporterId: number, now: number): void {
+    if (!target.alive || target.team !== 'enemy') return;
+    this.contacts.set(target.id, {
+      targetId: target.id,
+      reporterId,
+      reportedAt: now,
+      x: target.pos.x,
+      y: target.pos.y,
+      z: target.pos.z,
+    });
+  }
+
+  update(now: number, chars: readonly Character[]): void {
+    for (const [targetId, contact] of this.contacts) {
+      const target = chars.find((candidate) => candidate.id === targetId);
+      if (!target?.alive || target.team !== 'enemy' || now - contact.reportedAt > SQUAD_CONTACT_TTL) {
+        this.contacts.delete(targetId);
+      }
+    }
+  }
+
+  bestContact(observer: Character, now: number, chars: readonly Character[], maxDistance = 110): SquadContact | null {
+    let best: SquadContact | null = null;
+    let bestScore = Infinity;
+    for (const contact of this.contacts.values()) {
+      const age = now - contact.reportedAt;
+      if (age < 0 || age > SQUAD_CONTACT_TTL) continue;
+      const target = chars.find((candidate) => candidate.id === contact.targetId);
+      if (!target?.alive || target.team !== 'enemy') continue;
+      const distance = Math.hypot(contact.x - observer.pos.x, contact.z - observer.pos.z);
+      if (distance > maxDistance) continue;
+      const score = distance + age * 7;
+      if (score < bestScore) {
+        best = contact;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  latestTarget(now: number, chars: readonly Character[]): Character | null {
+    let latest: SquadContact | null = null;
+    for (const contact of this.contacts.values()) {
+      if (now - contact.reportedAt > SQUAD_CONTACT_TTL) continue;
+      if (!latest || contact.reportedAt > latest.reportedAt) latest = contact;
+    }
+    return latest ? chars.find((candidate) => candidate.id === latest?.targetId && candidate.alive) ?? null : null;
+  }
+
+  get activeCount(): number {
+    return this.contacts.size;
+  }
+}
 
 export interface SquadOrder {
   readonly kind: SquadOrderKind;
