@@ -15,7 +15,7 @@ import {
   type ResolvedMapContentSite,
 } from './mapcontent';
 import { regionAt, regionById, type RegionId } from './regions';
-import { applySurfaceAsset } from './assets';
+import { applySurfaceAsset, type FootstepSurface } from './assets';
 
 type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
 type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
@@ -579,7 +579,13 @@ varying vec3 vTerrainWorld;`,
 
     // ---- 岩石(西部山地加密; 两种棱角变体, 平直着色) ----
     const rockCap = 200; // 全图 120 + 山地加密 80
-    const rockMat = new THREE.MeshLambertMaterial({ color: 0x8f8f8b, flatShading: true });
+    const rockMat = new THREE.MeshStandardMaterial({
+      color: 0x8f8f8b,
+      roughness: 0.97,
+      metalness: 0,
+      flatShading: true,
+    });
+    applySurfaceAsset(rockMat, 'stone', 1.8, 0.72);
     const rockMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), rockMat, rockCap);
     const rockMesh2 = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, rockCap);
     rockMesh.castShadow = true;
@@ -1319,6 +1325,11 @@ varying vec3 vTerrainWorld;`,
       metal: new THREE.MeshStandardMaterial({ color: 0x58656a, roughness: 0.72, metalness: 0.22 }),
       sand: new THREE.MeshStandardMaterial({ color: 0x9b865b, roughness: 1 }),
     };
+    applySurfaceAsset(mats.concrete, 'concrete', 2.4, 0.72);
+    applySurfaceAsset(mats.wood, 'wood', 2.8, 0.78);
+    applySurfaceAsset(mats.hay, 'foliage', 3.5, 0.62);
+    applySurfaceAsset(mats.metal, 'paintedMetal', 3.1, 0.82);
+    applySurfaceAsset(mats.sand, 'terrain', 2.2, 0.48);
     const box = (x: number, z: number, w: number, h: number, d: number, mat: THREE.Material, yaw = 0, block = true): void => {
       if (this.inPlot(x, z, Math.hypot(w, d) * 0.5 + 0.8)) return;
       const y = this.getHeight(x, z);
@@ -1377,6 +1388,11 @@ varying vec3 vTerrainWorld;`,
       logs: new THREE.MeshStandardMaterial({ color: 0x76593d, roughness: 0.98 }),
       breastwork: new THREE.MeshStandardMaterial({ color: 0x93815c, roughness: 1 }),
     };
+    applySurfaceAsset(mats.barrier, 'concrete', 2.5, 0.7);
+    applySurfaceAsset(mats.crate, 'paintedMetal', 3.1, 0.82);
+    applySurfaceAsset(mats.hay, 'foliage', 3.5, 0.62);
+    applySurfaceAsset(mats.logs, 'wood', 2.8, 0.82);
+    applySurfaceAsset(mats.breastwork, 'terrain', 2.2, 0.5);
     const sizeOf = (kind: TacticalCoverKind, index: number): readonly [number, number, number] => {
       if (kind === 'crate') return index % 2 === 0 ? [1.65, 1.35, 1.55] : [2.5, 0.82, 0.72];
       if (kind === 'hay') return index % 2 === 0 ? [1.7, 1.25, 1.5] : [3.2, 0.78, 0.7];
@@ -1509,6 +1525,7 @@ varying vec3 vTerrainWorld;`,
     if (boxes.length > 0) {
       const geometry = new THREE.BoxGeometry(1, 1, 1);
       const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.03 });
+      applySurfaceAsset(material, 'paintedMetal', 2.7, 0.64);
       const mesh = new THREE.InstancedMesh(geometry, material, boxes.length);
       const matrix = new THREE.Matrix4();
       const quaternion = new THREE.Quaternion();
@@ -1881,6 +1898,47 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
       if (p.top <= feetY + 0.45 && p.top > g) g = p.top;
     }
     return g;
+  }
+
+  // 落脚表面供玩家和远端角色共用，视觉材质与声音分类保持一致。
+  footstepSurfaceAt(x: number, z: number, feetY: number): FootstepSurface {
+    const terrainY = this.getHeight(x, z);
+    if (feetY <= WATER_Y + 0.18 && terrainY < WATER_Y + 0.12) return 'water';
+
+    const contentSite = this.mapSiteAt(x, z);
+    const contentSurface = (): FootstepSurface => {
+      if (!contentSite) return 'stone';
+      if (contentSite.kind === 'freight') return 'metal';
+      if (contentSite.kind === 'relay') return 'stone';
+      return 'wood';
+    };
+    for (const b of this.aabbGrid.at(x, z)) {
+      if (b.off || x < b.minX - 0.06 || x > b.maxX + 0.06 || z < b.minZ - 0.06 || z > b.maxZ + 0.06) continue;
+      if (Math.abs(b.maxY - feetY) > 0.52 || b.maxY <= terrainY + 0.08) continue;
+      if (b.tag === 'door' || b.tag === 'window') return 'wood';
+      if (contentSite) return contentSurface();
+      return b.tag === 'roof' ? 'metal' : 'stone';
+    }
+    for (const p of this.platformGrid.at(x, z)) {
+      if (x < p.minX - 0.06 || x > p.maxX + 0.06 || z < p.minZ - 0.06 || z > p.maxZ + 0.06) continue;
+      if (Math.abs(p.top - feetY) > 0.52 || p.top <= terrainY + 0.08) continue;
+      return this.inPlot(x, z, 0) ? 'stone' : 'wood';
+    }
+    if (contentSite && Math.hypot(x - contentSite.resolvedX, z - contentSite.resolvedZ) < contentSite.radius * 0.38) {
+      return contentSurface();
+    }
+    if (this.nearRoad(x, z, 0.25)) return 'dirt';
+    if (this.slopeAt(x, z) > 0.68 || terrainY > 13.5) return 'stone';
+    return 'grass';
+  }
+
+  isShelteredAt(x: number, z: number, feetY: number): boolean {
+    for (const b of this.aabbGrid.at(x, z)) {
+      if (b.off || (b.tag !== 'floor' && b.tag !== 'roof')) continue;
+      if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
+      if (b.minY > feetY + 1.2 && b.minY < feetY + 5.2) return true;
+    }
+    return false;
   }
 
   // 载具碰撞: 大圆 vs 静态碰撞体推出, 返回是否发生碰撞(墙/树/岩/桥栏)

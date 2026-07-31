@@ -92,6 +92,66 @@
       "bytes": 6220
     },
     {
+      "file": "movement-footstep-grass-a.wav",
+      "duration": 0.18,
+      "bytes": 7982
+    },
+    {
+      "file": "movement-footstep-grass-b.wav",
+      "duration": 0.19,
+      "bytes": 8424
+    },
+    {
+      "file": "movement-footstep-dirt-a.wav",
+      "duration": 0.17,
+      "bytes": 7542
+    },
+    {
+      "file": "movement-footstep-dirt-b.wav",
+      "duration": 0.18,
+      "bytes": 7982
+    },
+    {
+      "file": "movement-footstep-wood-a.wav",
+      "duration": 0.2,
+      "bytes": 8864
+    },
+    {
+      "file": "movement-footstep-wood-b.wav",
+      "duration": 0.21,
+      "bytes": 9306
+    },
+    {
+      "file": "movement-footstep-stone-a.wav",
+      "duration": 0.18,
+      "bytes": 7982
+    },
+    {
+      "file": "movement-footstep-stone-b.wav",
+      "duration": 0.19,
+      "bytes": 8424
+    },
+    {
+      "file": "movement-footstep-metal-a.wav",
+      "duration": 0.22,
+      "bytes": 9746
+    },
+    {
+      "file": "movement-footstep-metal-b.wav",
+      "duration": 0.23,
+      "bytes": 10188
+    },
+    {
+      "file": "movement-footstep-water-a.wav",
+      "duration": 0.27,
+      "bytes": 11952
+    },
+    {
+      "file": "movement-footstep-water-b.wav",
+      "duration": 0.29,
+      "bytes": 12834
+    },
+    {
       "file": "movement-splash.wav",
       "duration": 0.46,
       "bytes": 20330
@@ -100,6 +160,41 @@
       "file": "action-door.wav",
       "duration": 0.48,
       "bytes": 21212
+    },
+    {
+      "file": "environment-wind.wav",
+      "duration": 1.5,
+      "bytes": 66194
+    },
+    {
+      "file": "environment-forest.wav",
+      "duration": 1.5,
+      "bytes": 66194
+    },
+    {
+      "file": "environment-coast.wav",
+      "duration": 1.5,
+      "bytes": 66194
+    },
+    {
+      "file": "environment-rain.wav",
+      "duration": 1.5,
+      "bytes": 66194
+    },
+    {
+      "file": "shot-tail-open.wav",
+      "duration": 0.72,
+      "bytes": 31796
+    },
+    {
+      "file": "shot-tail-forest.wav",
+      "duration": 0.52,
+      "bytes": 22976
+    },
+    {
+      "file": "shot-tail-indoor.wav",
+      "duration": 0.64,
+      "bytes": 28268
     }
   ]
 }

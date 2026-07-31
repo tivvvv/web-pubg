@@ -325,13 +325,17 @@ export class Buildings {
 
   // ── 场景构建 ────────────────────────────────────────────────────────────
   build(scene: THREE.Scene, world: World): void {
-    interface Inst { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; c: THREE.Color }
+    interface Inst {
+      tag: 'wall' | 'floor' | 'roof';
+      x0: number; y0: number; z0: number; x1: number; y1: number; z1: number;
+      c: THREE.Color;
+    }
     const insts: Inst[] = [];
     const col = new THREE.Color();
     const box: BoxFn = (tag, x0, y0, z0, x1, y1, z1, color, opts = {}) => {
       col.setHex(color);
       const jitter = 0.94 + ((insts.length * 7919) % 13) / 100;
-      insts.push({ x0, y0, z0, x1, y1, z1, c: col.clone().multiplyScalar(jitter) });
+      insts.push({ tag, x0, y0, z0, x1, y1, z1, c: col.clone().multiplyScalar(jitter) });
       if (opts.collider !== false) {
         world.addCollider({ kind: 'aabb', minX: x0, minY: y0, minZ: z0, maxX: x1, maxY: y1, maxZ: z1, tag });
       }
@@ -363,29 +367,43 @@ export class Buildings {
 
     this.sanitizeLootSpots(world);
 
-    // 合并实例化为一个 InstancedMesh
+    // 墙体、楼地板和屋面分别使用专用表面资产。仍然保持实例化，只增加两个固定绘制调用。
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.87, metalness: 0 });
-    enhanceStructureMaterial(mat);
-    applySurfaceAsset(mat, 'plaster', 2.5, 0.82);
-    const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, insts.length));
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const s = new THREE.Vector3();
-    const t = new THREE.Vector3();
-    insts.forEach((b, i) => {
-      t.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
-      s.set(Math.max(0.02, b.x1 - b.x0), Math.max(0.02, b.y1 - b.y0), Math.max(0.02, b.z1 - b.z0));
-      m.compose(t, q, s);
-      mesh.setMatrixAt(i, m);
-      mesh.setColorAt(i, b.c);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
     this.root = new THREE.Group();
-    this.root.add(mesh);
+    const surfaceByTag = {
+      wall: { asset: 'plaster', scale: 2.5, strength: 0.82, roughness: 0.9 },
+      floor: { asset: 'concrete', scale: 3.1, strength: 0.72, roughness: 0.94 },
+      roof: { asset: 'roof', scale: 2.15, strength: 0.88, roughness: 0.84 },
+    } as const;
+    for (const tag of ['wall', 'floor', 'roof'] as const) {
+      const items = insts.filter((item) => item.tag === tag);
+      if (items.length === 0) continue;
+      const spec = surfaceByTag[tag];
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: spec.roughness,
+        metalness: 0,
+      });
+      enhanceStructureMaterial(mat);
+      applySurfaceAsset(mat, spec.asset, spec.scale, spec.strength);
+      const mesh = new THREE.InstancedMesh(geo, mat, items.length);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const s = new THREE.Vector3();
+      const t = new THREE.Vector3();
+      items.forEach((b, i) => {
+        t.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
+        s.set(Math.max(0.02, b.x1 - b.x0), Math.max(0.02, b.y1 - b.y0), Math.max(0.02, b.z1 - b.z0));
+        m.compose(t, q, s);
+        mesh.setMatrixAt(i, m);
+        mesh.setColorAt(i, b.c);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.root.add(mesh);
+    }
     for (const d of this.destructibles) this.root.add(d.group ?? d.mesh);
     scene.add(this.root);
   }

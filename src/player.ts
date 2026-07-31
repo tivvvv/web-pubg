@@ -212,7 +212,7 @@ export class PlayerController {
     c.vaultCd = Math.max(0, c.vaultCd - dt);
     if (c.vault) {
       updateVaultMotion(c, dt);
-      if (!c.vault) game.audio.jumpLand();
+      if (!c.vault) game.audio.jumpLand(game.world.footstepSurfaceAt(c.pos.x, c.pos.z, c.pos.y));
       c.yaw = this.yaw;
       this.updateCamera(dt, game);
       return;
@@ -333,7 +333,7 @@ export class PlayerController {
     } else {
       c.applyMove(this.moveVel.x, this.moveVel.y, dt, game.world);
       if (wasAir && c.grounded) {
-        game.audio.jumpLand();
+        game.audio.jumpLand(game.world.footstepSurfaceAt(c.pos.x, c.pos.z, c.pos.y));
         const landingImpact = clamp((-fallSpeed - 2.4) / 7, 0, 1);
         this.landDip = Math.max(this.landDip, clamp(Math.abs(fallSpeed) * 0.012, 0.035, 0.14));
         if (landingImpact > 0.05) {
@@ -370,7 +370,10 @@ export class PlayerController {
       const stepDist = sprintActive ? 2.2 : c.stance === 'prone' ? 1.65 : c.stance === 'crouch' ? 2.1 : 2.55;
       if (this.stepAcc > stepDist) {
         this.stepAcc -= stepDist;
-        game.audio.step(c.stance === 'prone' ? 0.35 : c.stance === 'crouch' ? 0.6 : sprintActive ? 1.12 : 1);
+        game.audio.step(
+          c.stance === 'prone' ? 0.35 : c.stance === 'crouch' ? 0.6 : sprintActive ? 1.12 : 1,
+          game.world.footstepSurfaceAt(c.pos.x, c.pos.z, c.pos.y),
+        );
       }
     }
     // ADS: 枪械随视线俯仰(平滑); 换弹进度供模型下沉/弹匣脱落动画
@@ -761,7 +764,7 @@ export class PlayerController {
     c.moveLean = 0;
     c.removeCanopy();
     game.audio.windStop();
-    game.audio.jumpLand();
+    game.audio.jumpLand(game.world.footstepSurfaceAt(c.pos.x, c.pos.z, c.pos.y));
     game.onPlayerLanded();
   }
 

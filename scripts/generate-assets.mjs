@@ -1,10 +1,11 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const TEXTURE_DIR = join(ROOT, 'public/assets/textures');
 const AUDIO_DIR = join(ROOT, 'public/assets/audio');
+const SOURCE_DIR = join(ROOT, 'assets/source');
 const SAMPLE_RATE = 22050;
 
 mkdirSync(TEXTURE_DIR, { recursive: true });
@@ -123,6 +124,37 @@ writeTexture('fabric-detail.png', 256, (x, y, size) => {
   return [value - 2, value, value + 1];
 });
 
+writeTexture('concrete-detail.png', 256, (x, y, size) => {
+  const n = periodicNoise(x, y, size, 13.7) * 0.7;
+  const aggregate = hash2(x >> 1, y >> 1, 211);
+  const pore = aggregate > 0.987 ? -25 : aggregate < 0.012 ? 11 : 0;
+  const value = 220 + n * 13 + pore;
+  return [value + 1, value, value - 2];
+});
+
+writeTexture('roof-detail.png', 256, (x, y, size) => {
+  const u = (x / size) * Math.PI * 2;
+  const v = (y / size) * Math.PI * 2;
+  const rows = Math.sin(v * 8) * 0.52;
+  const stagger = Math.sin(u * 8 + (Math.floor((y / size) * 8) % 2) * Math.PI) * 0.18;
+  const weather = periodicNoise(x, y, size, 16.2) * 0.24;
+  const seam = Math.abs(Math.sin(v * 8)) > 0.982 ? -23 : 0;
+  const value = 220 + (rows + stagger + weather) * 16 + seam;
+  return [value + 4, value, value - 5];
+});
+
+writeTexture('foliage-detail.png', 256, (x, y, size) => {
+  const u = (x / size) * Math.PI * 2;
+  const v = (y / size) * Math.PI * 2;
+  const veins = Math.sin(u * 19 + Math.sin(v * 4) * 1.4) * 0.26;
+  const mottling = periodicNoise(x, y, size, 19.1) * 0.58;
+  const speck = hash2(x, y, 277) > 0.986 ? 13 : 0;
+  const value = 221 + veins * 9 + mottling * 14 + speck;
+  return [value - 3, value + 2, value - 4];
+});
+copyFileSync(join(SOURCE_DIR, 'stone-material.png'), join(TEXTURE_DIR, 'stone-detail.png'));
+copyFileSync(join(SOURCE_DIR, 'painted-metal-material.png'), join(TEXTURE_DIR, 'painted-metal-detail.png'));
+
 function seeded(seed) {
   let state = seed >>> 0;
   return () => {
@@ -180,6 +212,25 @@ function gunshot({ body, crack, decay, tail = 0.18 }) {
     const room = state.low2 * Math.exp(-t / tail);
     return pressure * 0.75 + high * 0.58 * transient + room * 0.34;
   };
+}
+
+function footstep({ body, grit, ring = 0, splash = 0 }) {
+  return (t, _i, random, state) => {
+    const white = noise(random);
+    state.low += (white - state.low) * (0.07 + grit * 0.06);
+    state.low2 += (state.low - state.low2) * 0.12;
+    const attack = 1 - Math.exp(-t * 120);
+    const envelope = attack * Math.exp(-t * (22 - splash * 12));
+    const sole = Math.sin(Math.PI * 2 * (body - t * body * 0.8) * t) * Math.exp(-t * 34);
+    const granular = (white - state.low) * envelope * grit;
+    const resonance = Math.sin(Math.PI * 2 * ring * t) * Math.exp(-t * 22) * (ring > 0 ? 0.28 : 0);
+    const water = (white - state.low2) * Math.exp(-t * 9) * splash;
+    return sole * 0.52 + state.low2 * envelope * 0.72 + granular * 0.44 + resonance + water * 0.58;
+  };
+}
+
+function loopEnvelope(t, duration) {
+  return Math.min(1, t * 8, (duration - t) * 8);
 }
 
 const audioManifest = [
@@ -249,6 +300,18 @@ const audioManifest = [
     return state.low * Math.exp(-t * 34)
       + Math.sin(Math.PI * 2 * 92 * t) * Math.exp(-t * 42) * 0.38;
   }, 43),
+  writeWav('movement-footstep-grass-a.wav', 0.18, footstep({ body: 82, grit: 0.72 }), 101),
+  writeWav('movement-footstep-grass-b.wav', 0.19, footstep({ body: 76, grit: 0.82 }), 102),
+  writeWav('movement-footstep-dirt-a.wav', 0.17, footstep({ body: 94, grit: 0.48 }), 103),
+  writeWav('movement-footstep-dirt-b.wav', 0.18, footstep({ body: 88, grit: 0.58 }), 104),
+  writeWav('movement-footstep-wood-a.wav', 0.2, footstep({ body: 118, grit: 0.24, ring: 420 }), 105),
+  writeWav('movement-footstep-wood-b.wav', 0.21, footstep({ body: 108, grit: 0.3, ring: 360 }), 106),
+  writeWav('movement-footstep-stone-a.wav', 0.18, footstep({ body: 138, grit: 0.2, ring: 720 }), 107),
+  writeWav('movement-footstep-stone-b.wav', 0.19, footstep({ body: 126, grit: 0.24, ring: 630 }), 108),
+  writeWav('movement-footstep-metal-a.wav', 0.22, footstep({ body: 152, grit: 0.16, ring: 1080 }), 109),
+  writeWav('movement-footstep-metal-b.wav', 0.23, footstep({ body: 144, grit: 0.2, ring: 920 }), 110),
+  writeWav('movement-footstep-water-a.wav', 0.27, footstep({ body: 72, grit: 0.32, splash: 0.92 }), 111),
+  writeWav('movement-footstep-water-b.wav', 0.29, footstep({ body: 66, grit: 0.38, splash: 1 }), 112),
   writeWav('movement-splash.wav', 0.46, (t, _i, random, state) => {
     const white = noise(random);
     state.low += (white - state.low) * 0.14;
@@ -261,6 +324,56 @@ const audioManifest = [
     return creak * Math.sin(Math.PI * Math.min(1, t / 0.45)) * 0.42
       + noise(random) * latch * 0.25;
   }, 45),
+  writeWav('environment-wind.wav', 1.5, (t, _i, random, state) => {
+    const white = noise(random);
+    state.low += (white - state.low) * 0.018;
+    state.low2 += (state.low - state.low2) * 0.035;
+    const gust = 0.42 + Math.sin(t * Math.PI * 2 / 1.5) * 0.18
+      + Math.sin(t * Math.PI * 4 / 1.5 + 1.1) * 0.09;
+    return state.low2 * gust * loopEnvelope(t, 1.5);
+  }, 121),
+  writeWav('environment-forest.wav', 1.5, (t, _i, random, state) => {
+    const white = noise(random);
+    state.low += (white - state.low) * 0.05;
+    const leaves = (white - state.low) * (0.16 + Math.sin(t * Math.PI * 2 / 1.5) * 0.05);
+    const bird = Math.sin(Math.PI * 2 * (1450 + Math.sin(t * 7) * 180) * t)
+      * Math.max(0, Math.sin(t * Math.PI * 4 / 1.5)) ** 10 * 0.16;
+    return (leaves + bird) * loopEnvelope(t, 1.5);
+  }, 122),
+  writeWav('environment-coast.wav', 1.5, (t, _i, random, state) => {
+    const white = noise(random);
+    state.low += (white - state.low) * 0.075;
+    state.low2 += (state.low - state.low2) * 0.05;
+    const wave = Math.max(0, Math.sin(t * Math.PI * 2 / 1.5 - 0.5));
+    return ((white - state.low) * 0.14 + state.low2 * 0.62) * (0.28 + wave * 0.72)
+      * loopEnvelope(t, 1.5);
+  }, 123),
+  writeWav('environment-rain.wav', 1.5, (t, _i, random, state) => {
+    const white = noise(random);
+    state.low += (white - state.low) * 0.2;
+    const hiss = white - state.low;
+    const drops = random() > 0.985 ? (random() - 0.5) * 1.2 : 0;
+    return (hiss * 0.42 + drops) * loopEnvelope(t, 1.5);
+  }, 124),
+  writeWav('shot-tail-open.wav', 0.72, (t, _i, random, state) => {
+    const white = noise(random);
+    state.low += (white - state.low) * 0.035;
+    return state.low * Math.exp(-t * 4.2) * 0.54
+      + Math.sin(Math.PI * 2 * 92 * t) * Math.exp(-t * 5.4) * 0.22;
+  }, 131),
+  writeWav('shot-tail-forest.wav', 0.52, (t, _i, random, state) => {
+    const white = noise(random);
+    state.low += (white - state.low) * 0.075;
+    return state.low * Math.exp(-t * 7.2) * 0.44
+      + (white - state.low) * Math.exp(-t * 11) * 0.12;
+  }, 132),
+  writeWav('shot-tail-indoor.wav', 0.64, (t, _i, random) => {
+    const slapA = Math.sin(Math.PI * 2 * 182 * t) * Math.exp(-t * 7.5);
+    const slapB = Math.sin(Math.PI * 2 * 244 * Math.max(0, t - 0.055))
+      * Math.exp(-Math.max(0, t - 0.055) * 9.5);
+    return (slapA * 0.5 + slapB * 0.34 + noise(random) * Math.exp(-t * 12) * 0.12)
+      * (1 - Math.exp(-t * 80));
+  }, 133),
 ];
 
 writeFileSync(
@@ -268,4 +381,4 @@ writeFileSync(
   `${JSON.stringify({ sampleRate: SAMPLE_RATE, files: audioManifest }, null, 2)}\n`,
 );
 
-console.log(`Generated 5 textures and ${audioManifest.length} audio assets.`);
+console.log(`Generated 10 textures and ${audioManifest.length} audio assets.`);

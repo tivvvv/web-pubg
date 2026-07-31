@@ -3,23 +3,28 @@ import { basename, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   AUDIO_ASSET_URLS,
+  FOOTSTEP_ASSET_IDS,
   shotAssetId,
   SURFACE_ASSET_URLS,
 } from '../src/assets';
+import { ambienceMix } from '../src/audio';
 import type { WeaponId } from '../src/types';
 
 const projectFile = (url: string): string => join(process.cwd(), 'public', url);
 
 describe('美术与音效静态资产', () => {
-  it('五类表面材质均为有效轻量 PNG', () => {
+  it('十类表面材质均为有效轻量 PNG', () => {
     expect(Object.keys(SURFACE_ASSET_URLS)).toEqual([
-      'plaster', 'terrain', 'wood', 'metal', 'fabric',
+      'plaster', 'terrain', 'wood', 'metal', 'fabric', 'stone', 'concrete', 'roof', 'foliage', 'paintedMetal',
     ]);
+    let total = 0;
     for (const url of Object.values(SURFACE_ASSET_URLS)) {
       const bytes = readFileSync(projectFile(url));
       expect([...bytes.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
-      expect(bytes.length).toBeLessThan(96 * 1024);
+      expect(bytes.length).toBeLessThan(128 * 1024);
+      total += bytes.length;
     }
+    expect(total).toBeLessThan(512 * 1024);
   });
 
   it('关键音效清单与生成清单一致且保持轻量', () => {
@@ -36,7 +41,7 @@ describe('美术与音效静态资产', () => {
       expect(bytes.subarray(8, 12).toString('ascii')).toBe('WAVE');
       total += statSync(projectFile(url)).size;
     }
-    expect(total).toBeLessThan(512 * 1024);
+    expect(total).toBeLessThan(1024 * 1024);
   });
 
   it('所有枪械均映射独立枪声且消音器统一使用消音采样', () => {
@@ -45,5 +50,30 @@ describe('美术与音效静态资产', () => {
       expect(shotAssetId(weapon, false)).toBe(`shot-${weapon}`);
       expect(shotAssetId(weapon, true)).toBe('shot-suppressed');
     }
+  });
+
+  it('六种落脚表面均提供两个独立声音变体', () => {
+    expect(Object.keys(FOOTSTEP_ASSET_IDS)).toEqual([
+      'grass', 'dirt', 'wood', 'stone', 'metal', 'water',
+    ]);
+    for (const variants of Object.values(FOOTSTEP_ASSET_IDS)) {
+      expect(variants).toHaveLength(2);
+      expect(variants[0]).not.toBe(variants[1]);
+      for (const id of variants) expect(AUDIO_ASSET_URLS[id]).toMatch(/movement-footstep-/);
+    }
+  });
+
+  it('区域环境声在室内衰减并按林地和海岸独立混音', () => {
+    const forest = ambienceMix(0, 1, 'forest', false);
+    const coast = ambienceMix(0, 1, 'coast', false);
+    const rainOutside = ambienceMix(1, 0.5, 'open', false);
+    const rainInside = ambienceMix(1, 0.5, 'open', true);
+
+    expect(forest.forest).toBeGreaterThan(0);
+    expect(forest.coast).toBe(0);
+    expect(coast.coast).toBeGreaterThan(0);
+    expect(coast.forest).toBe(0);
+    expect(rainInside.wind).toBeLessThan(rainOutside.wind);
+    expect(rainInside.rain).toBeLessThan(rainOutside.rain);
   });
 });

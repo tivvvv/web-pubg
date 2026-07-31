@@ -2,7 +2,18 @@
 import * as THREE from 'three';
 import type { WeaponId } from './types';
 
-export type SurfaceAssetId = 'plaster' | 'terrain' | 'wood' | 'metal' | 'fabric';
+export type SurfaceAssetId =
+  | 'plaster'
+  | 'terrain'
+  | 'wood'
+  | 'metal'
+  | 'fabric'
+  | 'stone'
+  | 'concrete'
+  | 'roof'
+  | 'foliage'
+  | 'paintedMetal';
+export type FootstepSurface = 'grass' | 'dirt' | 'wood' | 'stone' | 'metal' | 'water';
 export type AudioAssetId =
   | `shot-${WeaponId}`
   | 'shot-suppressed'
@@ -16,8 +27,14 @@ export type AudioAssetId =
   | 'ui-pickup'
   | 'action-reload'
   | 'movement-footstep'
+  | `movement-footstep-${FootstepSurface}-${'a' | 'b'}`
   | 'movement-splash'
-  | 'action-door';
+  | 'action-door'
+  | 'environment-wind'
+  | 'environment-forest'
+  | 'environment-coast'
+  | 'environment-rain'
+  | `shot-tail-${'indoor' | 'open' | 'forest'}`;
 
 export const SURFACE_ASSET_URLS: Readonly<Record<SurfaceAssetId, string>> = Object.freeze({
   plaster: '/assets/textures/plaster-detail.png',
@@ -25,6 +42,11 @@ export const SURFACE_ASSET_URLS: Readonly<Record<SurfaceAssetId, string>> = Obje
   wood: '/assets/textures/wood-detail.png',
   metal: '/assets/textures/metal-detail.png',
   fabric: '/assets/textures/fabric-detail.png',
+  stone: '/assets/textures/stone-detail.png',
+  concrete: '/assets/textures/concrete-detail.png',
+  roof: '/assets/textures/roof-detail.png',
+  foliage: '/assets/textures/foliage-detail.png',
+  paintedMetal: '/assets/textures/painted-metal-detail.png',
 });
 
 export const AUDIO_ASSET_URLS: Readonly<Record<AudioAssetId, string>> = Object.freeze({
@@ -46,8 +68,38 @@ export const AUDIO_ASSET_URLS: Readonly<Record<AudioAssetId, string>> = Object.f
   'ui-pickup': '/assets/audio/ui-pickup.wav',
   'action-reload': '/assets/audio/action-reload.wav',
   'movement-footstep': '/assets/audio/movement-footstep.wav',
+  'movement-footstep-grass-a': '/assets/audio/movement-footstep-grass-a.wav',
+  'movement-footstep-grass-b': '/assets/audio/movement-footstep-grass-b.wav',
+  'movement-footstep-dirt-a': '/assets/audio/movement-footstep-dirt-a.wav',
+  'movement-footstep-dirt-b': '/assets/audio/movement-footstep-dirt-b.wav',
+  'movement-footstep-wood-a': '/assets/audio/movement-footstep-wood-a.wav',
+  'movement-footstep-wood-b': '/assets/audio/movement-footstep-wood-b.wav',
+  'movement-footstep-stone-a': '/assets/audio/movement-footstep-stone-a.wav',
+  'movement-footstep-stone-b': '/assets/audio/movement-footstep-stone-b.wav',
+  'movement-footstep-metal-a': '/assets/audio/movement-footstep-metal-a.wav',
+  'movement-footstep-metal-b': '/assets/audio/movement-footstep-metal-b.wav',
+  'movement-footstep-water-a': '/assets/audio/movement-footstep-water-a.wav',
+  'movement-footstep-water-b': '/assets/audio/movement-footstep-water-b.wav',
   'movement-splash': '/assets/audio/movement-splash.wav',
   'action-door': '/assets/audio/action-door.wav',
+  'environment-wind': '/assets/audio/environment-wind.wav',
+  'environment-forest': '/assets/audio/environment-forest.wav',
+  'environment-coast': '/assets/audio/environment-coast.wav',
+  'environment-rain': '/assets/audio/environment-rain.wav',
+  'shot-tail-indoor': '/assets/audio/shot-tail-indoor.wav',
+  'shot-tail-open': '/assets/audio/shot-tail-open.wav',
+  'shot-tail-forest': '/assets/audio/shot-tail-forest.wav',
+});
+
+export const FOOTSTEP_ASSET_IDS: Readonly<
+  Record<FootstepSurface, readonly [AudioAssetId, AudioAssetId]>
+> = Object.freeze({
+  grass: ['movement-footstep-grass-a', 'movement-footstep-grass-b'],
+  dirt: ['movement-footstep-dirt-a', 'movement-footstep-dirt-b'],
+  wood: ['movement-footstep-wood-a', 'movement-footstep-wood-b'],
+  stone: ['movement-footstep-stone-a', 'movement-footstep-stone-b'],
+  metal: ['movement-footstep-metal-a', 'movement-footstep-metal-b'],
+  water: ['movement-footstep-water-a', 'movement-footstep-water-b'],
 });
 
 const textureCache = new Map<SurfaceAssetId, THREE.Texture>();

@@ -63,7 +63,7 @@ import { ARMORS, armorFromLoot, armorLootKind, isArmorKind, type ArmorKind, type
 import { AirdropManager, type Crate } from './airdrop';
 import { ATTACHMENTS, ATT_LOOT_KIND, attachmentSummary, attachFromLoot, canAttach, emptyAttachments, isAttachKind, isSuppressed, magSizeOf } from './attachments';
 import { KnockSys } from './knock';
-import { AudioSys } from './audio';
+import { AudioSys, type AcousticSpace } from './audio';
 import { HEAL_WEIGHT, PACKS, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, isPackKind, packLootKind, packLevelFromLoot } from './backpack';
 import { BotController, BOT_NAMES } from './bot';
 import { buildBotDifficultyDeck } from './botdifficulty';
@@ -982,7 +982,19 @@ export class Game {
     const environmentActive = this.state === 'playing';
     const env = this.graphics.renderFrame(dt, this.scene, cam, this.world, environmentActive);
     this.hud.setEnvironment(env.timeText, env.phaseLabel, env.weatherLabel, env.weather);
-    this.audio.setRain(env.rainIntensity);
+    const listener = this.player?.char;
+    const listenerRegion = listener
+      ? regionOrWilderness(listener.pos.x, listener.pos.z)
+      : regionOrWilderness(cam.position.x, cam.position.z);
+    const ambienceBiome = listenerRegion.profile === 'forest'
+      ? 'forest'
+      : listenerRegion.profile === 'harbor'
+        ? 'coast'
+        : 'open';
+    const sheltered = listener
+      ? this.world.isShelteredAt(listener.pos.x, listener.pos.z, listener.pos.y)
+      : false;
+    this.audio.setEnvironmentAmbience(env.rainIntensity, env.daylight, ambienceBiome, sheltered);
     const environmentNotice = this.world.consumeEnvironmentNotice();
     if (environmentNotice && environmentActive) this.hud.toast(environmentNotice);
     if (this.world.consumeThunder()) this.audio.thunder();
@@ -1371,8 +1383,9 @@ export class Game {
     if (anyKill) this.hud.hitmarker('kill');
     if (anyNearMiss) this.audio.bulletWhiz(nearMissPan);
     // 音效: 他人枪声按距离/方位衰减
+    const acousticSpace = this.acousticSpaceAt(shooter.pos);
     if (shooter.isPlayer) {
-      this.audio.shot(gun.def.id, 0, 0, suppressed);
+      this.audio.shot(gun.def.id, 0, 0, suppressed, acousticSpace);
     } else if (this.player) {
       const cam = this.player.camera;
       this.tmpEnd.subVectors(shooter.pos, cam.position);
@@ -1382,7 +1395,7 @@ export class Game {
         const e = cam.matrixWorld.elements;
         this.tmpRight.set(e[0] ?? 1, e[1] ?? 0, e[2] ?? 0);
         const pan = this.tmpRight.dot(this.tmpEnd);
-        this.audio.shot(gun.def.id, dist, pan, suppressed);
+        this.audio.shot(gun.def.id, dist, pan, suppressed, acousticSpace);
       }
     }
     return true;
@@ -1416,6 +1429,11 @@ export class Game {
   }
 
   // 以玩家相机为听者的方位音效(复用枪声的 dist/pan 算法)
+  private acousticSpaceAt(pos: THREE.Vector3): AcousticSpace {
+    if (this.world.isShelteredAt(pos.x, pos.z, pos.y)) return 'indoor';
+    return regionOrWilderness(pos.x, pos.z).profile === 'forest' ? 'forest' : 'open';
+  }
+
   soundAt(pos: THREE.Vector3, fn: (dist: number, pan: number) => void): void {
     if (!this.player) return;
     const cam = this.player.camera;
@@ -1439,7 +1457,10 @@ export class Game {
       if (c.stepAcc < stride) continue;
       c.stepAcc %= stride;
       this.soundAt(c.pos, (dist, pan) => {
-        if (dist <= 34) this.audio.stepAt(dist, pan, c.speed2d);
+        if (dist <= 34) {
+          const surface = this.world.footstepSurfaceAt(c.pos.x, c.pos.z, c.pos.y);
+          this.audio.stepAt(dist, pan, c.speed2d, surface);
+        }
       });
     }
   }

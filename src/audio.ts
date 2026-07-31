@@ -3,9 +3,39 @@ import type { WeaponId } from './types';
 import { clamp } from './utils';
 import {
   AUDIO_ASSET_URLS,
+  FOOTSTEP_ASSET_IDS,
   shotAssetId,
   type AudioAssetId,
+  type FootstepSurface,
 } from './assets';
+
+export type AmbienceBiome = 'open' | 'forest' | 'coast';
+export type AcousticSpace = 'indoor' | 'open' | 'forest';
+
+export interface AmbienceMix {
+  wind: number;
+  forest: number;
+  coast: number;
+  rain: number;
+}
+
+export function ambienceMix(
+  rain: number,
+  daylight: number,
+  biome: AmbienceBiome,
+  sheltered: boolean,
+): AmbienceMix {
+  const rain01 = clamp(rain, 0, 1);
+  const day01 = clamp(daylight, 0, 1);
+  const outdoor = sheltered ? 0.34 : 1;
+  const nightLift = 1 + (1 - day01) * 0.18;
+  return {
+    wind: (0.012 + rain01 * 0.032) * outdoor * nightLift,
+    forest: biome === 'forest' ? 0.035 * outdoor * day01 : 0,
+    coast: biome === 'coast' ? 0.042 * outdoor : 0,
+    rain: rain01 * (sheltered ? 0.052 : 0.082),
+  };
+}
 
 export class AudioSys {
   private ctx: AudioContext | null = null;
@@ -15,6 +45,10 @@ export class AudioSys {
   private rainSource: AudioBufferSourceNode | null = null;
   private rainGain: GainNode | null = null;
   private rainLevel = 0;
+  private daylightLevel = 1;
+  private ambienceBiome: AmbienceBiome = 'open';
+  private ambienceSheltered = false;
+  private ambienceLoops = new Map<AudioAssetId, { source: AudioBufferSourceNode; gain: GainNode }>();
   private samples = new Map<AudioAssetId, AudioBuffer>();
   private sampleLoadStarted = false;
   private readonly publishTestState = typeof window !== 'undefined'
@@ -78,6 +112,7 @@ export class AudioSys {
         errors++;
       }
     }));
+    this.syncAmbience();
     if (typeof document !== 'undefined') {
       document.body.dataset.audioAssetsLoaded = `${this.samples.size}/${entries.length}`;
       document.body.dataset.audioAssetErrors = String(errors);
@@ -126,9 +161,68 @@ export class AudioSys {
 
   setRain(level: number): void {
     this.rainLevel = clamp(level, 0, 1);
-    if (this.rainLevel > 0.01) this.ensureRainLoop();
-    if (this.ctx && this.rainGain) {
-      this.rainGain.gain.setTargetAtTime(this.rainLevel * 0.085, this.ctx.currentTime, 0.35);
+    this.syncAmbience();
+  }
+
+  setEnvironmentAmbience(
+    rain: number,
+    daylight: number,
+    biome: AmbienceBiome,
+    sheltered: boolean,
+  ): void {
+    this.rainLevel = clamp(rain, 0, 1);
+    this.daylightLevel = clamp(daylight, 0, 1);
+    this.ambienceBiome = biome;
+    this.ambienceSheltered = sheltered;
+    this.syncAmbience();
+  }
+
+  private ensureAmbienceLoop(id: AudioAssetId): GainNode | null {
+    if (!this.ctx || !this.master) return null;
+    const active = this.ambienceLoops.get(id);
+    if (active) return active.gain;
+    const buffer = this.samples.get(id);
+    if (!buffer) return null;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    source.connect(gain).connect(this.master);
+    source.start();
+    this.ambienceLoops.set(id, { source, gain });
+    return gain;
+  }
+
+  private syncAmbience(): void {
+    if (!this.ctx) return;
+    const mix = ambienceMix(
+      this.rainLevel,
+      this.daylightLevel,
+      this.ambienceBiome,
+      this.ambienceSheltered,
+    );
+    const targets: readonly [AudioAssetId, number][] = [
+      ['environment-wind', mix.wind],
+      ['environment-forest', mix.forest],
+      ['environment-coast', mix.coast],
+      ['environment-rain', mix.rain],
+    ];
+    let hasRainSample = false;
+    for (const [id, target] of targets) {
+      const gain = this.ensureAmbienceLoop(id);
+      if (!gain) continue;
+      if (id === 'environment-rain') hasRainSample = true;
+      gain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.45);
+    }
+    // 正式采样尚未解码时保留程序雨声，加载完成后平滑交棒给环境采样。
+    if (!hasRainSample && this.rainLevel > 0.01) this.ensureRainLoop();
+    if (this.rainGain) {
+      this.rainGain.gain.setTargetAtTime(
+        hasRainSample ? 0 : this.rainLevel * 0.085,
+        this.ctx.currentTime,
+        0.35,
+      );
     }
   }
 
@@ -195,7 +289,13 @@ export class AudioSys {
   }
 
   // dist: 与听者距离, pan: 相对左右(-1..1)
-  shot(kind: WeaponId, dist: number, pan: number, suppressed = false): void {
+  shot(
+    kind: WeaponId,
+    dist: number,
+    pan: number,
+    suppressed = false,
+    space: AcousticSpace = 'open',
+  ): void {
     if (!this.ctx) return;
     const distanceAtt = clamp(1.35 / (1 + dist * 0.028), 0.015, 1);
     const att = distanceAtt * (suppressed ? 0.24 : 1);
@@ -203,7 +303,13 @@ export class AudioSys {
       pistol: 0.54, rifle: 0.64, akm: 0.69, smg: 0.46, dmr: 0.72, sniper: 0.82, shotgun: 0.78,
     };
     const assetVolume = distanceAtt * (suppressed ? 0.24 : sampleGain[kind]);
-    if (this.playAsset(shotAssetId(kind, suppressed), assetVolume, pan, 0.96 + Math.random() * 0.08)) return;
+    if (this.playAsset(shotAssetId(kind, suppressed), assetVolume, pan, 0.96 + Math.random() * 0.08)) {
+      if (!suppressed) {
+        const tailGain = space === 'indoor' ? 0.3 : space === 'forest' ? 0.16 : 0.22;
+        this.playAsset(`shot-tail-${space}`, distanceAtt * tailGain, pan, 0.96 + Math.random() * 0.08);
+      }
+      return;
+    }
     if (suppressed) this.noiseBurst(0.08 * distanceAtt, pan, 2400, 1.5, 0.045);
     switch (kind) {
       case 'pistol':
@@ -452,14 +558,20 @@ export class AudioSys {
     window.setTimeout(() => this.blip(520, 520, 0.1, 0.16, 'sine'), 160);
   }
 
-  step(vol = 1): void {
+  step(vol = 1, surface: FootstepSurface = 'grass'): void {
+    const choices = FOOTSTEP_ASSET_IDS[surface];
+    const asset = choices[Math.random() < 0.5 ? 0 : 1];
+    if (this.playAsset(asset, 0.13 * vol, 0, 0.92 + Math.random() * 0.16)) return;
     if (this.playAsset('movement-footstep', 0.13 * vol, 0, 0.92 + Math.random() * 0.16)) return;
     this.noiseBurst(0.1 * vol, 0, 240, 0.8, 0.045);
   }
 
-  stepAt(dist: number, pan: number, speed: number): void {
+  stepAt(dist: number, pan: number, speed: number, surface: FootstepSurface = 'grass'): void {
     const att = clamp(1.1 / (1 + dist * 0.11), 0.01, 1);
     const pace = clamp((speed - 0.5) / 6.4, 0, 1);
+    const choices = FOOTSTEP_ASSET_IDS[surface];
+    const asset = choices[Math.random() < 0.5 ? 0 : 1];
+    if (this.playAsset(asset, (0.08 + pace * 0.05) * att, pan, 0.88 + pace * 0.16)) return;
     if (this.playAsset('movement-footstep', (0.08 + pace * 0.05) * att, pan, 0.88 + pace * 0.16)) return;
     this.noiseBurst((0.07 + pace * 0.055) * att, pan, 210 + pace * 90, 0.85, 0.045);
   }
@@ -498,7 +610,10 @@ export class AudioSys {
     this.noiseBurst(0.2 * att, pan, 480, 0.7, 0.17);
   }
 
-  jumpLand(): void {
+  jumpLand(surface: FootstepSurface = 'grass'): void {
+    const choices = FOOTSTEP_ASSET_IDS[surface];
+    const asset = choices[Math.random() < 0.5 ? 0 : 1];
+    if (this.playAsset(asset, 0.24, 0, 0.76)) return;
     if (this.playAsset('movement-footstep', 0.24, 0, 0.76)) return;
     this.noiseBurst(0.16, 0, 180, 0.8, 0.07);
   }

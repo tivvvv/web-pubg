@@ -368,7 +368,7 @@ export class Vehicle {
 
   private mat(color: number): THREE.MeshStandardMaterial {
     const m = new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.16 });
-    applySurfaceAsset(m, 'metal', 2.8, 0.62);
+    applySurfaceAsset(m, 'paintedMetal', 2.8, 0.72);
     this.mats.push(m);
     return m;
   }
