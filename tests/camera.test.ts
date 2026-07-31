@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  advanceCameraMode, cameraModeTarget, sampleCameraShake, smoothCameraDistance,
+  advanceCameraMode, advanceShoulderBlend, cameraFovTarget, cameraModeTarget, sampleCameraShake,
+  smoothCameraDistance,
 } from '../src/camera';
 
 describe('镜头过渡', () => {
@@ -38,5 +39,25 @@ describe('镜头过渡', () => {
     expect(Math.abs(a.y)).toBeLessThanOrEqual(0.2);
     expect(Math.abs(a.z)).toBeLessThanOrEqual(0.2);
     expect(Math.abs(a.roll)).toBeLessThanOrEqual(0.032);
+  });
+
+  it('换肩平滑穿过中轴且不同帧率结果接近', () => {
+    let at60 = 1;
+    let at30 = 1;
+    for (let i = 0; i < 30; i++) at60 = advanceShoulderBlend(at60, -1, 1 / 60);
+    for (let i = 0; i < 15; i++) at30 = advanceShoulderBlend(at30, -1, 1 / 30);
+    expect(at60).toBeCloseTo(at30, 5);
+    expect(at60).toBeLessThan(-0.99);
+  });
+
+  it('冲刺和开火仅提供受控广角反馈且瞄准缩放仍占主导', () => {
+    const idle = cameraFovTarget(75, 1, 0, 0, 0, 0);
+    const sprint = cameraFovTarget(75, 1, 1, 0, 0, 0);
+    const fired = cameraFovTarget(75, 1, 0, 0, 1.2, 0);
+    const scoped = cameraFovTarget(75, 2, 0, 0, 1.2, 1);
+    expect(idle).toBe(75);
+    expect(sprint).toBeCloseTo(77.8);
+    expect(fired).toBeCloseTo(76.2);
+    expect(scoped).toBeLessThan(38);
   });
 });

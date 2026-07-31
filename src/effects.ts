@@ -667,6 +667,12 @@ export class Effects {
     this.spawnSplashRing(point, 1.5, 0.42);
   }
 
+  landingDust(point: THREE.Vector3, strength: number): void {
+    const impact = Math.max(0, Math.min(1, strength));
+    this.burst(point, 3 + Math.round(impact * 7), 0.62, 0.55, 0.42, 0.8 + impact * 1.4);
+    this.spawnPuff(point, 0x91846d, 0.2 + impact * 0.32, 0.38, 0.42 + impact * 0.34, 0.3, 0.08);
+  }
+
   impactRock(point: THREE.Vector3): void {
     this.burst(point, 7, 0.7, 0.7, 0.68, 3.4);
     this.burst(point, 4, 1, 0.82, 0.36, 4.4);

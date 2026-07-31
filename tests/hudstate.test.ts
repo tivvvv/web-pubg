@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { selectQueuedToast, shouldShowSwimmingStatus, toastShouldInterrupt } from '../src/hud';
+import {
+  healthFeedback, selectQueuedToast, shouldShowSwimmingStatus, toastShouldInterrupt,
+} from '../src/hud';
 
 describe('HUD 状态互斥', () => {
+  it('低血量反馈平滑增强且仅在存活的危急血量脉动', () => {
+    expect(healthFeedback(100)).toEqual({ opacity: 0, critical: false });
+    expect(healthFeedback(55)).toEqual({ opacity: 0, critical: false });
+    expect(healthFeedback(25).opacity).toBeGreaterThan(0.35);
+    expect(healthFeedback(25).critical).toBe(true);
+    expect(healthFeedback(0)).toEqual({ opacity: 0.72, critical: false });
+  });
+
   it('仅在游泳且未空降时显示游泳标记', () => {
     expect(shouldShowSwimmingStatus(true, false)).toBe(true);
     expect(shouldShowSwimmingStatus(false, false)).toBe(false);

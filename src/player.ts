@@ -20,7 +20,8 @@ import {
   smoothAimProgress, WEAPON_RECOIL,
 } from './gunplay';
 import {
-  advanceCameraMode, cameraModeTarget, sampleCameraShake, smoothCameraDistance, type CameraShakeSample,
+  advanceCameraMode, advanceShoulderBlend, cameraFovTarget, cameraModeTarget, sampleCameraShake,
+  smoothCameraDistance, type CameraShakeSample,
 } from './camera';
 import {
   chooseInteractionCandidate, type InteractionCandidate, type InteractionKind,
@@ -29,6 +30,7 @@ import type { Destructible } from './buildings';
 import type { Crate } from './airdrop';
 import type { DeathCrate } from './deathcrate';
 import type { LootItem } from './loot';
+import { resolveMovementDirection, wadingSpeedMultiplier } from './movement';
 
 const BASE_FOV = 75;
 const THROW_SPEED = 15; // 满蓄力投掷速度
@@ -82,7 +84,10 @@ export class PlayerController {
   private camBob = 0;
   private camRoll = 0;
   private landDip = 0;
+  private shotFovKick = 0;
   private cameraModeF = 0;
+  private shoulderSide: -1 | 1 = 1;
+  private shoulderBlend = 1;
   private cameraShakeT = 0;
   private cameraShake: CameraShakeSample = { x: 0, y: 0, z: 0, roll: 0 };
   private vehicleLookYaw = 0;
@@ -137,6 +142,12 @@ export class PlayerController {
     return this.interactionKind;
   }
 
+  swapShoulder(game: Game): void {
+    if (game.viewFpp || this.cameraModeF > 0.92 || this.driving || this.descent) return;
+    this.shoulderSide = this.shoulderSide === 1 ? -1 : 1;
+    game.hud.toast(this.shoulderSide === 1 ? '右肩视角' : '左肩视角');
+  }
+
   update(dt: number, input: Input, game: Game): void {
     const c = this.char;
     this.interactionLockT = Math.max(0, this.interactionLockT - dt);
@@ -176,6 +187,7 @@ export class PlayerController {
     this.recoilRestT = Math.max(0, this.recoilRestT - dt);
     if (this.recoilRestT <= 0) this.recoilChain = Math.max(0, this.recoilChain - dt * 10);
     this.landDip *= Math.exp(-11 * dt);
+    this.shotFovKick *= Math.exp(-18 * dt);
 
     // ---- 空降阶段: 舱内/自由落体/开伞滑翔(全程禁射击/道具/姿态) ----
     if (this.descent) {
@@ -219,13 +231,15 @@ export class PlayerController {
     const fwdZ = Math.cos(this.yaw);
     const rightX = -fwdZ;
     const rightZ = fwdX;
-    let wx = 0;
-    let wz = 0;
-    if (input.keys.has('KeyW')) { wx += fwdX; wz += fwdZ; }
-    if (input.keys.has('KeyS')) { wx -= fwdX; wz -= fwdZ; }
-    if (input.keys.has('KeyD')) { wx += rightX; wz += rightZ; }
-    if (input.keys.has('KeyA')) { wx -= rightX; wz -= rightZ; }
-    const wlen = Math.hypot(wx, wz);
+    const movement = resolveMovementDirection(this.yaw, {
+      forward: input.keys.has('KeyW'),
+      backward: input.keys.has('KeyS'),
+      left: input.keys.has('KeyA'),
+      right: input.keys.has('KeyD'),
+    });
+    const wx = movement.x;
+    const wz = movement.z;
+    const wlen = movement.length;
     const sprint = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
     // 疾跑/跳跃自动站起(仅站立可疾跑, 站/蹲可跳)
     if (sprint && wlen > 0.001 && !c.knocked && !c.swimming && c.stance !== 'stand') c.setStance('stand');
@@ -234,10 +248,8 @@ export class PlayerController {
     let sprintActive = false;
     let jumped = false;
     if (wlen > 0.001) {
-      wx /= wlen;
-      wz /= wlen;
-      const forwardDot = wx * fwdX + wz * fwdZ;
-      const strafeDot = wx * rightX + wz * rightZ;
+      const forwardDot = movement.forward;
+      const strafeDot = movement.strafe;
       let speed = 4.55;
       if (c.knocked) speed = 0.6; // 倒地爬行(仅移动, 无其他动作)
       else if (c.swimming) {
@@ -257,7 +269,7 @@ export class PlayerController {
         const groundH = game.world.getHeight(c.pos.x, c.pos.z);
         const wadeDepth = WATER_Y - groundH;
         if (c.pos.y < WATER_Y + 0.15 && wadeDepth > 0) {
-          speed *= lerp(0.84, 0.55, clamp(wadeDepth / 0.85, 0, 1));
+          speed *= wadingSpeedMultiplier(wadeDepth);
         }
       }
       targetVx = wx * speed;
@@ -322,7 +334,11 @@ export class PlayerController {
       c.applyMove(this.moveVel.x, this.moveVel.y, dt, game.world);
       if (wasAir && c.grounded) {
         game.audio.jumpLand();
+        const landingImpact = clamp((-fallSpeed - 2.4) / 7, 0, 1);
         this.landDip = Math.max(this.landDip, clamp(Math.abs(fallSpeed) * 0.012, 0.035, 0.14));
+        if (landingImpact > 0.05) {
+          game.effects.landingDust(this.tmpSwim.set(c.pos.x, c.pos.y + 0.03, c.pos.z), landingImpact);
+        }
       }
     }
     game.updateSwim(c);
@@ -433,6 +449,7 @@ export class PlayerController {
           this.recoilRestT = Math.max(0.2, gun.def.fireInterval * 1.7);
           this.shotBloom = Math.min(0.032, this.shotBloom + impulse.bloom);
           c.gunKick = Math.max(c.gunKick, impulse.gunKick);
+          this.shotFovKick = Math.max(this.shotFovKick, impulse.gunKick * 11);
           if (gun.mag <= 0 && c.ammo[gun.def.ammo] > 0) this.startReload(game);
           acted = true;
         }
@@ -1093,14 +1110,15 @@ export class PlayerController {
     const baseDistance = lerp(indoor ? 2.5 : 3.4, adsDist, ads);
     const targetDist = Math.max(1.35, baseDistance - this.interactionFocusF * 0.28);
     const shoulder = lerp(indoor ? 0.4 : 0.5, 0.55, ads) * (1 - this.interactionFocusF * 0.18);
+    this.shoulderBlend = advanceShoulderBlend(this.shoulderBlend, this.shoulderSide, dt);
 
     this.camDir.copy(dir).multiplyScalar(-1);
     this.camTarget.copy(this.pivot).addScaledVector(this.camDir, targetDist);
     const rx = -dir.z;
     const rz = dir.x;
     const rl = Math.hypot(rx, rz) || 1;
-    this.camTarget.x += (rx / rl) * shoulder;
-    this.camTarget.z += (rz / rl) * shoulder;
+    this.camTarget.x += (rx / rl) * shoulder * this.shoulderBlend;
+    this.camTarget.z += (rz / rl) * shoulder * this.shoulderBlend;
     this.camTarget.y += indoor ? 0.07 : 0.22;
 
     this.camDir.subVectors(this.camTarget, this.pivot);
@@ -1136,7 +1154,14 @@ export class PlayerController {
     const groundSprintF = !c.swimming && !this.aiming && c.stance === 'stand'
       ? clamp((c.speed2d - 4.8) / (6.9 - 4.8), 0, 1)
       : 0;
-    const targetFov = (BASE_FOV + groundSprintF * 2.8 + swimSprintF * 5) / zoom;
+    const targetFov = cameraFovTarget(
+      BASE_FOV,
+      zoom,
+      groundSprintF,
+      swimSprintF,
+      this.shotFovKick,
+      ads,
+    );
     this.fov = lerp(this.fov, targetFov, Math.min(1, dt * 10));
     if (Math.abs(this.fov - this.camera.fov) > 0.05) {
       this.camera.fov = this.fov;

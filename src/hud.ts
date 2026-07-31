@@ -36,6 +36,15 @@ export function shouldShowSwimmingStatus(swimming: boolean, descentActive: boole
   return swimming && !descentActive;
 }
 
+export function healthFeedback(hp: number): { opacity: number; critical: boolean } {
+  const pct = Math.max(0, Math.min(100, hp));
+  const danger = Math.max(0, Math.min(1, (55 - pct) / 55));
+  return {
+    opacity: danger * 0.72,
+    critical: pct > 0 && pct <= 25,
+  };
+}
+
 export interface BackpackData {
   slots: { key: string; label: string; name: string; mag: string }[];
   ammo: { name: string; count: number }[];
@@ -83,6 +92,7 @@ export class Hud {
   private scopeMode: ScopeMode = 'none';
   private hitmarkerEl = el('hitmarker');
   private dmgArc = el('dmg-arc');
+  private healthVignette = el('health-vignette');
   private blastFlash = el('blast-flash');
   private toastEl = el('toast');
   private flowCue = el('flow-cue');
@@ -197,6 +207,9 @@ export class Hud {
     this.hpText.textContent = String(Math.ceil(pct));
     const hue = (pct / 100) * 115; // 绿→红
     this.hpFill.style.backgroundColor = `hsl(${hue.toFixed(2)}, 75%, 45%)`;
+    const health = healthFeedback(pct);
+    this.healthVignette.style.setProperty('--health-danger', health.opacity.toFixed(3));
+    this.healthVignette.classList.toggle('critical', health.critical);
   }
 
   // '游泳中'状态标

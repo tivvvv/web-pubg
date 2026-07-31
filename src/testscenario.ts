@@ -52,6 +52,13 @@ export function parseCombatMagazine(value: string | null, capacity: number): num
   return Math.min(capacity, Math.floor(parsed));
 }
 
+export function parseCombatHealth(value: string | null): number {
+  if (value === null) return 100;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 100;
+  return Math.min(100, Math.max(1, Math.floor(parsed)));
+}
+
 function scenarioFromUrl(): ScenarioId | null {
   const params = new URLSearchParams(window.location.search);
   if (params.get('test') !== '1') return null;
@@ -815,6 +822,7 @@ function setupCombat(game: Game): void {
   const player = game.playerCtl;
   if (!player) return;
   const c = player.char;
+  c.hp = parseCombatHealth(params.get('hp'));
   const gun: GunState = {
     def,
     mag: def.magSize,

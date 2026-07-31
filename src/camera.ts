@@ -21,6 +21,24 @@ export function advanceCameraMode(current: number, target: number, dt: number): 
   return clamp(next, 0, 1);
 }
 
+export function advanceShoulderBlend(current: number, side: -1 | 1, dt: number): number {
+  const next = lerp(current, side, 1 - Math.exp(-13 * Math.max(0, dt)));
+  return Math.abs(next - side) < 0.001 ? side : clamp(next, -1, 1);
+}
+
+export function cameraFovTarget(
+  baseFov: number,
+  zoom: number,
+  groundSprint: number,
+  swimSprint: number,
+  shotKick: number,
+  aimProgress: number,
+): number {
+  const movementFov = clamp(groundSprint, 0, 1) * 2.8 + clamp(swimSprint, 0, 1) * 5;
+  const kickFov = clamp(shotKick, 0, 2) * lerp(1, 0.35, clamp(aimProgress, 0, 1));
+  return (baseFov + movementFov + kickFov) / Math.max(1, zoom);
+}
+
 // 遮挡时快速收近, 遮挡解除后缓慢放远, 避免墙角和楼梯处来回弹镜头。
 export function smoothCameraDistance(
   current: number,

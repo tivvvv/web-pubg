@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { parseCombatMagazine, parseScenarioId, SCENARIO_IDS } from '../src/testscenario';
+import {
+  parseCombatHealth, parseCombatMagazine, parseScenarioId, SCENARIO_IDS,
+} from '../src/testscenario';
 
 describe('固定回归场景入口', () => {
   it('所有正式场景 id 均能稳定解析', () => {
@@ -20,5 +22,13 @@ describe('固定回归场景入口', () => {
     expect(parseCombatMagazine('200', 40)).toBe(40);
     expect(parseCombatMagazine('invalid', 40)).toBe(40);
     expect(parseCombatMagazine('-1', 40)).toBe(40);
+  });
+
+  it('枪战场景测试血量始终限制在存活范围', () => {
+    expect(parseCombatHealth(null)).toBe(100);
+    expect(parseCombatHealth('20')).toBe(20);
+    expect(parseCombatHealth('200')).toBe(100);
+    expect(parseCombatHealth('0')).toBe(1);
+    expect(parseCombatHealth('invalid')).toBe(100);
   });
 });

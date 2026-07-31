@@ -396,6 +396,7 @@ export class Game {
         this.viewFpp = !this.viewFpp;
         this.hud.toast(this.viewFpp ? '第一人称' : '第三人称');
         break;
+      case 'shoulder': this.player.swapShoulder(this); break;
       case 'crouch': {
         // C: 站⇄蹲; 趴→蹲
         const c = this.player.char;

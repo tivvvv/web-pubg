@@ -1,7 +1,7 @@
 // 键鼠输入 + 指针锁定管理
 export type Action =
   | 'slot1' | 'slot2' | 'slot3' | 'slot4' | 'slot5'
-  | 'reload' | 'mute' | 'pickup' | 'heal' | 'backpack' | 'viewmode' | 'crouch' | 'prone'
+  | 'reload' | 'mute' | 'pickup' | 'heal' | 'backpack' | 'viewmode' | 'shoulder' | 'crouch' | 'prone'
   | 'wheelUp' | 'wheelDown' | 'squadContext' | 'squadHold' | 'squadFollow';
 
 export class Input {
@@ -53,6 +53,7 @@ export class Input {
         case 'KeyF': this.onAction('pickup'); break;
         case 'KeyX': this.onAction('heal'); break;
         case 'KeyV': this.onAction('viewmode'); break;
+        case 'KeyQ': this.onAction('shoulder'); break;
         case 'KeyC': this.onAction('crouch'); break;
         case 'KeyZ': this.onAction('prone'); break;
         case 'KeyG': this.onAction('squadContext'); break;
