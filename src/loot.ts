@@ -11,6 +11,7 @@ import type { GunAttachments } from './types';
 import { WATER_Y, riverZAt, type World } from './world';
 import { REGIONS, regionOrWilderness, type LootProfile, type LootTier, type RegionDef } from './regions';
 import { random } from './random';
+import { REGION_EVENT_LOOT, type RegionEvent } from './regionevents';
 
 export interface LootItem {
   kind: LootKind;
@@ -288,9 +289,9 @@ export class LootManager {
   }
 
   // 初始散布: 先摆室内点位(房屋生成时给出), 再野外补齐; 武器按比例配一盒匹配弹药
-  populate(world: World): void {
+  populate(world: World, regionalEvents: readonly RegionEvent[] = []): void {
     this.clear();
-    let count = 0;
+    let count = this.spawnRegionalEvents(world, regionalEvents);
     const armedSites = new Set<string>();
     // 六区主地标使用稳定室外锚点, 确保地标不只是装饰而是真正的争夺目标.
     for (const s of world.mapLootSpots) {
@@ -341,6 +342,38 @@ export class LootManager {
       count++;
       count += this.pairAmmo(world, kind, x, y, z, 0.6);
     }
+  }
+
+  private spawnRegionalEvents(world: World, events: readonly RegionEvent[]): number {
+    let spawned = 0;
+    for (const event of events) {
+      const kinds = REGION_EVENT_LOOT[event.kind];
+      for (let index = 0; index < kinds.length; index++) {
+        const kind = kinds[index] as LootKind;
+        let placed = false;
+        for (let attempt = 0; attempt < 18; attempt++) {
+          const angle = index * 2.399963 + attempt * 0.47;
+          const distance = 6.4 + (index % 3) * 2.1 + Math.floor(attempt / 6) * 1.4;
+          const x = event.x + Math.cos(angle) * distance;
+          const z = event.z + Math.sin(angle) * distance;
+          if (!world.pointFree(x, z, 0.3, WATER_Y + 0.25, 16)) continue;
+          const ground = outdoorLootGround(world, x, z);
+          if (!lootPointClear(world, x, ground, z)) continue;
+          if (this.items.some((item) => item.active && Math.hypot(
+            x - item.group.position.x,
+            z - item.group.position.z,
+          ) < 1.25)) continue;
+          const item = this.spawn(kind, x, ground, z);
+          if (!item) return spawned;
+          item.outdoor = true;
+          spawned++;
+          placed = true;
+          break;
+        }
+        if (!placed) continue;
+      }
+    }
+    return spawned;
   }
 
   private activeCountInRegion(id: RegionDef['id']): number {

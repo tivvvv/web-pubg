@@ -111,6 +111,7 @@ import {
   squadAimScore, SquadCommandSystem, SQUAD_ORDER_LABELS, type SquadOrder, type SquadOrderKind,
 } from './squadcommands';
 import { playerDeathDetail, resolvePlayerFlowCue, shouldCelebrateFirstGun } from './playerflow';
+import { regionEventAt, selectRegionEvents, type RegionEvent } from './regionevents';
 
 const TOTAL = MATCH_PLAYER_COUNT;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
@@ -141,6 +142,7 @@ export class Game {
   readonly audio: AudioSys;
   readonly input: Input;
   readonly squadCommands: SquadCommandSystem;
+  regionEvents: RegionEvent[] = [];
   readonly chars: Character[] = [];
   readonly tmpV2 = new THREE.Vector2();
   readonly staticHit: StaticHit = { t: 0, kind: 'terrain' };
@@ -899,7 +901,8 @@ export class Game {
     this.grenades.reset();
     this.airdrop.reset(); // 空投清零(飞机/箱子/烟柱/碰撞)
     this.shakeAmp = 0;
-    this.loot.populate(this.world);
+    this.regionEvents = selectRegionEvents(this.world.mapSites, random);
+    this.loot.populate(this.world, this.regionEvents);
     this.deathCrates.clear();
     this.vehicles.populate(this.world);
     this.mapVehicles = this.vehicles.list.map(() => ({ x: 0, z: 0, dead: false }));
@@ -946,6 +949,9 @@ export class Game {
     this.hud.setSquadOrder('follow');
     this.hud.showScreen(null);
     this.hud.resetFeedback();
+    if (this.regionEvents.length > 0) {
+      this.hud.toast(`本局区域事件: ${this.regionEvents.map((event) => event.label).join(' · ')}`);
+    }
     this.state = 'playing';
     this.onResize();
     this.input.requestLock();
@@ -2322,10 +2328,13 @@ export class Game {
     this.hud.setBombardment(this.bombardment.hudText(), this.bombardment.state === 'active');
     const region = regionOrWilderness(c.pos.x, c.pos.z);
     const mapSite = this.world.mapSiteAt(c.pos.x, c.pos.z);
+    const regionalEvent = regionEventAt(this.regionEvents, c.pos.x, c.pos.z);
     this.hud.setLocation(
       mapSite ? `${region.name} · ${mapSite.name}` : region.name,
       region.tier,
-      mapSite?.feature ?? region.feature,
+      regionalEvent
+        ? `${regionalEvent.label} · ${regionalEvent.feature}`
+        : mapSite?.feature ?? region.feature,
     );
 
     // 准星: 弧度→像素; 装配瞄具后按类型切换独立准镜。
@@ -2376,6 +2385,7 @@ export class Game {
       this.squadCommands.mapState(),
       this.airdrop.icon(),
       this.bombardment.icon(),
+      this.regionEvents,
     );
   }
 }

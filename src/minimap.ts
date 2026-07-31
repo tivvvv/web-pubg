@@ -4,6 +4,7 @@ import type { Zone } from './zone';
 import type { BombardmentMapState } from './bombardment';
 import { REGIONS } from './regions';
 import type { SquadOrderMapState } from './squadcommands';
+import type { RegionEvent } from './regionevents';
 
 const BASE_RES = 150;
 
@@ -147,11 +148,34 @@ export class Minimap {
     squadOrder: SquadOrderMapState | null = null,
     airdrop: { x: number; z: number } | null = null,
     bombardment: BombardmentMapState | null = null,
+    regionalEvents: readonly RegionEvent[] = [],
   ): void {
     const ctx = this.ctx;
     const s = this.size;
     ctx.clearRect(0, 0, s, s);
     ctx.drawImage(this.base, 0, 0, s, s);
+
+    // 每局动态区域事件使用高对比脉冲环，和固定地标、轰炸区明确区分。
+    for (const event of regionalEvents) {
+      const ex = this.toMap(event.x);
+      const ez = this.toMap(event.z);
+      ctx.save();
+      ctx.strokeStyle = event.color;
+      ctx.fillStyle = `${event.color}55`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(ex, ez, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(ex, ez - 3.6);
+      ctx.lineTo(ex + 3.6, ez);
+      ctx.lineTo(ex, ez + 3.6);
+      ctx.lineTo(ex - 3.6, ez);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // 小范围轰炸区: 半透明红面 + 红色边界, 预警阶段使用虚线
     if (bombardment) {

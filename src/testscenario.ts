@@ -116,6 +116,13 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       ]),
     ),
   );
+  panel.dataset.regionEvents = JSON.stringify(game.regionEvents.map((event) => ({
+    kind: event.kind,
+    region: event.region,
+    siteId: event.siteId,
+    x: Number(event.x.toFixed(1)),
+    z: Number(event.z.toFixed(1)),
+  })));
   panel.dataset.botDropIssues = game.bots.flatMap((bot, index) => {
     const { x, z } = bot.dropTarget;
     if (!Number.isFinite(x) || !Number.isFinite(z)) return [`${index}:non-finite`];
