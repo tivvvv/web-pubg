@@ -10,6 +10,7 @@ import { riverZAt, WATER_Y, WORLD_HALF } from './world';
 import { parseRandomSeed, setRandomSeed } from './random';
 import { REGIONS, regionOrWilderness } from './regions';
 import type { AttachmentId, GunState } from './types';
+import { fireModeOf } from './gunplay';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
@@ -257,6 +258,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
         panel.dataset.combatReserve = String(character.ammo[gun.def.ammo]);
         panel.dataset.combatMuzzle = gun.att.muzzle ?? 'none';
         panel.dataset.combatSight = gun.att.sight ?? 'none';
+        panel.dataset.combatFireMode = fireModeOf(gun);
         panel.dataset.combatReloading = String(controller.reloading);
         panel.dataset.combatSpread = controller.spreadRad.toFixed(5);
         panel.dataset.combatShotRecent = String(game.nowSec - character.lastShotT < 0.5);

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { emptyAttachments } from '../src/attachments';
 import {
-  calculateRecoilImpulse, calculateWeaponSpread, reloadDuration, scopeModeOf, smoothAimProgress,
+  calculateRecoilImpulse, calculateWeaponSpread, fireModeOf, reloadDuration, scopeModeOf, smoothAimProgress,
+  toggleFireMode,
   WEAPON_RECOIL,
 } from '../src/gunplay';
 import { WEAPONS } from '../src/weapons';
@@ -77,5 +78,17 @@ describe('枪械操控模型', () => {
     }
     expect(WEAPON_RECOIL.smg.pitchRecovery).toBeGreaterThan(WEAPON_RECOIL.akm.pitchRecovery);
     expect(WEAPON_RECOIL.sniper.gunKick).toBeGreaterThan(WEAPON_RECOIL.pistol.gunKick);
+  });
+
+  it('自动武器记忆单发和全自动切换, 非自动武器保持单发', () => {
+    const selectable = { ...rifle };
+    expect(fireModeOf(selectable)).toBe('auto');
+    expect(toggleFireMode(selectable)).toBe('single');
+    expect(fireModeOf(selectable)).toBe('single');
+    expect(toggleFireMode(selectable)).toBe('auto');
+
+    const pistol = { def: WEAPONS.pistol, mag: 12, att: emptyAttachments() };
+    expect(toggleFireMode(pistol)).toBe('single');
+    expect(fireModeOf(pistol)).toBe('single');
   });
 });

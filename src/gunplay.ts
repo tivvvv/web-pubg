@@ -1,9 +1,21 @@
-import type { GunState, WeaponId } from './types';
+import type { FireMode, GunState, WeaponId } from './types';
 import type { Stance } from './character';
 import { recoilFactorOf, spreadFactorOf } from './attachments';
 import { clamp, lerp } from './utils';
 
 export type ScopeMode = 'none' | 'reddot' | 'scope2' | 'scope4';
+
+export function fireModeOf(gun: GunState): FireMode {
+  if (!gun.def.auto) return 'single';
+  return gun.fireMode ?? 'auto';
+}
+
+export function toggleFireMode(gun: GunState): FireMode {
+  if (!gun.def.auto) return 'single';
+  const next = fireModeOf(gun) === 'auto' ? 'single' : 'auto';
+  gun.fireMode = next;
+  return next;
+}
 
 interface WeaponHandling {
   aimIn: number;

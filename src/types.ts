@@ -4,6 +4,7 @@ export type MeleeId = 'fists' | 'knife' | 'pan' | 'crowbar';
 export type AmmoType = 'pistol' | 'rifle' | 'smg' | 'sniper' | 'shotgun';
 export type ThrowableId = 'frag' | 'smoke';
 export type AttachmentId = 'reddot' | 'scope2' | 'scope4' | 'extmag' | 'comp' | 'suppressor';
+export type FireMode = 'single' | 'auto';
 export type AttSlot = 'sight' | 'mag' | 'muzzle';
 export interface GunAttachments {
   sight: AttachmentId | null;
@@ -43,6 +44,7 @@ export interface GunState {
   def: WeaponDef;
   mag: number;
   att: GunAttachments; // 已装配件(瞄具/弹匣/枪口)
+  fireMode?: FireMode; // 可切换枪械记忆玩家选择; 未设置时使用武器默认模式
 }
 
 export interface MeleeDef {

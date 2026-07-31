@@ -16,7 +16,7 @@ import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, sightZoomOf } fro
 import { random } from './random';
 import type { Game } from './game';
 import {
-  aimBlend, calculateAimSway, calculateRecoilImpulse, calculateWeaponSpread, reloadDuration,
+  aimBlend, calculateAimSway, calculateRecoilImpulse, calculateWeaponSpread, fireModeOf, reloadDuration,
   smoothAimProgress, WEAPON_RECOIL,
 } from './gunplay';
 import {
@@ -427,7 +427,7 @@ export class PlayerController {
       if (this.updateThrow(dt, input, game)) acted = true;
       this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
     } else if (gun) {
-      const wantFire = gun.def.auto ? input.lmb : pressedEdge;
+      const wantFire = fireModeOf(gun) === 'auto' ? input.lmb : pressedEdge;
       if (wantFire && !this.reloading && this.fireTimer <= 0) {
         if (gun.mag <= 0) {
           game.audio.empty();

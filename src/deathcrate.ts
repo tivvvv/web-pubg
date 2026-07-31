@@ -32,6 +32,7 @@ function cloneGun(gun: GunState | null): GunState | null {
     def: gun.def,
     mag: gun.mag,
     att: { sight: gun.att.sight, mag: gun.att.mag, muzzle: gun.att.muzzle },
+    fireMode: gun.fireMode,
   };
 }
 

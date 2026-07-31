@@ -103,7 +103,7 @@ import {
   flightLineDistance,
   selectDropRegion,
 } from './matchbalance';
-import { scopeModeOf } from './gunplay';
+import { fireModeOf, scopeModeOf, toggleFireMode } from './gunplay';
 import { GameRenderer } from './rendering';
 import { random } from './random';
 import { parseBoundedTestInteger } from './stability';
@@ -383,6 +383,19 @@ export class Game {
     }
     switch (a) {
       case 'reload': this.player.startReload(this); break;
+      case 'fireMode': {
+        const gun = this.player.char.heldGun();
+        if (!gun) {
+          this.hud.toast('当前没有可切换的枪械');
+        } else if (!gun.def.auto) {
+          this.hud.toast(`${gun.def.name} 仅支持单发`);
+        } else {
+          const mode = toggleFireMode(gun);
+          this.audio.equip();
+          this.hud.toast(mode === 'auto' ? '已切换全自动' : '已切换单发');
+        }
+        break;
+      }
       case 'slot1': this.player.switchSlot(0, this); break;
       case 'slot2': this.player.switchSlot(1, this); break;
       case 'slot3': this.player.switchSlot(2, this); break;
@@ -2278,7 +2291,7 @@ export class Game {
         `${gun.def.name}${attachments ? ` [${attachments}]` : ''}`,
         player.reloading ? '--' : String(gun.mag),
         noAmmo ? '无弹' : `/ ${c.ammo[gun.def.ammo]}`,
-        player.reloading ? '换弹中…' : gun.def.auto ? '全自动' : '半自动',
+        player.reloading ? '换弹中…' : fireModeOf(gun) === 'auto' ? '全自动' : '单发',
       );
     } else {
       this.hud.setWeapon('空', '—', '', '');

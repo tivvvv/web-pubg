@@ -1,7 +1,7 @@
 // 键鼠输入 + 指针锁定管理
 export type Action =
   | 'slot1' | 'slot2' | 'slot3' | 'slot4' | 'slot5'
-  | 'reload' | 'mute' | 'pickup' | 'heal' | 'backpack' | 'viewmode' | 'shoulder' | 'crouch' | 'prone'
+  | 'reload' | 'mute' | 'pickup' | 'heal' | 'backpack' | 'fireMode' | 'viewmode' | 'shoulder' | 'crouch' | 'prone'
   | 'wheelUp' | 'wheelDown' | 'squadContext' | 'squadHold' | 'squadFollow';
 
 export class Input {
@@ -49,6 +49,7 @@ export class Input {
         case 'Digit4': this.onAction('slot4'); break;
         case 'Digit5': this.onAction('slot5'); break;
         case 'KeyR': this.onAction('reload'); break;
+        case 'KeyB': this.onAction('fireMode'); break;
         case 'KeyM': this.onAction('mute'); break;
         case 'KeyF': this.onAction('pickup'); break;
         case 'KeyX': this.onAction('heal'); break;
@@ -59,8 +60,7 @@ export class Input {
         case 'KeyG': this.onAction('squadContext'); break;
         case 'KeyH': this.onAction('squadHold'); break;
         case 'KeyJ': this.onAction('squadFollow'); break;
-        case 'Tab':
-        case 'KeyB': this.onAction('backpack'); break;
+        case 'Tab': this.onAction('backpack'); break;
       }
     });
     this.listen(window, 'keyup', (e: KeyboardEvent) => this.keys.delete(e.code));
