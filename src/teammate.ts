@@ -619,6 +619,7 @@ export class TeammateController {
     c.vy = 0;
     this.vy = 0;
     this.descent = null;
+    c.grounded = true;
     c.airPose = null;
     c.stance = 'stand';
     c.stanceF = 0;

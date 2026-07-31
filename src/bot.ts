@@ -223,6 +223,7 @@ export class BotController {
         this.jumpS = -1;
         this.descent = 'freefall';
         this.vy = -2;
+        c.grounded = false;
         c.airPose = 'fall';
         c.group.visible = true;
       }
@@ -701,6 +702,7 @@ export class BotController {
     c.vy = 0;
     this.vy = 0;
     this.descent = null;
+    c.grounded = true;
     c.airPose = null;
     c.stance = 'stand';
     c.stanceF = 0;

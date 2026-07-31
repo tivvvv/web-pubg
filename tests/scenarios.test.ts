@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  parseCombatHealth, parseCombatMagazine, parseScenarioId, SCENARIO_IDS,
+  parseCombatHealth, parseCombatMagazine, parseScenarioId, RELEASE_SCENARIO_ROUTES, releaseScenarioHref,
+  SCENARIO_IDS,
 } from '../src/testscenario';
 
 describe('固定回归场景入口', () => {
@@ -9,6 +10,17 @@ describe('固定回归场景入口', () => {
       'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
     ]);
     for (const id of SCENARIO_IDS) expect(parseScenarioId(id)).toBe(id);
+  });
+
+  it('发布巡检矩阵覆盖全部核心场景和六个地图区域', () => {
+    for (const id of SCENARIO_IDS) {
+      expect(RELEASE_SCENARIO_ROUTES.some((route) => route.includes(`scenario=${id}`))).toBe(true);
+    }
+    for (const region of ['stonegate', 'ironring', 'sunfield', 'mistwood', 'eagleridge', 'tideharbor']) {
+      expect(RELEASE_SCENARIO_ROUTES.some((route) => route.includes(`region=${region}`))).toBe(true);
+    }
+    expect(releaseScenarioHref(0)).toContain('release=1&case=0');
+    expect(releaseScenarioHref(999)).toContain(`case=${RELEASE_SCENARIO_ROUTES.length - 1}`);
   });
 
   it('缺失或未知场景回退枪战场景', () => {

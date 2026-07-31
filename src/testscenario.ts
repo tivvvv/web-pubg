@@ -11,6 +11,7 @@ import { parseRandomSeed, setRandomSeed } from './random';
 import { REGIONS, regionOrWilderness } from './regions';
 import type { AttachmentId, GunState } from './types';
 import { fireModeOf } from './gunplay';
+import { auditReleaseState } from './releaseaudit';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
@@ -20,6 +21,50 @@ export const SCENARIO_IDS = [
   'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
+
+export const RELEASE_SCENARIO_ROUTES = [
+  'scenario=stairs&traverse=up&arch=cottage2',
+  'scenario=stairs&traverse=up&arch=apartment&flight=2',
+  'scenario=stairs&view=entrance&arch=cottage2',
+  'scenario=swim&auto=1',
+  'scenario=botswim',
+  'scenario=combat&weapon=rifle&burst=8',
+  'scenario=combat&weapon=akm&burst=8',
+  'scenario=combat&weapon=smg&burst=10',
+  'scenario=combat&weapon=dmr&burst=4&sight=scope4',
+  'scenario=combat&weapon=sniper&burst=2&sight=scope4',
+  'scenario=combat&weapon=shotgun&burst=2',
+  'scenario=combat&weapon=pistol&burst=4&sight=reddot',
+  'scenario=effects',
+  'scenario=bottactics',
+  'scenario=botvehicle',
+  'scenario=botvehicle&route=bridge&contact=1',
+  'scenario=squadcommand&order=move',
+  'scenario=squadcommand&order=hold',
+  'scenario=squadcommand&order=focus',
+  'scenario=squadcommand&order=aim',
+  'scenario=parachute',
+  'scenario=vehicle&drive=1',
+  'scenario=deathcrate',
+  'scenario=bombardment',
+  'scenario=bombardment&phase=active',
+  'scenario=revive&auto=1',
+  'scenario=zone',
+  'scenario=endgame&auto=1',
+  'scenario=defeat',
+  'scenario=maptour&region=stonegate',
+  'scenario=maptour&region=ironring',
+  'scenario=maptour&region=sunfield',
+  'scenario=maptour&region=mistwood',
+  'scenario=maptour&region=eagleridge',
+  'scenario=maptour&region=tideharbor',
+  'scenario=stability&seed=1337&simSteps=12&rounds=2&deadline=390',
+] as const;
+
+export function releaseScenarioHref(index: number): string {
+  const safe = Math.max(0, Math.min(RELEASE_SCENARIO_ROUTES.length - 1, Math.trunc(index)));
+  return `/?test=1&release=1&case=${safe}&${RELEASE_SCENARIO_ROUTES[safe]}`;
+}
 
 const SCENARIO_TEXT: Record<ScenarioId, string> = {
   stairs: '楼梯回归: 检查楼层接缝, 楼梯净空和上下楼碰撞',
@@ -218,19 +263,46 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
     panel.dataset.totalCollisionObjects = String(stats.totalCylinders + stats.totalBoxes);
   }
   panel.innerHTML = `<strong>TEST / ${id.toUpperCase()}</strong><span>${SCENARIO_TEXT[id]}</span>`;
+  const params = new URLSearchParams(window.location.search);
+  const rawReleaseCase = Number(params.get('case'));
+  const releaseCase = Number.isFinite(rawReleaseCase)
+    ? Math.max(0, Math.min(RELEASE_SCENARIO_ROUTES.length - 1, Math.trunc(rawReleaseCase)))
+    : -1;
+  const releaseLink = document.createElement('a');
+  releaseLink.id = 'test-release-next';
+  releaseLink.href = releaseScenarioHref(releaseCase < 0 ? 0 : Math.min(RELEASE_SCENARIO_ROUTES.length - 1, releaseCase + 1));
+  releaseLink.textContent = releaseCase < 0
+    ? `开始发布巡检 (${RELEASE_SCENARIO_ROUTES.length} 项)`
+    : releaseCase >= RELEASE_SCENARIO_ROUTES.length - 1
+      ? '发布巡检已到最后一项'
+      : `下一项 ${releaseCase + 2}/${RELEASE_SCENARIO_ROUTES.length}`;
+  panel.appendChild(releaseLink);
+  panel.dataset.releaseCase = releaseCase < 0 ? 'manual' : `${releaseCase + 1}/${RELEASE_SCENARIO_ROUTES.length}`;
   document.body.appendChild(panel);
+  const releaseIssueHistory = new Set<string>();
+  const releaseIssueDiagnostics = new Set<string>();
+  let releaseTicks = 0;
+  const trainingOverhealth = id === 'squadcommand' && params.get('order') === 'aim'
+    ? game.bots[0]?.char.id ?? 0
+    : 0;
   const publishCharacter = (): void => {
     if (!panel.isConnected) return;
     const controller = game.playerCtl;
     const character = controller?.char;
     if (controller && character) {
       panel.dataset.characterAction = character.reviveTarget ? 'revive' : character.actionPose ?? 'none';
+      panel.dataset.matchState = game.stateStr;
       panel.dataset.characterReload = character.reload01.toFixed(3);
       panel.dataset.characterHeld = character.parts.held ? 'true' : 'false';
       panel.dataset.characterSwimming = String(character.swimming);
       panel.dataset.characterSpeed = character.speed2d.toFixed(2);
       panel.dataset.characterAirPose = character.airPose ?? 'none';
       panel.dataset.characterKnocked = String(character.knocked);
+      panel.dataset.characterHp = character.hp.toFixed(1);
+      panel.dataset.characterGrounded = String(character.grounded);
+      panel.dataset.characterPosition = [character.pos.x, character.pos.y, character.pos.z]
+        .map((value) => value.toFixed(2)).join(',');
+      panel.dataset.playerDescent = controller.descent ?? 'none';
       panel.dataset.characterDriving = String(controller.driving !== null);
       panel.dataset.cameraBlend = controller.cameraBlend.toFixed(3);
       panel.dataset.cameraDistance = controller.cameraDistance.toFixed(3);
@@ -241,6 +313,92 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
         controller.camera.position.y,
         controller.camera.position.z,
       ].map((value) => value.toFixed(2)).join(',');
+      const actors = game.chars.map((actor) => {
+        const gun = actor.heldGun();
+        return {
+          id: actor.id,
+          name: actor.name,
+          alive: actor.alive,
+          visible: actor.group.visible,
+          x: actor.pos.x,
+          y: actor.pos.y,
+          z: actor.pos.z,
+          hp: actor.hp,
+          healthLimit: actor.id === trainingOverhealth ? 1000 : 100,
+          speed: actor.speed2d,
+          grounded: actor.grounded,
+          swimming: actor.swimming,
+          seated: actor.airPose === 'sit',
+          // 与 Character.applyMove 使用相同脚底参考高度, 避免把头顶平台误判为脚下地面。
+          groundY: game.world.groundHeight(actor.pos.x, actor.pos.z, actor.pos.y + 0.1),
+          magazine: gun?.mag ?? null,
+          capacity: gun ? magSizeOf(gun) : null,
+        };
+      });
+      const issues = auditReleaseState(
+        actors,
+        {
+          x: controller.camera.position.x,
+          y: controller.camera.position.y,
+          z: controller.camera.position.z,
+          fov: controller.camera.fov,
+          distance: controller.cameraDistance,
+        },
+        game.vehicles.list.map((vehicle, index) => ({
+          index,
+          x: vehicle.pos.x,
+          y: vehicle.pos.y,
+          z: vehicle.pos.z,
+          hp: vehicle.hp,
+          speed: vehicle.speed,
+        })),
+        WORLD_HALF,
+      );
+      for (const issue of issues) {
+        releaseIssueHistory.add(issue);
+        if (!issue.startsWith('actor:')) continue;
+        const actorId = Number(issue.split(':')[1]);
+        const actor = actors.find((sample) => sample.id === actorId);
+        if (!actor || releaseIssueDiagnostics.size >= 24) continue;
+        const bot = game.bots.find((candidate) => candidate.char.id === actorId);
+        releaseIssueDiagnostics.add(
+          `${issue}@${actor.x.toFixed(2)},${actor.y.toFixed(2)},${actor.z.toFixed(2)}` +
+          `:ground=${actor.groundY.toFixed(2)}:grounded=${actor.grounded}` +
+          `:swim=${actor.swimming}:pose=${game.chars.find((candidate) => candidate.id === actorId)?.airPose ?? 'none'}` +
+          `:descent=${bot?.descent ?? 'none'}`,
+        );
+      }
+      releaseTicks++;
+      panel.dataset.releaseIssues = issues.join('|');
+      panel.dataset.releaseIssueHistory = [...releaseIssueHistory].join('|');
+      panel.dataset.releaseIssueDiagnostics = [...releaseIssueDiagnostics].join('|');
+      panel.dataset.releaseTicks = String(releaseTicks);
+      panel.dataset.releaseActorCount = String(actors.length);
+      panel.dataset.activeDeathCrates = String(game.deathCrates.crates.filter((crate) => crate.active).length);
+      panel.dataset.playerWeapon = character.heldGun()?.def.id ?? 'none';
+      panel.dataset.playerPack = String(character.pack?.level ?? 0);
+      panel.dataset.playerHelmet = String(character.helmet?.level ?? 0);
+      panel.dataset.playerVest = String(character.vest?.level ?? 0);
+      panel.dataset.bombardmentState = game.bombardment.state;
+      panel.dataset.bombardmentDistance = Math.hypot(
+        character.pos.x - game.bombardment.center.x,
+        character.pos.z - game.bombardment.center.y,
+      ).toFixed(2);
+      panel.dataset.zoneDistance = Math.hypot(
+        character.pos.x - game.zone.center.x,
+        character.pos.z - game.zone.center.y,
+      ).toFixed(2);
+      panel.dataset.zoneRadius = game.zone.radius.toFixed(2);
+      const reviveMate = game.squadMates[0]?.char;
+      panel.dataset.reviveMateState = reviveMate
+        ? `${reviveMate.alive ? 'alive' : 'dead'}:${reviveMate.knocked ? 'knocked' : 'standing'}:${reviveMate.hp.toFixed(1)}`
+        : 'missing';
+      panel.dataset.aliveEnemies = String(game.chars.filter((actor) => actor.team === 'enemy' && actor.alive).length);
+      if (controller.driving) {
+        panel.dataset.vehicleState = `${controller.driving.kind}:${controller.driving.speed.toFixed(2)}:${controller.driving.hp.toFixed(1)}`;
+      } else {
+        panel.dataset.vehicleState = 'on-foot';
+      }
     }
     window.requestAnimationFrame(publishCharacter);
   };
@@ -873,7 +1031,14 @@ function setupCombat(game: Game): void {
         game.input.lmb = false;
         return;
       }
-      game.input.lmb = true;
+      if (gun.def.auto) {
+        game.input.lmb = true;
+      } else {
+        game.input.lmb = false;
+        // 每帧保持一次按下沿请求, 真正射速仍由 PlayerController.fireTimer 限制。
+        // 这样慢射速栓动武器即使首个输入落在切枪锁定帧也不会漏掉整轮验收。
+        game.input.firePressed = true;
+      }
       window.requestAnimationFrame(runBurst);
     };
     window.setTimeout(() => window.requestAnimationFrame(runBurst), 600);
@@ -1000,6 +1165,8 @@ function setupVehicle(game: Game): void {
   player.pitch = 0.02;
   if (new URLSearchParams(window.location.search).get('drive') === '1') {
     player.enterVehicle(vehicle, game);
+    game.input.keys.add('KeyW');
+    window.setTimeout(() => game.input.keys.delete('KeyW'), 1500);
   }
 }
 
@@ -1324,6 +1491,15 @@ function setupEndgame(game: Game): void {
     target.char.pos.y + target.char.chestHeight() - (player.char.pos.y + player.char.eyeHeight()),
     Math.hypot(targetX - playerX, targetZ - playerZ),
   );
+  if (new URLSearchParams(window.location.search).get('auto') === '1') {
+    const fireUntilFinished = (): void => {
+      if (!target.char.alive || game.stateStr !== 'playing') return;
+      game.input.firePressed = true;
+      window.requestAnimationFrame(fireUntilFinished);
+    };
+    // 等待第三人称肩部镜头与 ADS 完成融合后再自动射击, 避免首帧视差造成假失败。
+    window.setTimeout(() => window.requestAnimationFrame(fireUntilFinished), 900);
+  }
 }
 
 function setupDefeat(game: Game): void {
@@ -1335,7 +1511,19 @@ function setupDefeat(game: Game): void {
 }
 
 function setupMapTour(game: Game): void {
-  const requested = new URLSearchParams(window.location.search).get('region');
+  const params = new URLSearchParams(window.location.search);
+  const inspectX = Number(params.get('x'));
+  const inspectZ = Number(params.get('z'));
+  if (Number.isFinite(inspectX) && Number.isFinite(inspectZ) && params.has('x') && params.has('z')) {
+    setGroundPlayer(game, inspectX, inspectZ);
+    const player = game.playerCtl;
+    if (player) {
+      player.yaw = 0;
+      player.pitch = 0.04;
+    }
+    return;
+  }
+  const requested = params.get('region');
   const site = game.world.mapSites.find((candidate) => candidate.region === requested) ?? game.world.mapSites[0];
   if (!site) {
     setGroundPlayer(game, -60, -20);

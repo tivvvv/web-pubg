@@ -5,9 +5,10 @@ import {
   findVehicleRiverWaypoint,
 } from '../src/botnav';
 import {
-  shouldEnterSwimming, shouldExitSwimming, SWIM_ENTER_DEPTH, SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
+  GROUND_SNAP_DISTANCE, shouldEnterSwimming, shouldExitSwimming, shouldSnapToGround, SWIM_ENTER_DEPTH,
+  SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
 } from '../src/character';
-import { WATER_Y } from '../src/world';
+import { CHARACTER_COLLISION_HEIGHT, characterOverlapsColliderHeight, WATER_Y } from '../src/world';
 
 describe('游泳上岸点搜索', () => {
   it('优先寻找移动方向上的可站立岸点', () => {
@@ -18,6 +19,13 @@ describe('游泳上岸点搜索', () => {
     const out = new THREE.Vector2();
     expect(findSwimBank(out, 0, 0, 0, 30, world)).toBe(true);
     expect(out.y).toBeGreaterThanOrEqual(8);
+  });
+
+  it('贴地角色跨过小坡差时保持接地, 跳跃和明显落差不吸附', () => {
+    expect(shouldSnapToGround(true, -1, GROUND_SNAP_DISTANCE)).toBe(true);
+    expect(shouldSnapToGround(true, 2, 0.05)).toBe(false);
+    expect(shouldSnapToGround(false, -1, 0.05)).toBe(false);
+    expect(shouldSnapToGround(true, -1, GROUND_SNAP_DISTANCE + 0.01)).toBe(false);
   });
 
   it('无合法岸点时仍返回稳定的探索方向', () => {
@@ -73,6 +81,12 @@ describe('游泳上岸点搜索', () => {
 });
 
 describe('长途转移恢复', () => {
+  it('楼板边缘在身体净空不足时参与碰撞, 站上楼板或完整位于下方时放行', () => {
+    expect(characterOverlapsColliderHeight(3.86, 4.7, 4.9)).toBe(true);
+    expect(characterOverlapsColliderHeight(4.9, 4.7, 4.9)).toBe(false);
+    expect(characterOverlapsColliderHeight(4.7 - CHARACTER_COLLISION_HEIGHT, 4.7, 4.9)).toBe(false);
+  });
+
   it('正前方被阻挡时选择一段连续可达的局部逃生线', () => {
     const out = new THREE.Vector2();
     const world = {

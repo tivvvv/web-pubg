@@ -779,6 +779,7 @@ export class PlayerController {
     this.cancelTransientActions(game);
     this.descent = 'freefall';
     this.vy = -2;
+    this.char.grounded = false;
     this.char.airPose = 'fall';
     this.char.group.visible = true;
     game.audio.planeDroneStop();
@@ -805,6 +806,7 @@ export class PlayerController {
     this.moveVel.set(0, 0);
     this.landDip = 0.08;
     this.descent = null;
+    c.grounded = true;
     c.airPose = null;
     c.airSteerRight = 0;
     c.airSteerForward = 0;

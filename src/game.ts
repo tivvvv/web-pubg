@@ -846,6 +846,7 @@ export class Game {
     this.player.descent = 'plane';
     this.player.planeS = 0;
     this.player.vy = 0;
+    this.player.char.grounded = false;
     this.flightPoint(this.player.char.pos, 0);
     this.player.yaw = this.flightAngle + Math.PI / 2;
     this.chars.push(this.player.char);
@@ -868,6 +869,7 @@ export class Game {
         );
         mate.char.pos.copy(this.player.char.pos);
         mate.char.airPose = 'sit';
+        mate.char.grounded = false;
         mate.char.group.visible = false;
         mate.descent = 'plane';
         mate.vy = 0;
@@ -890,6 +892,7 @@ export class Game {
       bot.char.pos.copy(this.player.char.pos); // 在机舱内(隐藏)
       bot.char.yaw = rand(0, Math.PI * 2);
       bot.char.airPose = 'sit';
+      bot.char.grounded = false;
       bot.char.group.visible = false;
       bot.jumpS = clamp(500 + p.x * dirX + p.z * dirZ + rand(-55, 55), 40, 950);
       bot.dropTarget.set(p.x, 0, p.z);

@@ -18,6 +18,11 @@ export const SWIM_SPEED = 2.6;
 export const SWIM_SPRINT_SPEED = 4.8;
 export const SWIM_ENTER_DEPTH = 1.1;
 export const SWIM_EXIT_DEPTH = 0.45;
+export const GROUND_SNAP_DISTANCE = 0.22;
+
+export function shouldSnapToGround(wasGrounded: boolean, verticalVelocity: number, gap: number): boolean {
+  return wasGrounded && verticalVelocity <= 0 && gap >= 0 && gap <= GROUND_SNAP_DISTANCE;
+}
 
 export function advancePoseBlend(current: number, active: boolean, dt: number, enterRate: number, exitRate: number): number {
   return clamp(current + (active ? enterRate : -exitRate) * dt, 0, 1);
@@ -631,6 +636,7 @@ export class Character {
   applyMove(vx: number, vz: number, dt: number, world: World): void {
     const oldX = this.pos.x;
     const oldZ = this.pos.z;
+    const wasGrounded = this.grounded;
     this.pos.x += vx * dt;
     this.pos.z += vz * dt;
     this.vy -= 22 * dt;
@@ -638,7 +644,7 @@ export class Character {
     world.resolveCollision(this.pos, this.radius);
     const ground = world.groundHeight(this.pos.x, this.pos.z, this.pos.y + 0.1);
     this.groundH = ground;
-    if (this.pos.y <= ground) {
+    if (this.pos.y <= ground || shouldSnapToGround(wasGrounded, this.vy, this.pos.y - ground)) {
       this.pos.y = ground;
       this.vy = 0;
       this.grounded = true;

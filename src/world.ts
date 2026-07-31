@@ -24,6 +24,11 @@ export const WORLD_SIZE = 700;
 export const WORLD_HALF = 350;
 export const WATER_Y = 0.9;
 export const SUN_SHADOW_MAP_SIZE = 2048;
+export const CHARACTER_COLLISION_HEIGHT = 1.7;
+
+export function characterOverlapsColliderHeight(feetY: number, minY: number, maxY: number): boolean {
+  return feetY < maxY - 0.02 && feetY + CHARACTER_COLLISION_HEIGHT > minY;
+}
 
 // 河流中心线: z ≈ +80, 正弦蜿蜒 ±22
 export function riverZAt(x: number): number {
@@ -1988,7 +1993,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     return hit;
   }
 
-  // 2D 圆 vs 静态碰撞体推出(仅竖直障碍: 墙/门/窗; 地板屋顶只作站立面不参与推挤)
+  // 2D 圆 vs 静态碰撞体推出；楼板可站立，但侧面与角色身体相交时仍参与阻挡。
   resolveCollision(p: THREE.Vector3, r: number): void {
     for (const c of this.cylinderGrid.at(p.x, p.z)) {
       if (p.y > c.y1 - 0.05) continue;
@@ -2007,8 +2012,9 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     }
     for (const b of this.aabbGrid.at(p.x, p.z)) {
       if (b.off) continue;
-      if (b.tag === 'floor' || b.tag === 'roof') continue;
-      if (p.y >= b.maxY - 0.02 || p.y + 1.7 <= b.minY) continue;
+      // 已站在楼板上方或拥有完整净空时不阻挡；否则楼板边缘也必须横向推出，
+      // 避免 AI 从高台侧面钻进楼板并在室内穿模。
+      if (!characterOverlapsColliderHeight(p.y, b.minY, b.maxY)) continue;
       const cx = clamp(p.x, b.minX, b.maxX);
       const cz = clamp(p.z, b.minZ, b.maxZ);
       const dx = p.x - cx;

@@ -1093,6 +1093,16 @@ body {
   letter-spacing: 1px;
 }
 
+#test-release-next {
+  color: #a9e8ba;
+  font-size: 10px;
+  text-decoration: none;
+  border-top: 1px solid rgba(169, 232, 186, 0.22);
+  padding-top: 4px;
+}
+
+#test-release-next:hover { color: #d6ffe0; }
+
 /* 独立瞄具 overlay: 红点无黑边, 2 倍保留宽视野, 4 倍强化镜筒遮罩 */
 #scope {
   position: absolute;
