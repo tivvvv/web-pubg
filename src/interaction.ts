@@ -1,6 +1,23 @@
 import { clamp } from './utils';
 
 export type InteractionKind = 'ally' | 'door' | 'airdrop' | 'deathcrate' | 'vehicle' | 'item';
+export type ComparisonTone = 'positive' | 'neutral' | 'warning';
+
+export interface EquipmentComparison {
+  text: string;
+  tone: ComparisonTone;
+}
+
+export function equipmentComparison(
+  currentName: string | null,
+  currentLevel: number | null,
+  nextLevel: number,
+): EquipmentComparison {
+  if (!currentName || currentLevel === null) return { text: '空栏位 · 直接装备', tone: 'positive' };
+  if (nextLevel > currentLevel) return { text: `升级 · 当前 ${currentName}`, tone: 'positive' };
+  if (nextLevel < currentLevel) return { text: `降级 · 当前 ${currentName}`, tone: 'warning' };
+  return { text: `同等级 · 当前 ${currentName}`, tone: 'neutral' };
+}
 
 export interface InteractionCandidate<T = object> {
   kind: InteractionKind;

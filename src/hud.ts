@@ -146,6 +146,7 @@ export class Hud {
   private countsKey = '';
   private zoneKey = '';
   private pickupKey: string | null | undefined;
+  private interactionConfirmTimer = 0;
   private altitudeKey = '';
   private knockedKey: boolean | null = null;
   private knockBleedKey = '';
@@ -331,19 +332,30 @@ export class Hud {
     this.locationStatus.dataset.tier = tier;
   }
 
-  setPickupPrompt(text: string | null, kind = 'default'): void {
-    const key = text ? `${kind}|${text}` : null;
+  setPickupPrompt(text: string | null, kind = 'default', detail = '', detailTone = 'neutral'): void {
+    const key = text ? `${kind}|${text}|${detail}|${detailTone}` : null;
     if (key === this.pickupKey) return;
     this.pickupKey = key;
     if (text) {
       // 键位名渲染为 kbd 芯片
-      this.pickupPrompt.innerHTML = text.replace(/ F /, ' <span class="kbd">F</span> ');
+      const primary = text.replace(/ F /, ' <span class="kbd">F</span> ');
+      this.pickupPrompt.innerHTML = detail
+        ? `<span class="prompt-primary">${primary}</span><span class="prompt-detail" data-tone="${detailTone}">${detail}</span>`
+        : primary;
       this.pickupPrompt.dataset.kind = kind;
       this.pickupPrompt.classList.add('show');
     } else {
       this.pickupPrompt.classList.remove('show');
       delete this.pickupPrompt.dataset.kind;
     }
+  }
+
+  flashInteraction(kind: 'pickup' | 'interact' | 'vehicle'): void {
+    this.interactionConfirmTimer = 0.24;
+    this.crosshair.dataset.confirm = kind;
+    this.crosshair.classList.remove('interaction-confirm');
+    void this.crosshair.offsetWidth;
+    this.crosshair.classList.add('interaction-confirm');
   }
 
   // 治疗绿闪(绷带/医疗包/饮料生效时)
@@ -584,6 +596,9 @@ export class Hud {
     this.toastTone = 'info';
     this.toastEl.classList.remove('show');
     delete this.toastEl.dataset.tone;
+    this.interactionConfirmTimer = 0;
+    this.crosshair.classList.remove('interaction-confirm');
+    delete this.crosshair.dataset.confirm;
     this.setFlowCue(null);
   }
 
@@ -612,6 +627,13 @@ export class Hud {
   }
 
   update(dt: number): void {
+    if (this.interactionConfirmTimer > 0) {
+      this.interactionConfirmTimer -= dt;
+      if (this.interactionConfirmTimer <= 0) {
+        this.crosshair.classList.remove('interaction-confirm');
+        delete this.crosshair.dataset.confirm;
+      }
+    }
     if (this.hitTimer > 0) {
       this.hitTimer -= dt;
       if (this.hitTimer <= 0) this.hitmarkerEl.classList.remove('show');

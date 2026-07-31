@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  chooseInteractionCandidate, interactionScore, type InteractionCandidate,
+  chooseInteractionCandidate, equipmentComparison, interactionScore, type InteractionCandidate,
 } from '../src/interaction';
 
 function candidate(
@@ -36,5 +36,12 @@ describe('交互目标选择', () => {
     const ally = candidate('ally', {}, 1.8, 0.82, 0.24);
     const item = candidate('item', {}, 1.2, 0.84);
     expect(chooseInteractionCandidate([item, ally], null)).toBe(ally);
+  });
+
+  it('装备比较明确区分空栏位, 升级, 同级和降级', () => {
+    expect(equipmentComparison(null, null, 2)).toEqual({ text: '空栏位 · 直接装备', tone: 'positive' });
+    expect(equipmentComparison('一级头盔', 1, 2).tone).toBe('positive');
+    expect(equipmentComparison('二级头盔', 2, 2).tone).toBe('neutral');
+    expect(equipmentComparison('三级头盔', 3, 2).tone).toBe('warning');
   });
 });

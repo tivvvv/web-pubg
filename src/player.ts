@@ -12,7 +12,7 @@ import { WATER_Y, WORLD_HALF } from './world';
 import { driveVehicleStep, VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { clamp, lerp, turnToward } from './utils';
-import { ATTACHMENTS, attachFromLoot, isAttachKind, magSizeOf, sightZoomOf } from './attachments';
+import { ATTACHMENTS, attachFromLoot, canAttach, isAttachKind, magSizeOf, sightZoomOf } from './attachments';
 import { random } from './random';
 import type { Game } from './game';
 import {
@@ -24,7 +24,8 @@ import {
   smoothCameraDistance, type CameraShakeSample,
 } from './camera';
 import {
-  chooseInteractionCandidate, type InteractionCandidate, type InteractionKind,
+  chooseInteractionCandidate, equipmentComparison, type ComparisonTone, type InteractionCandidate,
+  type InteractionKind,
 } from './interaction';
 import type { Destructible } from './buildings';
 import type { Crate } from './airdrop';
@@ -622,22 +623,69 @@ export class PlayerController {
     game.promptItem = selectedItem;
     const k = selectedItem.kind;
     if (isMeleeKind(k)) {
-      game.hud.setPickupPrompt(`按 F 拾取 ${MELEE[k].name}`, 'item');
+      const current = c.melee.def.id === 'fists' ? null : c.melee.def.name;
+      game.hud.setPickupPrompt(
+        `按 F 拾取 ${MELEE[k].name}`,
+        'item',
+        current ? `将替换 ${current}` : '空栏位 · 直接装备',
+        current ? 'neutral' : 'positive',
+      );
     } else if (isGunKind(k)) {
       const def = WEAPONS[k];
       const state = selectedItem.mag > 0
         ? `${selectedItem.mag} 发`
         : selectedItem.ammo > 0 ? `无弹, 备弹 ${selectedItem.ammo}` : '无弹';
-      game.hud.setPickupPrompt(`按 F 拾取 ${def.name}（${state}）`, 'item');
+      const emptySlot = def.id === 'pistol' ? !c.guns[2] : !c.guns[0] || !c.guns[1];
+      let compared = c.heldGun();
+      if (!emptySlot && def.id !== 'pistol' && (!compared || compared.def.id === 'pistol')) {
+        compared = (c.guns[0]?.def.tier ?? 99) <= (c.guns[1]?.def.tier ?? 99) ? c.guns[0] : c.guns[1];
+      }
+      if (def.id === 'pistol') compared = c.guns[2];
+      const comparison = emptySlot
+        ? equipmentComparison(null, null, def.tier)
+        : equipmentComparison(compared?.def.name ?? null, compared?.def.tier ?? null, def.tier);
+      game.hud.setPickupPrompt(`按 F 拾取 ${def.name} (${state})`, 'item', comparison.text, comparison.tone);
     } else if (isAttachKind(k)) {
       const id = attachFromLoot(k);
-      if (id) game.hud.setPickupPrompt(`按 F 装配 ${ATTACHMENTS[id].name}`, 'item');
+      if (id) {
+        const gun = c.heldGun();
+        let detail = '需先手持兼容枪械';
+        let tone: ComparisonTone = 'warning';
+        if (gun && canAttach(gun.def.id, id)) {
+          const old = gun.att[ATTACHMENTS[id].slot];
+          detail = old === id ? '当前已装配' : old ? `将替换 ${ATTACHMENTS[old].name}` : `适配 ${gun.def.name}`;
+          tone = old === id ? 'neutral' : 'positive';
+        } else if (gun) {
+          detail = `不适配 ${gun.def.name}`;
+        }
+        game.hud.setPickupPrompt(`按 F 装配 ${ATTACHMENTS[id].name}`, 'item', detail, tone);
+      }
     } else if (isPackKind(k)) {
       const level = packLevelFromLoot(k);
-      if (level) game.hud.setPickupPrompt(`按 F 拾取 ${PACKS[level].name}`, 'item');
+      if (level) {
+        const comparison = equipmentComparison(
+          c.pack ? PACKS[c.pack.level].name : null,
+          c.pack?.level ?? null,
+          level,
+        );
+        game.hud.setPickupPrompt(`按 F 拾取 ${PACKS[level].name}`, 'item', comparison.text, comparison.tone);
+      }
     } else {
       const info = armorFromLoot(k);
-      if (info) game.hud.setPickupPrompt(`按 F 拾取 ${ARMORS[info.kind][info.level].name}`, 'item');
+      if (info) {
+        const current = info.kind === 'helmet' ? c.helmet : c.vest;
+        const comparison = equipmentComparison(
+          current ? ARMORS[info.kind][current.level].name : null,
+          current?.level ?? null,
+          info.level,
+        );
+        game.hud.setPickupPrompt(
+          `按 F 拾取 ${ARMORS[info.kind][info.level].name}`,
+          'item',
+          comparison.text,
+          comparison.tone,
+        );
+      }
     }
   }
 
@@ -669,6 +717,7 @@ export class PlayerController {
   ): void {
     this.cancelTransientActions(game);
     if (pose) this.char.beginAction(pose, duration);
+    game.hud.flashInteraction(pose === 'pickup' ? 'pickup' : 'interact');
     this.interactionLockT = Math.max(this.interactionLockT, Math.min(duration, 0.46));
     this.interactionFocusT = Math.max(this.interactionFocusT, duration + 0.16);
     this.interactionFocus.set(target.x, target.y, target.z);
@@ -862,6 +911,7 @@ export class PlayerController {
     c.yaw = v.yaw;
     this.yaw = v.yaw;
     game.audio.vehicleDoor();
+    game.hud.flashInteraction('vehicle');
     game.hud.toast('W/S 油门刹车 · A/D 转向 · Space 手刹 · F 下车');
   }
 
@@ -897,6 +947,7 @@ export class PlayerController {
     this.vehicleLookPitch = 0.08;
     this.vehicleLookIdleT = 0;
     v.driver = null;
+    game.hud.flashInteraction('vehicle');
     v.speed = 0;
     this.driving = null;
     game.audio.engineStop();
