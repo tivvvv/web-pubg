@@ -19,6 +19,9 @@ describe('固定回归场景入口', () => {
     for (const region of ['stonegate', 'ironring', 'sunfield', 'mistwood', 'eagleridge', 'tideharbor']) {
       expect(RELEASE_SCENARIO_ROUTES.some((route) => route.includes(`region=${region}`))).toBe(true);
     }
+    expect(RELEASE_SCENARIO_ROUTES.filter((route) => route.includes('scenario=stability'))).toHaveLength(3);
+    expect(RELEASE_SCENARIO_ROUTES.filter((route) => route.includes('scenario=stability'))
+      .every((route) => route.includes('rounds=3'))).toBe(true);
     expect(releaseScenarioHref(0)).toContain('release=1&case=0');
     expect(releaseScenarioHref(999)).toContain(`case=${RELEASE_SCENARIO_ROUTES.length - 1}`);
   });

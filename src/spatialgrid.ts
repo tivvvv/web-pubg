@@ -44,6 +44,22 @@ export class SpatialPointGrid<T> {
     }
   }
 
+  remove(item: T): boolean {
+    let removed = false;
+    for (let index = 0; index < this.cells.length; index++) {
+      const cell = this.cells[index];
+      if (!cell) continue;
+      for (let itemIndex = cell.length - 1; itemIndex >= 0; itemIndex--) {
+        if (cell[itemIndex] !== item) continue;
+        cell.splice(itemIndex, 1);
+        removed = true;
+      }
+      if (cell.length === 0) this.cells[index] = undefined;
+    }
+    this.seen.delete(item);
+    return removed;
+  }
+
   at(x: number, z: number): readonly T[] {
     const column = this.columnAt(x, false);
     const row = this.rowAt(z, false);

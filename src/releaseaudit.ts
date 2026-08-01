@@ -8,6 +8,7 @@ export interface ReleaseActorSample {
   z: number;
   hp: number;
   healthLimit?: number;
+  knocked: boolean;
   speed: number;
   grounded: boolean;
   swimming: boolean;
@@ -31,6 +32,7 @@ export interface ReleaseVehicleSample {
   y: number;
   z: number;
   hp: number;
+  maxHp: number;
   speed: number;
 }
 
@@ -41,8 +43,11 @@ export function auditReleaseState(
   worldHalf: number,
 ): string[] {
   const issues: string[] = [];
+  const actorIds = new Set<number>();
   for (const actor of actors) {
     const label = `${actor.id}:${actor.name}`;
+    if (actorIds.has(actor.id)) issues.push(`actor:${label}:duplicate-id`);
+    actorIds.add(actor.id);
     if (![actor.x, actor.y, actor.z, actor.hp, actor.speed].every(Number.isFinite)) {
       issues.push(`actor:${label}:non-finite`);
       continue;
@@ -50,8 +55,11 @@ export function auditReleaseState(
     if (actor.alive && actor.visible && (Math.abs(actor.x) > worldHalf + 3 || Math.abs(actor.z) > worldHalf + 3)) {
       issues.push(`actor:${label}:out-of-world`);
     }
+    if (actor.alive && actor.visible && (actor.y < -30 || actor.y > 420)) {
+      issues.push(`actor:${label}:vertical:${actor.y.toFixed(1)}`);
+    }
     const healthLimit = actor.healthLimit ?? 100;
-    if (actor.alive && (actor.hp < 0 || actor.hp > healthLimit + 0.01)) {
+    if (actor.alive && (actor.hp < 0 || (!actor.knocked && actor.hp <= 0) || actor.hp > healthLimit + 0.01)) {
       issues.push(`actor:${label}:hp:${actor.hp.toFixed(1)}`);
     }
     if (actor.alive && actor.speed < -0.01) issues.push(`actor:${label}:negative-speed`);
@@ -61,7 +69,8 @@ export function auditReleaseState(
       issues.push(`actor:${label}:ground-gap:${(actor.y - actor.groundY).toFixed(2)}`);
     }
     if (actor.magazine !== null && actor.capacity !== null &&
-      (!Number.isFinite(actor.magazine) || actor.magazine < 0 || actor.magazine > actor.capacity)) {
+      (!Number.isInteger(actor.magazine) || !Number.isInteger(actor.capacity) || actor.capacity <= 0 ||
+        actor.magazine < 0 || actor.magazine > actor.capacity)) {
       issues.push(`actor:${label}:magazine:${actor.magazine}/${actor.capacity}`);
     }
   }
@@ -71,15 +80,20 @@ export function auditReleaseState(
     } else {
       if (camera.fov < 12 || camera.fov > 100) issues.push(`camera:fov:${camera.fov.toFixed(1)}`);
       if (camera.distance < 0 || camera.distance > 8) issues.push(`camera:distance:${camera.distance.toFixed(2)}`);
+      if (camera.y < -40 || camera.y > 450) issues.push(`camera:vertical:${camera.y.toFixed(1)}`);
     }
   }
   for (const vehicle of vehicles) {
-    if (![vehicle.x, vehicle.y, vehicle.z, vehicle.hp, vehicle.speed].every(Number.isFinite)) {
+    if (![vehicle.x, vehicle.y, vehicle.z, vehicle.hp, vehicle.maxHp, vehicle.speed].every(Number.isFinite)) {
       issues.push(`vehicle:${vehicle.index}:non-finite`);
       continue;
     }
     if (Math.abs(vehicle.x) > worldHalf + 6 || Math.abs(vehicle.z) > worldHalf + 6) {
       issues.push(`vehicle:${vehicle.index}:out-of-world`);
+    }
+    if (vehicle.y < -30 || vehicle.y > 80) issues.push(`vehicle:${vehicle.index}:vertical:${vehicle.y.toFixed(1)}`);
+    if (vehicle.maxHp <= 0 || vehicle.hp < 0 || vehicle.hp > vehicle.maxHp + 0.01) {
+      issues.push(`vehicle:${vehicle.index}:hp:${vehicle.hp.toFixed(1)}/${vehicle.maxHp.toFixed(1)}`);
     }
     if (vehicle.speed < -80 || vehicle.speed > 80) issues.push(`vehicle:${vehicle.index}:speed:${vehicle.speed.toFixed(1)}`);
   }

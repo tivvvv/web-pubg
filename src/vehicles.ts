@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { WATER_Y, WORLD_HALF, type World } from './world';
 import type { Character } from './character';
 import type { Game } from './game';
+import type { Collider } from './types';
 import { clamp, lerp } from './utils';
 import { applySurfaceAsset } from './assets';
 
@@ -181,6 +182,7 @@ export class Vehicle {
   readonly kind: VehicleKind;
   readonly pos: THREE.Vector3;
   readonly group = new THREE.Group();
+  wreckCollider: Collider | null = null;
   private wheels: THREE.Object3D[] = [];
   private steerWheels: THREE.Object3D[] = [];
   private mats: THREE.MeshStandardMaterial[] = [];
@@ -402,7 +404,13 @@ export class VehicleManager {
 
   // 全量重生(对局开始/重开)
   populate(world: World): void {
-    for (const v of this.list) this.scene.remove(v.group);
+    for (const v of this.list) {
+      this.scene.remove(v.group);
+      if (v.wreckCollider) {
+        world.removeCollider(v.wreckCollider);
+        v.wreckCollider = null;
+      }
+    }
     this.list.length = 0;
     for (const s of VEHICLE_SPAWNS) {
       const spec = VEHICLE_SPEC[s.kind];
@@ -548,7 +556,12 @@ export class VehicleManager {
     }
     v.darken();
     // 残骸成为静态障碍
-    game.world.addCollider({ kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9, y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock' });
+    const collider: Collider = {
+      kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9,
+      y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock',
+    };
+    game.world.addCollider(collider);
+    v.wreckCollider = collider;
     if (v.driver) game.forceExitVehicle(v.driver, 55);
   }
 
@@ -558,7 +571,12 @@ export class VehicleManager {
     v.dead = true;
     v.speed = 0;
     v.darken();
-    game.world.addCollider({ kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9, y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock' });
+    const collider: Collider = {
+      kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9,
+      y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock',
+    };
+    game.world.addCollider(collider);
+    v.wreckCollider = collider;
     if (v.driver?.isPlayer) game.hud.toast('车辆进水熄火');
     if (v.driver) game.forceExitVehicle(v.driver, 0);
   }

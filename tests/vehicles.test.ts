@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Character } from '../src/character';
 import { seatWorldAt, Vehicle, VehicleManager, VEHICLE_SPEC } from '../src/vehicles';
 
@@ -84,5 +84,26 @@ describe('载具座位 命中和损毁状态', () => {
     expect(vehicle.hp).toBe(0);
     expect(vehicle.burnT).toBe(2);
     expect(vehicle.dead).toBe(false);
+  });
+
+  it('重开重生载具时注销上一局残骸碰撞体', () => {
+    const manager = new VehicleManager(new THREE.Scene());
+    const wreck = new Vehicle('car', new THREE.Vector3(0, 0, 0), 0);
+    wreck.wreckCollider = { kind: 'cyl', x: 0, z: 0, r: 1, y0: -1, y1: 1, tag: 'rock' };
+    manager.list.push(wreck);
+    const removeCollider = vi.fn(() => true);
+    const world = {
+      removeCollider,
+      inPlot: () => false,
+      pointFree: () => true,
+      groundHeight: () => 0,
+    } as unknown as import('../src/world').World;
+
+    manager.populate(world);
+
+    expect(removeCollider).toHaveBeenCalledOnce();
+    expect(removeCollider).toHaveBeenCalledWith(expect.objectContaining({ kind: 'cyl', tag: 'rock' }));
+    expect(wreck.wreckCollider).toBeNull();
+    expect(manager.list).toHaveLength(11);
   });
 });

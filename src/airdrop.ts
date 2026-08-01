@@ -355,7 +355,7 @@ export class AirdropManager {
     const pf: Platform = {
       minX: col.minX, maxX: col.maxX, minZ: col.minZ, maxZ: col.maxZ, top: gh + 1.0,
     };
-    this.world.platforms.push(pf);
+    this.world.addPlatform(pf);
     c.platform = pf;
     // bot 好奇: 120m 内最近 4 个活 bot
     this.interested.clear();
@@ -383,12 +383,11 @@ export class AirdropManager {
       c.lid.rotation.x = 0;
       c.smokeT = 0;
       if (c.collider) {
-        c.collider.off = true;
+        this.world.removeCollider(c.collider);
         c.collider = null;
       }
       if (c.platform) {
-        const i = this.world.platforms.indexOf(c.platform);
-        if (i >= 0) this.world.platforms.splice(i, 1);
+        this.world.removePlatform(c.platform);
         c.platform = null;
       }
     }

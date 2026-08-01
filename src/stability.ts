@@ -109,6 +109,8 @@ export interface StabilityResourceSnapshot {
   sceneChildren: number;
   activeDeathCrates: number;
   deathCratePool: number;
+  worldColliders: number;
+  worldPlatforms: number;
 }
 
 export function validateRoundReset(
@@ -118,7 +120,7 @@ export function validateRoundReset(
   maxLootItems = 240,
 ): string[] {
   const issues: string[] = [];
-  for (const key of ['characters', 'bots', 'vehicles', 'sceneChildren'] as const) {
+  for (const key of ['characters', 'bots', 'vehicles', 'sceneChildren', 'worldColliders', 'worldPlatforms'] as const) {
     if (current[key] !== baseline[key]) issues.push(`resource-mismatch:${key}:${baseline[key]}:${current[key]}`);
   }
   if (current.lootItems <= 0 || current.lootItems > maxLootItems) {

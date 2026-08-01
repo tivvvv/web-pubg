@@ -63,7 +63,9 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=maptour&region=stonegate&variation=arsenal',
   'scenario=maptour&region=tideharbor&variation=lifeline',
   'scenario=maptour&region=ironring&variation=firestorm',
-  'scenario=stability&seed=1337&simSteps=12&rounds=2&deadline=390',
+  'scenario=stability&seed=1337&simSteps=12&rounds=3&deadline=480',
+  'scenario=stability&seed=424242&simSteps=12&rounds=3&deadline=480',
+  'scenario=stability&seed=9001&simSteps=12&rounds=3&deadline=480',
 ] as const;
 
 export function releaseScenarioHref(index: number): string {
@@ -339,6 +341,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
           z: actor.pos.z,
           hp: actor.hp,
           healthLimit: actor.id === trainingOverhealth ? 1000 : 100,
+          knocked: actor.knocked,
           speed: actor.speed2d,
           grounded: actor.grounded,
           swimming: actor.swimming,
@@ -364,6 +367,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
           y: vehicle.pos.y,
           z: vehicle.pos.z,
           hp: vehicle.hp,
+          maxHp: VEHICLE_SPEC[vehicle.kind].hp,
           speed: vehicle.speed,
         })),
         WORLD_HALF,
@@ -609,6 +613,8 @@ function stabilityResources(game: Game): StabilityResourceSnapshot {
     sceneChildren: game.scene.children.length,
     activeDeathCrates: game.deathCrates.crates.filter((crate) => crate.active).length,
     deathCratePool: game.deathCrates.crates.length,
+    worldColliders: game.world.colliders.length,
+    worldPlatforms: game.world.platforms.length,
   };
 }
 
@@ -731,6 +737,8 @@ function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
         finalResources.sceneChildren,
         finalResources.activeDeathCrates,
         finalResources.deathCratePool,
+        finalResources.worldColliders,
+        finalResources.worldPlatforms,
       ].join(',');
       return;
     }

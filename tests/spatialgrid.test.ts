@@ -30,4 +30,17 @@ describe('二维空间网格', () => {
     expect(grid.queryBounds(40, 40, 50, 50, out)).toEqual(['箱子']);
     expect(grid.queryBounds(120, 120, 140, 140, out)).toEqual([]);
   });
+
+  it('注销动态对象后会从所有覆盖单元格彻底移除', () => {
+    const grid = new SpatialPointGrid<object>(0, 0, 100, 100, 20);
+    const crate = {};
+    grid.insert(crate, 10, 10, 70, 70);
+
+    expect(grid.at(15, 15)).toContain(crate);
+    expect(grid.at(65, 65)).toContain(crate);
+    expect(grid.remove(crate)).toBe(true);
+    expect(grid.at(15, 15)).not.toContain(crate);
+    expect(grid.at(65, 65)).not.toContain(crate);
+    expect(grid.remove(crate)).toBe(false);
+  });
 });

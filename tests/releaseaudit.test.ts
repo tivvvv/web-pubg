@@ -10,6 +10,7 @@ const validActor: ReleaseActorSample = {
   y: 2,
   z: 0,
   hp: 100,
+  knocked: false,
   speed: 4,
   grounded: true,
   swimming: false,
@@ -24,7 +25,7 @@ describe('发布级运行状态审计', () => {
     expect(auditReleaseState(
       [validActor],
       { x: 0, y: 4, z: -3, fov: 75, distance: 3.4 },
-      [{ index: 0, x: 20, y: 1, z: 20, hp: 700, speed: 18 }],
+      [{ index: 0, x: 20, y: 1, z: 20, hp: 700, maxHp: 800, speed: 18 }],
       300,
     )).toEqual([]);
   });
@@ -33,7 +34,7 @@ describe('发布级运行状态审计', () => {
     const issues = auditReleaseState(
       [{ ...validActor, x: Number.NaN, y: 8, groundY: 2, magazine: 40 }],
       { x: 0, y: 0, z: 0, fov: 5, distance: 12 },
-      [{ index: 2, x: 400, y: 0, z: 0, hp: 100, speed: 100 }],
+      [{ index: 2, x: 400, y: 0, z: 0, hp: 100, maxHp: 800, speed: 100 }],
       300,
     );
     expect(issues).toContain('actor:1:测试角色:non-finite');
@@ -71,5 +72,28 @@ describe('发布级运行状态审计', () => {
       300,
     )).toEqual([]);
     expect(auditReleaseState([{ ...validActor, hp: 900 }], null, [], 300)).toContain('actor:1:测试角色:hp:900.0');
+  });
+
+  it('检测重复角色, 垂直越界, 零生命存活和非法载具生命', () => {
+    const issues = auditReleaseState(
+      [validActor, { ...validActor, y: 500, hp: 0, magazine: 1.5 }],
+      { x: 0, y: 500, z: 0, fov: 75, distance: 3 },
+      [{ index: 1, x: 0, y: 90, z: 0, hp: 900, maxHp: 800, speed: 0 }],
+      300,
+    );
+
+    expect(issues).toContain('actor:1:测试角色:duplicate-id');
+    expect(issues).toContain('actor:1:测试角色:vertical:500.0');
+    expect(issues).toContain('actor:1:测试角色:hp:0.0');
+    expect(issues).toContain('actor:1:测试角色:magazine:1.5/30');
+    expect(issues).toContain('camera:vertical:500.0');
+    expect(issues).toContain('vehicle:1:vertical:90.0');
+    expect(issues).toContain('vehicle:1:hp:900.0/800.0');
+  });
+
+  it('击倒角色允许常规生命归零但仍拒绝负生命', () => {
+    expect(auditReleaseState([{ ...validActor, hp: 0, knocked: true }], null, [], 300)).toEqual([]);
+    expect(auditReleaseState([{ ...validActor, hp: -1, knocked: true }], null, [], 300))
+      .toContain('actor:1:测试角色:hp:-1.0');
   });
 });

@@ -415,6 +415,35 @@ varying vec3 vTerrainWorld;`,
     }
   }
 
+  removeCollider(c: Collider): boolean {
+    const colliderIndex = this.colliders.indexOf(c);
+    if (colliderIndex < 0) return false;
+    this.colliders.splice(colliderIndex, 1);
+    if (c.kind === 'cyl') {
+      const cylinderIndex = this.cyls.indexOf(c);
+      if (cylinderIndex >= 0) this.cyls.splice(cylinderIndex, 1);
+      this.cylinderGrid.remove(c);
+    } else {
+      const boxIndex = this.aabbs.indexOf(c);
+      if (boxIndex >= 0) this.aabbs.splice(boxIndex, 1);
+      this.aabbGrid.remove(c);
+    }
+    return true;
+  }
+
+  addPlatform(platform: Platform): void {
+    this.platforms.push(platform);
+    this.platformGrid.insert(platform, platform.minX, platform.minZ, platform.maxX, platform.maxZ);
+  }
+
+  removePlatform(platform: Platform): boolean {
+    const index = this.platforms.indexOf(platform);
+    if (index < 0) return false;
+    this.platforms.splice(index, 1);
+    this.platformGrid.remove(platform);
+    return true;
+  }
+
   // 点是否落在任一房屋地块内(含 margin)
   inPlot(x: number, z: number, margin: number): boolean {
     for (const p of this.buildings.plots) {

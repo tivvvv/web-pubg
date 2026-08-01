@@ -49,7 +49,7 @@ describe('长局稳定性监控', () => {
   it('重开后核心资源数量必须恢复基线', () => {
     const baseline: StabilityResourceSnapshot = {
       characters: 24, bots: 20, lootItems: 195, lootPool: 195, vehicles: 10, sceneChildren: 18,
-      activeDeathCrates: 0, deathCratePool: 0,
+      activeDeathCrates: 0, deathCratePool: 0, worldColliders: 320, worldPlatforms: 45,
     };
     expect(validateRoundReset(
       baseline,
@@ -63,6 +63,14 @@ describe('长局稳定性监控', () => {
     ]);
     expect(validateRoundReset(baseline, { ...baseline, lootPool: 241 }, 20, 240)).toEqual([
       'loot-pool:241:195:240',
+    ]);
+    expect(validateRoundReset(
+      baseline,
+      { ...baseline, worldColliders: 321, worldPlatforms: 46 },
+      20,
+    )).toEqual([
+      'resource-mismatch:worldColliders:320:321',
+      'resource-mismatch:worldPlatforms:45:46',
     ]);
   });
 
