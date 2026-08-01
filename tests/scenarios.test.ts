@@ -22,6 +22,13 @@ describe('固定回归场景入口', () => {
     expect(RELEASE_SCENARIO_ROUTES.filter((route) => route.includes('scenario=stability'))).toHaveLength(3);
     expect(RELEASE_SCENARIO_ROUTES.filter((route) => route.includes('scenario=stability'))
       .every((route) => route.includes('rounds=3'))).toBe(true);
+    for (const sight of ['scope2', 'scope4', 'reddot']) {
+      const route = RELEASE_SCENARIO_ROUTES.find((candidate) =>
+        candidate.includes('scenario=combat') &&
+        (sight === 'scope2' ? candidate.includes('weapon=rifle') : candidate.includes(`sight=${sight}`)),
+      );
+      expect(route).toContain('ads=1');
+    }
     expect(releaseScenarioHref(0)).toContain('release=1&case=0');
     expect(releaseScenarioHref(999)).toContain(`case=${RELEASE_SCENARIO_ROUTES.length - 1}`);
   });

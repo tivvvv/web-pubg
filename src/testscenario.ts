@@ -28,14 +28,14 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=stairs&view=entrance&arch=cottage2',
   'scenario=swim&auto=1',
   'scenario=botswim',
-  'scenario=combat&weapon=rifle&burst=8',
+  'scenario=combat&weapon=rifle&burst=8&ads=1',
   'scenario=combat&weapon=akm&burst=8',
   'scenario=combat&weapon=lmg&burst=12',
   'scenario=combat&weapon=smg&burst=10',
-  'scenario=combat&weapon=dmr&burst=4&sight=scope4',
-  'scenario=combat&weapon=sniper&burst=2&sight=scope4',
+  'scenario=combat&weapon=dmr&burst=4&sight=scope4&ads=1',
+  'scenario=combat&weapon=sniper&burst=2&sight=scope4&ads=1',
   'scenario=combat&weapon=shotgun&burst=2',
-  'scenario=combat&weapon=pistol&burst=4&sight=reddot',
+  'scenario=combat&weapon=pistol&burst=4&sight=reddot&ads=1',
   'scenario=effects',
   'scenario=effects&flash=1',
   'scenario=bottactics',
@@ -1046,6 +1046,7 @@ function setupCombat(game: Game): void {
     target.char.pos.y + target.char.chestHeight() - (c.pos.y + c.eyeHeight()),
     Math.hypot(targetX - playerX, targetZ - playerZ),
   );
+  if (params.get('ads') === '1') game.input.rmb = true;
   const requestedBurst = Math.min(12, Math.max(0, Math.floor(Number(params.get('burst')) || 0)));
   if (requestedBurst > 0) {
     const stopMagazine = Math.max(0, gun.mag - requestedBurst);

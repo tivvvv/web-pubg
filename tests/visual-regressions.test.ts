@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { advancePoseBlend, Character, ownModelVisibility } from '../src/character';
 import { emptyAttachments } from '../src/attachments';
 import { environmentLighting, environmentSurfaceDetail } from '../src/environment';
 import { RENDER_QUALITY } from '../src/rendering';
 import { WEAPONS } from '../src/weapons';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
+import { squadNameTagPresentation } from '../src/game';
 
 describe('画面回归保护', () => {
   it('第一人称趴下隐藏会穿入相机的自身模型', () => {
@@ -170,5 +173,21 @@ describe('画面回归保护', () => {
       contrast: 1.035,
     });
     expect(SUN_SHADOW_MAP_SIZE).toBe(2048);
+  });
+
+  it('近距离队友名牌不会贴入镜头或异常放大', () => {
+    expect(squadNameTagPresentation(true, true, 1.8)).toEqual({ visible: false, scale: 0.34 });
+    expect(squadNameTagPresentation(true, true, 4)).toEqual({ visible: true, scale: 0.34 });
+    expect(squadNameTagPresentation(true, true, 24)).toEqual({ visible: true, scale: 1 });
+    expect(squadNameTagPresentation(true, true, 60)).toEqual({ visible: false, scale: 1 });
+    expect(squadNameTagPresentation(false, true, 12).visible).toBe(false);
+  });
+
+  it('低高度背包和右侧信息层保持可用且不遮挡瞄准中心', () => {
+    const css = readFileSync(join(process.cwd(), 'src/style.css'), 'utf8');
+    expect(css).toMatch(/#killfeed\s*\{[^}]*top:\s*116px/s);
+    expect(css).toMatch(/#toast\s*\{[^}]*top:\s*112px/s);
+    expect(css).toMatch(/\.bp-panel\s*\{[^}]*max-height:\s*calc\(100vh - 32px\)/s);
+    expect(css).toMatch(/\.bp-panel\s*\{[^}]*overflow-y:\s*auto/s);
   });
 });

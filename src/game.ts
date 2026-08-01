@@ -5,6 +5,16 @@ const UP_Y = new THREE.Vector3(0, 1, 0);
 const MATE_NAMES = ['队友1', '队友2', '队友3'];
 const MATE_SHIRTS = [0x3cb36a, 0x3f8a4e, 0x66a05a];
 
+export function squadNameTagPresentation(alive: boolean, modelVisible: boolean, distance: number): {
+  visible: boolean;
+  scale: number;
+} {
+  return {
+    visible: alive && modelVisible && distance >= 2.5 && distance < 60,
+    scale: THREE.MathUtils.clamp(distance / 24, 0.34, 1),
+  };
+}
+
 // 队友头顶名牌(绿色小字, 远处隐藏)
 function makeNameTag(name: string): THREE.Sprite {
   const cv = document.createElement('canvas');
@@ -1100,7 +1110,9 @@ export class Game {
       if (!tag) continue;
       const c = m.char;
       const dp = Math.hypot(c.pos.x - player.char.pos.x, c.pos.z - player.char.pos.z);
-      tag.visible = c.alive && c.group.visible && dp < 60;
+      const tagPresentation = squadNameTagPresentation(c.alive, c.group.visible, dp);
+      tag.visible = tagPresentation.visible;
+      tag.scale.set(1.5 * tagPresentation.scale, 0.38 * tagPresentation.scale, 1);
       tag.position.set(c.pos.x, c.pos.y + 2.05, c.pos.z);
       // 倒地队友橙色标记(80m 内脉动)
       const km = this.knockMarks[i];
