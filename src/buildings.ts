@@ -7,6 +7,7 @@ import type { AabbCollider, DestructibleLike } from './types';
 import { riverZAt, type World } from './world';
 import { random } from './random';
 import { applySurfaceAsset } from './assets';
+import { regionAt, type RegionId } from './regions';
 
 export interface LootSpot {
   x: number; y: number; z: number;
@@ -46,6 +47,46 @@ const FRAME_C = 0x5f5245; // 深色框边
 const SHUTTER_C = 0x6a5a48; // 百叶窗板
 const SKIRT_C = 0x6f6a5e; // 墙基裙(加深, 接地点缀)
 const CRATE_C = 0x9a7f56;
+
+export interface RegionalBuildingStyle {
+  walls: readonly number[];
+  roofs: readonly number[];
+  accent: number;
+  secondary: number;
+  chimneyChance: number;
+  acChance: number;
+}
+
+export const REGIONAL_BUILDING_STYLES: Readonly<Record<RegionId, RegionalBuildingStyle>> = {
+  stonegate: {
+    walls: [0xd7d2c8, 0xb9c3c6, 0xc6aa92], roofs: [0x787d82, 0x8b5b47],
+    accent: 0x756e64, secondary: 0xb06b4f, chimneyChance: 0.34, acChance: 0.62,
+  },
+  ironring: {
+    walls: [0xb7b9b2, 0x9fa7a5, 0xc3b9aa], roofs: [0x676d70, 0x80564a],
+    accent: 0x9c493d, secondary: 0x515c62, chimneyChance: 0.12, acChance: 0.72,
+  },
+  sunfield: {
+    walls: [0xd4c096, 0xc8a970, 0xbca27a], roofs: [0x995542, 0x795e44],
+    accent: 0x765239, secondary: 0xc4a24f, chimneyChance: 0.58, acChance: 0.08,
+  },
+  mistwood: {
+    walls: [0x9ba58f, 0x8f9a87, 0xb0aa91], roofs: [0x4f5a50, 0x665644],
+    accent: 0x4f493e, secondary: 0x6f7c59, chimneyChance: 0.7, acChance: 0.04,
+  },
+  eagleridge: {
+    walls: [0xbdbdb5, 0xa9aca8, 0xc9c3b4], roofs: [0x686d70, 0x7e6556],
+    accent: 0x666b6b, secondary: 0xa84f42, chimneyChance: 0.22, acChance: 0.42,
+  },
+  tideharbor: {
+    walls: [0xa9c0c2, 0xb8c8c1, 0xd0c4a5], roofs: [0x55747a, 0x82594a],
+    accent: 0x3f6f79, secondary: 0xd0a957, chimneyChance: 0.28, acChance: 0.18,
+  },
+};
+
+export function regionalBuildingStyle(region: RegionId): RegionalBuildingStyle {
+  return REGIONAL_BUILDING_STYLES[region];
+}
 
 const WT = 0.26;            // 外墙厚
 const WT2 = 0.14;           // 上层墙厚
@@ -346,11 +387,19 @@ export class Buildings {
 
     this.plots.forEach((plot, idx) => {
       const rng = mulberry32(idx * 97 + 11);
+      const cx = (plot.minX + plot.maxX) * 0.5;
+      const cz = (plot.minZ + plot.maxZ) * 0.5;
+      const region = regionAt(cx, cz)?.id;
+      const regionalStyle = region && region !== 'wilderness' ? regionalBuildingStyle(region) : null;
       const palette: Palette = {
-        wall: WALL_COLORS[Math.floor(rng() * WALL_COLORS.length)] as number,
-        roof: ROOF_COLORS[Math.floor(rng() * ROOF_COLORS.length)] as number,
-        chimney: rng() < 0.4,
-        ac: rng() < 0.3,
+        wall: regionalStyle
+          ? regionalStyle.walls[Math.floor(rng() * regionalStyle.walls.length)] as number
+          : WALL_COLORS[Math.floor(rng() * WALL_COLORS.length)] as number,
+        roof: regionalStyle
+          ? regionalStyle.roofs[Math.floor(rng() * regionalStyle.roofs.length)] as number
+          : ROOF_COLORS[Math.floor(rng() * ROOF_COLORS.length)] as number,
+        chimney: rng() < (regionalStyle?.chimneyChance ?? 0.4),
+        ac: rng() < (regionalStyle?.acChance ?? 0.3),
       };
       switch (plot.arch) {
         case 'cottage1': this.addCottage(world, plot, palette, box, false); break;
@@ -363,6 +412,7 @@ export class Buildings {
       }
       if (plot.arch !== 'gym') this.addInteriorDetails(world, plot, box, idx);
       this.addYardCover(plot, box, idx);
+      if (regionalStyle) this.addRegionalFacade(plot, box, regionalStyle, idx);
     });
 
     this.sanitizeLootSpots(world);
@@ -693,6 +743,57 @@ export class Buildings {
     const cz = plot.minZ + 0.7;
     box('wall', cx, y, cz, cx + 0.9, y + 0.72, cz + 0.9, CRATE_C);
     if (idx % 2 === 1) box('wall', cx + 0.18, y + 0.72, cz + 0.15, cx + 0.86, y + 1.32, cz + 0.83, CRATE_C);
+  }
+
+  // 六区建筑共享结构规则，但用檐线、墙脚和屋顶设备形成远距离可辨认的区域视觉语言。
+  // 所有构件均为薄装饰层，不改变既有门窗、室内净空和导航碰撞。
+  private addRegionalFacade(
+    plot: HousePlot,
+    box: BoxFn,
+    style: RegionalBuildingStyle,
+    idx: number,
+  ): void {
+    const ix0 = plot.minX + 2;
+    const ix1 = plot.maxX - 2;
+    const iz0 = plot.minZ + 2;
+    const iz1 = plot.maxZ - 2;
+    const f1 = plot.flatH + 0.28;
+    const storeys = plot.arch === 'apartment' ? 3 : plot.arch === 'cottage2' || plot.arch === 'terrace' ? 2 : 1;
+    const top = f1 + storeys * (WALL_H + SLAB_T) - SLAB_T;
+    const bandY = Math.max(f1 + 2.46, top - 0.34);
+    const t = 0.055;
+
+    box('wall', ix0, bandY, iz0 - t, ix1, bandY + 0.13, iz0, style.accent, { collider: false });
+    box('wall', ix0, bandY, iz1, ix1, bandY + 0.13, iz1 + t, style.accent, { collider: false });
+    box('wall', ix0 - t, bandY, iz0, ix0, bandY + 0.13, iz1, style.accent, { collider: false });
+    box('wall', ix1, bandY, iz0, ix1 + t, bandY + 0.13, iz1, style.accent, { collider: false });
+
+    // 墙角竖向收边把实例化墙块连成完整立面，也强化各区域主色。
+    for (const x of [ix0 - t, ix1]) {
+      for (const z of [iz0 - t, iz1]) {
+        box('wall', x, f1 + 0.08, z, x + t, Math.min(top, f1 + 2.5), z + t, style.accent, { collider: false });
+      }
+    }
+
+    if (plot.arch === 'shop' || plot.arch === 'apartment' || idx % 4 === 0) {
+      const signW = Math.min(2.4, (ix1 - ix0) * 0.32);
+      const signX = (ix0 + ix1) * 0.5;
+      box(
+        'wall', signX - signW / 2, f1 + 2.3, iz0 - 0.09,
+        signX + signW / 2, f1 + 2.68, iz0 - 0.025,
+        style.secondary, { collider: false },
+      );
+    }
+
+    // 山脊通信区和渔港屋顶增加轻量识别构件，保持碰撞关闭以免污染屋顶路线。
+    if (style === REGIONAL_BUILDING_STYLES.eagleridge) {
+      const ax = ix1 - 0.8;
+      box('wall', ax - 0.035, top, iz1 - 0.7, ax + 0.035, top + 1.25, iz1 - 0.63, style.secondary, { collider: false });
+      box('wall', ax - 0.42, top + 0.86, iz1 - 0.69, ax + 0.42, top + 0.92, iz1 - 0.64, style.secondary, { collider: false });
+    } else if (style === REGIONAL_BUILDING_STYLES.tideharbor) {
+      const awningY = f1 + 2.2;
+      box('roof', ix0 + 0.8, awningY, iz0 - 0.48, ix1 - 0.8, awningY + 0.1, iz0 - 0.02, style.secondary, { collider: false });
+    }
   }
 
   // 阶梯坡屋顶(3 级: 檐口→中段→脊, ridge 沿 x 走向) + 屋脊压条

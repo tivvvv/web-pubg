@@ -1631,12 +1631,20 @@ varying vec3 vTerrainWorld;`,
       }
       box(site, 0, -3.5, 5.6, 0.75, 0.55, concrete, 0, true);
       box(site, 0, -3.5, 1.9, 0.3, 0.62, red, 0, false, 0.76);
+      // 横跨摊位的旧城招牌和暖色灯箱形成街口识别轮廓。
+      for (const x of [-3.9, 3.9]) cylinder(site, x, 2.8, 0.14, 3.15, woodDark);
+      box(site, 0, 2.8, 7.7, 0.18, 0.18, woodDark, 0, false, 2.82);
+      box(site, 0, 2.77, 2.9, 0.62, 0.12, canvas, 0, false, 2.95);
     } else if (kit === 'freight') {
       box(site, -2.4, -1.6, 5.2, 2.15, 2.05, blue, 0.12, true);
       box(site, 2.5, 1.7, 5.2, 2.15, 2.05, red, -0.1, true);
       for (const x of [-3.4, 3.4]) cylinder(site, x, -4.2, 0.22, 3.3, metal);
       box(site, 0, -4.2, 7, 0.28, 0.35, metal, 0, false, 3.05);
       box(site, 0, -4.15, 2.8, 1.05, 0.22, canvas, 0, false, 3.3);
+      // 低矮龙门吊补足竞技场工业天际线，不侵占箱间战术通道。
+      for (const x of [-4.8, 4.8]) cylinder(site, x, 4.2, 0.2, 5.4, metal);
+      box(site, 0, 4.2, 9.8, 0.22, 0.28, red, 0, false, 5.05);
+      box(site, 3.2, 4.2, 0.18, 1.35, 0.18, canvas, 0, false, 3.72);
     } else if (kit === 'grain') {
       cylinder(site, -2.2, 0, 3.2, 6.4, 0xb5aa8b, 'y', true);
       cylinder(site, -2.2, 0, 2.45, 1.0, 0x8f6f4b, 'y', false, 6.2);
@@ -1644,6 +1652,10 @@ varying vec3 vTerrainWorld;`,
       box(site, 2.5, 0.4, 4.1, 0.24, 3.7, red, 0.08, false, 2.48);
       cylinder(site, 0.6, -3.3, 0.2, 5.2, metal);
       box(site, 0.6, -3.3, 2.8, 0.15, 0.22, canvas, 0, false, 4.55);
+      // 粮仓风向标和仓号牌让农场从远处即可辨认。
+      box(site, -2.2, 0, 0.14, 1.55, 0.14, metal, 0, false, 7.05);
+      box(site, -2.2, 0, 1.35, 0.11, 0.12, red, 0, false, 7.72);
+      box(site, 2.5, -1.23, 1.2, 0.75, 0.08, canvas, 0.08, false, 1.15);
     } else if (kit === 'lumber') {
       for (let row = 0; row < 3; row++) {
         for (let level = 0; level < 2; level++) {
@@ -1653,6 +1665,10 @@ varying vec3 vTerrainWorld;`,
       box(site, 2.2, 0.4, 3.1, 0.9, 1.4, woodDark, 0.1, true);
       box(site, 2.2, 0.4, 3.6, 0.16, 2.4, 0x687052, 0.1, false, 0.92);
       box(site, 0.2, 4.0, 5.4, 0.78, 0.72, wood, 0.05, true);
+      // 锯木棚门架与吊挂横梁强调林场加工区身份。
+      for (const x of [-3.5, 3.5]) cylinder(site, x, 4.9, 0.18, 3.25, woodDark);
+      box(site, 0, 4.9, 7.1, 0.2, 0.24, wood, 0, false, 2.95);
+      box(site, 0, 4.86, 2.5, 0.52, 0.1, 0x687052, 0, false, 3.06);
     } else if (kit === 'relay') {
       cylinder(site, 0, 0, 0.28, 10.5, metal, 'y', true);
       box(site, 0, 0, 5.8, 0.16, 0.16, metal, 0, false, 4.2);
@@ -1661,6 +1677,9 @@ varying vec3 vTerrainWorld;`,
       box(site, -2.4, 2.8, 2.4, 1.65, 1.8, concrete, 0.12, true);
       box(site, 2.5, 2.5, 2.2, 1.2, 1.7, metal, -0.08, true);
       for (const x of [-3.6, 3.6]) box(site, x, -3.2, 3.2, 0.75, 0.62, concrete, x < 0 ? 0.25 : -0.25, true);
+      // 双层天线阵列和红白警示段强化山顶轮廓。
+      for (const lift of [2.2, 5.5, 8.6]) box(site, 0, 0, 2.5 - lift * 0.08, 0.1, 0.1, lift > 5 ? red : canvas, 0, false, lift);
+      for (const x of [-1.5, 1.5]) cylinder(site, x, 1.15, 0.11, 4.6, metal);
     } else {
       for (const x of [-2.5, 2.5]) {
         box(site, x, 0, 3.1, 0.86, 1.2, wood, 0, true);
@@ -1670,6 +1689,10 @@ varying vec3 vTerrainWorld;`,
       box(site, 0, -3.6, 4.8, 1.0, 1.1, metal, 0.08, true);
       cylinder(site, 0, 3.8, 0.22, 5.8, metal);
       box(site, 0, 3.8, 1.6, 0.42, 0.35, red, 0, false, 5.15);
+      // 鱼市入口门架和蓝黄双色横牌连接码头视觉语言。
+      for (const x of [-3.7, 3.7]) cylinder(site, x, -4.9, 0.16, 3.4, woodDark);
+      box(site, 0, -4.9, 7.5, 0.16, 0.2, blue, 0, false, 3.12);
+      box(site, 0, -4.86, 2.7, 0.55, 0.1, canvas, 0, false, 3.22);
     }
   }
 

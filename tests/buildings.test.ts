@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { doorOpenAngleForActor, stairRailX } from '../src/buildings';
+import {
+  doorOpenAngleForActor, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, stairRailX,
+} from '../src/buildings';
+import { REGIONS } from '../src/regions';
 
 describe('建筑门交互方向', () => {
+  it('六个区域拥有独立建筑主色和完整立面风格', () => {
+    expect(Object.keys(REGIONAL_BUILDING_STYLES)).toHaveLength(REGIONS.length);
+    const accents = new Set(REGIONS.map((region) => regionalBuildingStyle(region.id).accent));
+    expect(accents.size).toBe(REGIONS.length);
+    for (const region of REGIONS) {
+      const style = regionalBuildingStyle(region.id);
+      expect(style.walls.length).toBeGreaterThanOrEqual(3);
+      expect(style.roofs.length).toBeGreaterThanOrEqual(2);
+      expect(style.chimneyChance).toBeGreaterThanOrEqual(0);
+      expect(style.acChance).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('沿 X 的门向远离操作者的 Z 方向打开', () => {
     const fromNorth = doorOpenAngleForActor('x', 10, 20, 10, 18, 0.5);
     const fromSouth = doorOpenAngleForActor('x', 10, 20, 10, 22, 0.5);
