@@ -22,9 +22,9 @@ const EVENT_META: Readonly<Record<RegionEventKind, Pick<RegionEvent, 'label' | '
 };
 
 export const REGION_EVENT_LOOT: Readonly<Record<RegionEventKind, readonly LootKind[]>> = {
-  armory: ['rifle', 'ammoRifle', 'vest2', 'helmet2', 'frag', 'attScope2'],
+  armory: ['lmg', 'ammoRifle', 'vest2', 'helmet2', 'frag', 'attScope2'],
   medical: ['medkit', 'bandage', 'drink', 'vest2', 'pack2', 'smoke'],
-  workshop: ['attReddot', 'attScope2', 'attScope4', 'attExtmag', 'attComp', 'attSuppressor'],
+  workshop: ['attScope2', 'attScope4', 'attExtmag', 'attComp', 'attSuppressor', 'flash'],
 };
 
 export function selectRegionEvents(

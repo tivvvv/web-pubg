@@ -174,7 +174,8 @@ export class AirdropManager {
     crate.smokeT = 0; // 开过后烟/图标停止(已舔标记)
     this.game.soundAt(crate.pos, (d, p) => this.game.audio.hiss(d, p));
     // 保底高级套: 狙击或步枪(满弹匣) + 1~2 盒匹配弹药 + 三级甲 + 医疗箱 + 概率饮料/手雷
-    const gunKind = random() < 0.5 ? 'sniper' : 'rifle';
+    const gunRoll = random();
+    const gunKind = gunRoll < 0.38 ? 'sniper' : gunRoll < 0.72 ? 'lmg' : 'rifle';
     const gdef = WEAPONS[gunKind];
     const items: { kind: import('./types').LootKind; mag?: number }[] = [
       { kind: gunKind, mag: gdef.magSize },
@@ -185,6 +186,7 @@ export class AirdropManager {
     if (random() < 0.5) items.push({ kind: AMMO_LOOT_KIND[gdef.ammo] });
     if (random() < 0.6) items.push({ kind: 'drink' });
     if (random() < 0.4) items.push({ kind: 'frag' });
+    if (random() < 0.45) items.push({ kind: 'flash' });
     for (let i = 0; i < items.length; i++) {
       const a = (i / items.length) * Math.PI * 2 + random() * 0.6;
       const r = 1.6 + random() * 0.7;

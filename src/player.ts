@@ -7,7 +7,7 @@ import type { Input } from './input';
 import { isGunKind, isMeleeKind, isWeaponKind } from './loot';
 import { ARMORS, armorFromLoot } from './armor';
 import { PACKS, isPackKind, packLevelFromLoot } from './backpack';
-import { MELEE, WEAPONS } from './weapons';
+import { MELEE, THROWABLE_IDS, WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF } from './world';
 import { driveVehicleStep, VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
@@ -167,6 +167,7 @@ export class PlayerController {
       this.updateCamera(dt, game);
       return;
     }
+    c.flashT = Math.max(0, c.flashT - dt);
 
     // ---- 视角 ----
     const { dx, dy } = input.consumeMouse();
@@ -220,7 +221,7 @@ export class PlayerController {
     }
 
     const gun = c.heldGun();
-    const interactionBusy = this.interactionLockT > 0 || c.reviveTarget !== null;
+    const interactionBusy = this.interactionLockT > 0 || c.reviveTarget !== null || c.flashT > 0;
     this.aiming = input.rmb && !this.reloading && !interactionBusy &&
       gun !== null && !c.swimming && !c.knocked;
     if (gun) this.aimF = smoothAimProgress(this.aimF, this.aiming, gun.def.id, dt);
@@ -273,6 +274,7 @@ export class PlayerController {
           speed *= wadingSpeedMultiplier(wadeDepth);
         }
       }
+      if (c.flashT > 0) speed *= 0.35;
       targetVx = wx * speed;
       targetVz = wz * speed;
     }
@@ -295,7 +297,7 @@ export class PlayerController {
     this.jumpHeld = jumpDown;
     this.jumpBufferT = Math.max(0, this.jumpBufferT - dt);
     this.coyoteT = c.grounded ? 0.1 : Math.max(0, this.coyoteT - dt);
-    if (this.jumpBufferT > 0 && this.coyoteT > 0 && !c.swimming && !c.knocked && c.vaultCd <= 0) {
+    if (this.jumpBufferT > 0 && this.coyoteT > 0 && !c.swimming && !c.knocked && c.flashT <= 0 && c.vaultCd <= 0) {
       // 先尝试翻越: 站/蹲朝可翻越障碍(趴下/恢复读条中不可翻越)
       let vaulted = false;
       if (c.stance !== 'prone' && wlen > 0.001 && game.healT <= 0) {
@@ -761,9 +763,11 @@ export class PlayerController {
       game.throwGrenade(c, c.throwKind, this.throwOrigin, this.throwDir, speed);
       c.throwables[c.throwKind]--;
       c.swingT = 1; // 挥臂动作
-      // 用尽后自动切到另一种
-      const other = c.throwKind === 'frag' ? 'smoke' : 'frag';
-      if (c.throwables[c.throwKind] === 0 && c.throwables[other] > 0) c.throwKind = other;
+      // 用尽后自动切到下一种可用投掷物。
+      if (c.throwables[c.throwKind] === 0) {
+        const next = THROWABLE_IDS.find((id) => c.throwables[id] > 0);
+        if (next) c.throwKind = next;
+      }
       return true;
     }
     game.grenades.hidePreview();

@@ -30,12 +30,14 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=botswim',
   'scenario=combat&weapon=rifle&burst=8',
   'scenario=combat&weapon=akm&burst=8',
+  'scenario=combat&weapon=lmg&burst=12',
   'scenario=combat&weapon=smg&burst=10',
   'scenario=combat&weapon=dmr&burst=4&sight=scope4',
   'scenario=combat&weapon=sniper&burst=2&sight=scope4',
   'scenario=combat&weapon=shotgun&burst=2',
   'scenario=combat&weapon=pistol&burst=4&sight=reddot',
   'scenario=effects',
+  'scenario=effects&flash=1',
   'scenario=bottactics',
   'scenario=botvehicle',
   'scenario=botvehicle&route=bridge&contact=1',
@@ -70,7 +72,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   stairs: '楼梯回归: 检查楼层接缝, 楼梯净空和上下楼碰撞',
   swim: '游泳回归: 检查入水姿态, Shift 加速和连续上岸',
   botswim: '机器人游泳回归: 多机器人同时入水上岸, 检查状态抖动, 反向抽搐和岸边碰撞',
-  combat: '枪战回归: M416 + 全套配件, 检查 ADS, 后坐和命中反馈',
+  combat: '枪战回归: 枪械 + 全套配件, 检查 ADS, 后坐和命中反馈',
   effects: '特效验收: 循环检查爆炸火球, 冲击波, 烟柱, 弹着烟尘和近距离屏幕反馈',
   bottactics: '机器人战术: 同时检查交战, 恢复, 搜索和圈外转移',
   botvehicle: '机器人载具: 检查搜车, 上车, 长途转移, 绕障和到点下车',
@@ -299,6 +301,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.characterAirPose = character.airPose ?? 'none';
       panel.dataset.characterKnocked = String(character.knocked);
       panel.dataset.characterHp = character.hp.toFixed(1);
+      panel.dataset.characterFlash = character.flashT.toFixed(2);
       panel.dataset.characterGrounded = String(character.grounded);
       panel.dataset.characterPosition = [character.pos.x, character.pos.y, character.pos.z]
         .map((value) => value.toFixed(2)).join(',');
@@ -446,6 +449,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.botPositions = bots.map((bot) => `${bot.char.pos.x.toFixed(1)},${bot.char.pos.z.toFixed(1)}`).join('|');
       panel.dataset.botSpeeds = bots.map((bot) => bot.char.speed2d.toFixed(2)).join('|');
       panel.dataset.botSmoke = bots.map((bot) => bot.char.throwables.smoke).join('|');
+      panel.dataset.botFlash = bots.map((bot) => bot.char.throwables.flash).join('|');
       window.requestAnimationFrame(publishTactics);
     };
     window.requestAnimationFrame(publishTactics);
@@ -1045,7 +1049,7 @@ function setupCombat(game: Game): void {
   }
 }
 
-function setupEffects(game: Game): void {
+function setupEffects(game: Game, params: URLSearchParams): void {
   const lane = testLane(game);
   const direction = laneDirection(lane);
   setGroundPlayer(game, lane[0], lane[1]);
@@ -1093,6 +1097,15 @@ function setupEffects(game: Game): void {
 
   window.setTimeout(playCycle, 620);
   window.setInterval(playCycle, 2200);
+  if (params.get('flash') === '1') {
+    const flashPoint = new THREE.Vector3(
+      lane[0] + direction.x * 4,
+      0,
+      lane[1] + direction.z * 4,
+    );
+    flashPoint.y = game.world.getHeight(flashPoint.x, flashPoint.z) + 0.55;
+    window.setTimeout(() => game.grenades.spawn(player.char, 'flash', flashPoint, stationary, 0), 350);
+  }
 }
 
 function setupBotTactics(game: Game): void {
@@ -1566,6 +1579,7 @@ function setupMapTour(game: Game): void {
 export function applyTestScenarioFromUrl(game: Game): void {
   const id = scenarioFromUrl();
   if (!id) return;
+  const params = new URLSearchParams(window.location.search);
   if (id === 'stability') setRandomSeed(parseRandomSeed(window.location.search, 1337) ?? 1337);
   game.startMatch();
   if (id !== 'stability') parkEnemies(game);
@@ -1574,7 +1588,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'swim') setupSwim(game);
   else if (id === 'botswim') setupBotSwim(game);
   else if (id === 'combat') setupCombat(game);
-  else if (id === 'effects') setupEffects(game);
+  else if (id === 'effects') setupEffects(game, params);
   else if (id === 'bottactics') setupBotTactics(game);
   else if (id === 'botvehicle') setupBotVehicle(game);
   else if (id === 'squadcommand') setupSquadCommand(game);

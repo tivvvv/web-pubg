@@ -16,7 +16,7 @@ export interface WeaponModel {
 
 // 枪口火光缩放(狙击更大, 手枪更小, 霰弹最大)
 export const MUZZLE_SCALE: Record<WeaponId, number> = {
-  pistol: 0.65, smg: 0.85, rifle: 1.0, akm: 1.12, dmr: 1.18, sniper: 1.5, shotgun: 1.35,
+  pistol: 0.65, smg: 0.85, rifle: 1.0, akm: 1.12, lmg: 1.24, dmr: 1.18, sniper: 1.5, shotgun: 1.35,
 };
 
 // 共享几何: 单位盒 / 单位圆柱(沿 Y, 半径 1 高 1) / 单位球
@@ -116,6 +116,30 @@ function buildRifle(): WeaponModel {
   b(g, MAT_DK, 0.008, 0.006, 0.07, 0, -0.062, 0.02);        // 扳机护圈底
   b(g, MAT_LT, 0.004, 0.02, 0.012, -0.0285, 0.005, -0.02);  // 快慢机拨杆
   return { group: g, muzzle: muzzleAt(g, 0, 0.025, 0.7), mag };
+}
+
+// ── M249 轻机枪: 长重枪管、箱式弹盒、提把和展开两脚架 ──
+function buildLmg(): WeaponModel {
+  const g = new THREE.Group();
+  b(g, MAT_DK, 0.065, 0.09, 0.32, 0, 0.025, 0.08);
+  b(g, MAT_LT, 0.058, 0.012, 0.3, 0, 0.083, 0.08);
+  b(g, MAT_PO, 0.065, 0.07, 0.3, 0, 0.01, 0.38);
+  b(g, MAT_DK, 0.01, 0.022, 0.22, -0.052, 0.02, 0.37);
+  b(g, MAT_DK, 0.01, 0.022, 0.22, 0.052, 0.02, 0.37);
+  cz(g, MAT_DK, 0.014, 0.34, 0, 0.032, 0.7);
+  cz(g, MAT_LT, 0.022, 0.065, 0, 0.032, 0.9);
+  const mag = b(g, MAT_FG, 0.095, 0.12, 0.12, 0, -0.105, 0.12);
+  mag.name = 'mag';
+  b(g, MAT_DK, 0.1, 0.014, 0.125, 0, -0.035, 0.12);
+  b(g, MAT_PO, 0.052, 0.09, 0.3, 0, 0.015, -0.23);
+  b(g, MAT_DK, 0.056, 0.105, 0.022, 0, 0.005, -0.395);
+  b(g, MAT_PO, 0.035, 0.09, 0.05, 0, -0.055, -0.03, 0.28);
+  // 提把和两脚架让地面轮廓易于识别。
+  b(g, MAT_LT, 0.01, 0.065, 0.15, 0, 0.145, 0.2, -0.25);
+  b(g, MAT_DK, 0.012, 0.012, 0.19, -0.055, -0.055, 0.57, 0.42);
+  b(g, MAT_DK, 0.012, 0.012, 0.19, 0.055, -0.055, 0.57, 0.42);
+  b(g, MAT_LT, 0.009, 0.035, 0.009, 0, 0.095, 0.63);
+  return { group: g, muzzle: muzzleAt(g, 0, 0.032, 0.94), mag };
 }
 
 // ── AKM: 木质护木与枪托、弯曲弹匣，轮廓和 M416 明显区分 ──
@@ -308,6 +332,19 @@ function buildSmoke(): WeaponModel {
   return { group: g, muzzle: muzzleAt(g, 0, 0.1, 0), mag: null };
 }
 
+// ── 闪光弹: 浅灰短罐体 + 蓝色识别带，避免与烟雾弹混淆 ──
+function buildFlash(): WeaponModel {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xd9ddd7, roughness: 0.48, metalness: 0.42 });
+  const bandMat = new THREE.MeshStandardMaterial({ color: 0x4ca7d8, roughness: 0.55, metalness: 0.18 });
+  cz(g, bodyMat, 0.052, 0.135, 0, 0, 0);
+  cz(g, bandMat, 0.054, 0.035, 0, 0.015, 0);
+  cz(g, MAT_DK, 0.022, 0.024, 0, 0.078, 0);
+  b(g, MAT_DK, 0.013, 0.018, 0.058, 0.046, 0.069, 0, 0.42);
+  cx(g, MAT_LT, 0.009, 0.035, -0.025, 0.088, 0);
+  return { group: g, muzzle: muzzleAt(g, 0, 0.1, 0), mag: null };
+}
+
 // ── S686 双管霰弹枪 (~0.75m): 并排双管/木制枪托+护木/中折铰链/珠形准星 ──
 function buildShotgun(): WeaponModel {
   const g = new THREE.Group();
@@ -343,6 +380,7 @@ function proto(id: WeaponModelId): WeaponModel {
     switch (id) {
       case 'rifle': p = buildRifle(); break;
       case 'akm': p = buildAkm(); break;
+      case 'lmg': p = buildLmg(); break;
       case 'smg': p = buildSmg(); break;
       case 'dmr': p = buildDmr(); break;
       case 'sniper': p = buildSniper(); break;
@@ -353,6 +391,7 @@ function proto(id: WeaponModelId): WeaponModel {
       case 'crowbar': p = buildCrowbar(); break;
       case 'frag': p = buildFrag(); break;
       case 'smoke': p = buildSmoke(); break;
+      case 'flash': p = buildFlash(); break;
     }
     protos.set(id, p);
   }

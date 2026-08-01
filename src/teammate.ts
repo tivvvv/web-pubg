@@ -130,6 +130,13 @@ export class TeammateController {
       this.updateDescent(dt, game);
       return;
     }
+    c.flashT = Math.max(0, c.flashT - dt);
+    if (c.flashT > 0 && !this.riding) {
+      this.cancelTransientActions();
+      this.commandState = 'safety';
+      c.applyMove(0, 0, dt, game.world);
+      return;
+    }
     this.fireTimer = Math.max(0, this.fireTimer - dt);
 
     // ---- 载具乘降 ----
@@ -988,7 +995,7 @@ export class TeammateController {
     if (k === 'bandage') return c.heals.bandage < 5;
     if (k === 'medkit') return c.heals.medkit < 2;
     if (k === 'drink') return c.heals.drink < 3;
-    if (k === 'frag' || k === 'smoke') return c.throwables[k] < THROWABLES[k].max;
+    if (k === 'frag' || k === 'smoke' || k === 'flash') return c.throwables[k] < THROWABLES[k].max;
     return false;
   }
 

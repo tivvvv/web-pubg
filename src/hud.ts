@@ -94,6 +94,7 @@ export class Hud {
   private dmgArc = el('dmg-arc');
   private healthVignette = el('health-vignette');
   private blastFlash = el('blast-flash');
+  private stunFlash = el('stun-flash');
   private toastEl = el('toast');
   private flowCue = el('flow-cue');
   private flowCueTitle = el('flow-cue-title');
@@ -135,6 +136,7 @@ export class Hud {
   private hitTimer = 0;
   private dmgTimer = 0;
   private blastTimer = 0;
+  private stunTimer = 0;
   private healCountsKey = '';
   private environmentKey = '';
   private bombardmentKey = '';
@@ -574,6 +576,16 @@ export class Hud {
     this.blastTimer = 0.58;
   }
 
+  flashStun(duration: number): void {
+    const seconds = Math.max(0.18, Math.min(3.8, duration));
+    this.stunFlash.style.setProperty('--stun-duration', `${seconds.toFixed(2)}s`);
+    this.stunFlash.style.setProperty('--stun-strength', Math.min(1, 0.28 + seconds / 3.8).toFixed(2));
+    this.stunFlash.classList.remove('show');
+    void this.stunFlash.offsetWidth;
+    this.stunFlash.classList.add('show');
+    this.stunTimer = seconds;
+  }
+
   private showToast(message: string, tone: ToastTone): void {
     this.toastEl.textContent = message;
     this.toastEl.dataset.tone = tone;
@@ -658,6 +670,10 @@ export class Hud {
     if (this.blastTimer > 0) {
       this.blastTimer -= dt;
       if (this.blastTimer <= 0) this.blastFlash.classList.remove('show');
+    }
+    if (this.stunTimer > 0) {
+      this.stunTimer -= dt;
+      if (this.stunTimer <= 0) this.stunFlash.classList.remove('show');
     }
   }
 }

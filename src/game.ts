@@ -86,7 +86,7 @@ import { VEHICLE_SPEC, VehicleManager, type Vehicle } from './vehicles';
 import type { AmmoType, DestructibleLike, GameStats, ThrowableId } from './types';
 import { clamp, dist2D, rand } from './utils';
 import {
-  AMMO_BOX, AMMO_NAME, MELEE, THROWABLES, WEAPONS, ammoTypeFromLoot, applySpread, hitscan,
+  AMMO_BOX, AMMO_NAME, MELEE, THROWABLES, THROWABLE_IDS, WEAPONS, ammoTypeFromLoot, applySpread, hitscan,
   makeShotResult, pelletFalloff, weaponMaxRange,
 } from './weapons';
 import { MUZZLE_SCALE } from './weaponmodels';
@@ -596,7 +596,7 @@ export class Game {
         name: AMMO_NAME[t],
         count: c.ammo[t],
       })),
-      throwables: (['frag', 'smoke'] as const).map((t) => ({
+      throwables: THROWABLE_IDS.map((t) => ({
         name: THROWABLES[t].name,
         count: c.throwables[t],
       })),
@@ -898,6 +898,9 @@ export class Game {
       bot.dropTarget.set(p.x, 0, p.z);
       if (random() < bot.difficulty.fragCarryChance) bot.char.throwables.frag = 1;
       if (random() < bot.difficulty.smokeCarryChance) bot.char.throwables.smoke = 1;
+      if (random() < (bot.difficultyTier === 'elite' ? 0.38 : bot.difficultyTier === 'veteran' ? 0.22 : 0.04)) {
+        bot.char.throwables.flash = 1;
+      }
       if (random() < 0.5) bot.char.heals.bandage = 1 + Math.floor(random() * 2); // 50% 带 1~2 绷带
       if (random() < 0.35) bot.char.pack = { level: random() < 0.7 ? 1 : 2 }; // 35% 带 L1~L2 背包
       // 40% bot 开局自带 L1~L2 头盔/防弹衣
@@ -1557,22 +1560,28 @@ export class Game {
 
   // ---- 投掷物 ----
 
-  // 按 5: 未选中则切到投掷栏; 已选中则在手雷/烟雾弹间循环
+  // 按 5: 未选中则切到投掷栏; 已选中则在可用投掷物间循环。
   private selectThrowable(): void {
     const player = this.player;
     if (!player) return;
     const c = player.char;
     if (c.curSlot === 4) {
-      const other: ThrowableId = c.throwKind === 'frag' ? 'smoke' : 'frag';
-      if (c.throwables[other] > 0) c.throwKind = other;
+      const start = THROWABLE_IDS.indexOf(c.throwKind);
+      for (let step = 1; step <= THROWABLE_IDS.length; step++) {
+        const next = THROWABLE_IDS[(start + step) % THROWABLE_IDS.length] as ThrowableId;
+        if (c.throwables[next] > 0) {
+          c.throwKind = next;
+          break;
+        }
+      }
       return;
     }
-    if (c.throwables.frag + c.throwables.smoke === 0) {
+    if (THROWABLE_IDS.every((id) => c.throwables[id] === 0)) {
       this.hud.toast('没有投掷物');
       return;
     }
     if (c.throwables[c.throwKind] === 0) {
-      c.throwKind = c.throwKind === 'frag' ? 'smoke' : 'frag';
+      c.throwKind = THROWABLE_IDS.find((id) => c.throwables[id] > 0) ?? 'frag';
     }
     player.switchSlot(4, this);
   }
@@ -2088,7 +2097,7 @@ export class Game {
   // 弹药/恢复品/投掷物: 走近自动拾取(玩家受负重限制, bot 不受限)
   applyAutoPickup(c: Character, item: LootItem): boolean {
     if (isAttachKind(item.kind)) return c.isPlayer ? false : this.tryPickupAttachment(c, item);
-    if (item.kind === 'frag' || item.kind === 'smoke') {
+    if (item.kind === 'frag' || item.kind === 'smoke' || item.kind === 'flash') {
       const kind: ThrowableId = item.kind;
       const def = THROWABLES[kind];
       const stack = item.ammo > 0 ? item.ammo : 1; // ammo 字段复用为叠放数量

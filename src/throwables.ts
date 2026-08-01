@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// throwables.ts - 投掷物: 手雷/烟雾弹的弹道模拟(对象池), 轨迹预览, 烟雾云与 LOS 遮挡
+// throwables.ts - 投掷物: 手雷/烟雾弹/闪光弹的弹道模拟(对象池), 轨迹预览, 烟雾云与 LOS 遮挡
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import type { Character } from './character';
@@ -17,6 +17,15 @@ const RESTITUTION = 0.45;     // 法向弹性
 const PREVIEW_DOTS = 20;
 const SMOKE_TIME = 25;        // 烟幕总时长(含 3s 消散)
 const SMOKE_R = 7;
+const FLASH_R = 13;
+
+// 闪光效果同时考虑距离、朝向和静态遮挡。面朝爆点时最长，背身仍保留短促失能。
+export function flashStunDuration(distance: number, facingDot: number, occluded: boolean): number {
+  if (occluded || distance >= FLASH_R) return 0;
+  const rangeF = Math.max(0, 1 - distance / FLASH_R);
+  const facingF = 0.22 + 0.78 * Math.max(0, Math.min(1, (facingDot + 0.15) / 1.15));
+  return Math.max(0.18, (0.35 + 3.45 * rangeF) * facingF);
+}
 
 // 单步推进(重力 + 地形/AABB/圆柱反弹), 真实模拟与轨迹预览共用同一物理
 export function stepProjectile(w: World, pos: THREE.Vector3, vel: THREE.Vector3, dt: number): boolean {
@@ -115,6 +124,7 @@ interface GrenadeSlot {
   group: THREE.Group;
   fragMesh: THREE.Group;
   smokeMesh: THREE.Group;
+  flashMesh: THREE.Group;
 }
 
 interface Cloud {
@@ -158,18 +168,21 @@ export class GrenadeManager {
   constructor(scene: THREE.Scene) {
     const fragProto = buildWeaponModel('frag');
     const smokeProto = buildWeaponModel('smoke');
+    const flashProto = buildWeaponModel('flash');
     for (let i = 0; i < MAX_GRENADES; i++) {
       const group = new THREE.Group();
       const fragMesh = fragProto.group.clone(true);
       const smokeMesh = smokeProto.group.clone(true);
+      const flashMesh = flashProto.group.clone(true);
       group.add(fragMesh);
       group.add(smokeMesh);
+      group.add(flashMesh);
       group.visible = false;
       scene.add(group);
       this.slots.push({
         active: false, kind: 'frag', pos: new THREE.Vector3(), vel: new THREE.Vector3(),
         thrower: null, fuse: 0, age: 0, bounceAge: 0, bounced: false, rest: false, restT: 0,
-        popped: false, group, fragMesh, smokeMesh,
+        popped: false, group, fragMesh, smokeMesh, flashMesh,
       });
     }
     // 烟幕 sprite 池
@@ -228,7 +241,7 @@ export class GrenadeManager {
     s.pos.copy(origin);
     s.vel.copy(dir).multiplyScalar(speed);
     s.thrower = thrower;
-    s.fuse = 3.5;
+    s.fuse = kind === 'flash' ? 1.65 : 3.5;
     s.age = 0;
     s.bounceAge = 0;
     s.bounced = false;
@@ -237,6 +250,7 @@ export class GrenadeManager {
     s.popped = false;
     s.fragMesh.visible = kind === 'frag';
     s.smokeMesh.visible = kind === 'smoke';
+    s.flashMesh.visible = kind === 'flash';
     s.group.visible = true;
     s.group.position.copy(origin);
   }
@@ -323,11 +337,12 @@ export class GrenadeManager {
     for (const s of this.slots) {
       if (!s.active) continue;
       s.age += dt;
-      // 手雷引信
-      if (s.kind === 'frag') {
+      // 手雷与闪光弹使用定时引信。
+      if (s.kind === 'frag' || s.kind === 'flash') {
         s.fuse -= dt;
         if (s.fuse <= 0) {
-          this.explode(s, game);
+          if (s.kind === 'frag') this.explode(s, game);
+          else this.detonateFlash(s, game);
           s.active = false;
           s.group.visible = false;
           continue;
@@ -446,6 +461,29 @@ export class GrenadeManager {
         this.tmpO.set(dst.cx, dst.cy, dst.cz);
         game.hitDestructible(dst, 999, this.tmpO);
       }
+    }
+  }
+
+  private detonateFlash(s: GrenadeSlot, game: Game): void {
+    this.tmpO.copy(s.pos);
+    this.tmpO.y += 0.18;
+    game.effects.muzzleFlash(this.tmpO, 5.2);
+    game.soundAt(s.pos, (d, p) => game.audio.flashbang(d, p));
+    for (const c of game.chars) {
+      if (!c.alive) continue;
+      c.chestPos(this.tmpP);
+      this.tmpV.subVectors(this.tmpO, this.tmpP);
+      const distance = this.tmpV.length();
+      if (distance >= FLASH_R || distance < 1e-5) continue;
+      this.tmpV.multiplyScalar(1 / distance);
+      const facingX = Math.sin(c.yaw);
+      const facingZ = Math.cos(c.yaw);
+      const facingDot = facingX * this.tmpV.x + facingZ * this.tmpV.z;
+      const blocked = game.isLOSBlocked(this.tmpO, this.tmpP, this.tmpV);
+      const duration = flashStunDuration(distance, facingDot, blocked);
+      if (duration <= 0) continue;
+      c.flashT = Math.max(c.flashT, duration);
+      if (c.isPlayer) game.hud.flashStun(duration);
     }
   }
 }

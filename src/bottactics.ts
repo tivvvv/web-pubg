@@ -47,6 +47,7 @@ const PREFERRED_RANGE: Record<WeaponId, number> = {
   pistol: 18,
   rifle: 32,
   akm: 28,
+  lmg: 35,
   smg: 17,
   dmr: 48,
   sniper: 66,

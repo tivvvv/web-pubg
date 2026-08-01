@@ -28,6 +28,7 @@ export const WEAPON_HANDLING: Record<WeaponId, WeaponHandling> = {
   pistol: { aimIn: 13, aimOut: 16, sway: 0.00045, movePenalty: 0.85 },
   rifle: { aimIn: 9.5, aimOut: 14, sway: 0.00062, movePenalty: 1 },
   akm: { aimIn: 8.5, aimOut: 13, sway: 0.00072, movePenalty: 1.08 },
+  lmg: { aimIn: 6.8, aimOut: 10.5, sway: 0.00078, movePenalty: 1.18 },
   smg: { aimIn: 11.5, aimOut: 15, sway: 0.00058, movePenalty: 0.9 },
   dmr: { aimIn: 7.4, aimOut: 12, sway: 0.00052, movePenalty: 1.04 },
   sniper: { aimIn: 5.8, aimOut: 10, sway: 0.00042, movePenalty: 1.15 },
@@ -56,6 +57,10 @@ export const WEAPON_RECOIL: Record<WeaponId, WeaponRecoilProfile> = {
   akm: {
     vertical: 1.18, horizontal: 0.5, bloom: 0.52, gunKick: 0.07,
     pitchRecovery: 8.4, yawRecovery: 11, bloomRecovery: 7.6,
+  },
+  lmg: {
+    vertical: 1.06, horizontal: 0.46, bloom: 0.5, gunKick: 0.062,
+    pitchRecovery: 8.8, yawRecovery: 11.5, bloomRecovery: 7.8,
   },
   smg: {
     vertical: 0.78, horizontal: 0.5, bloom: 0.52, gunKick: 0.045,

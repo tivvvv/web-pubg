@@ -107,6 +107,7 @@ function bandMat(t: AmmoType): THREE.MeshBasicMaterial {
 const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   rifle: new THREE.MeshBasicMaterial({ color: 0xff7a29, transparent: true, opacity: 0.5 }),
   akm: new THREE.MeshBasicMaterial({ color: 0xff6038, transparent: true, opacity: 0.5 }),
+  lmg: new THREE.MeshBasicMaterial({ color: 0xf0a532, transparent: true, opacity: 0.5 }),
   smg: new THREE.MeshBasicMaterial({ color: 0x37e0d8, transparent: true, opacity: 0.5 }),
   dmr: new THREE.MeshBasicMaterial({ color: 0x8f78ff, transparent: true, opacity: 0.5 }),
   sniper: new THREE.MeshBasicMaterial({ color: 0xc05cff, transparent: true, opacity: 0.5 }),
@@ -126,6 +127,7 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   drink: new THREE.MeshBasicMaterial({ color: 0x5ee0c0, transparent: true, opacity: 0.5 }),
   frag: new THREE.MeshBasicMaterial({ color: 0x86c03c, transparent: true, opacity: 0.5 }),
   smoke: new THREE.MeshBasicMaterial({ color: 0xd7dde3, transparent: true, opacity: 0.5 }),
+  flash: new THREE.MeshBasicMaterial({ color: 0x86d8ff, transparent: true, opacity: 0.5 }),
   // 护具: 蓝白色系光环
   helmet1: new THREE.MeshBasicMaterial({ color: 0x8fc8ff, transparent: true, opacity: 0.5 }),
   helmet2: new THREE.MeshBasicMaterial({ color: 0x8fc8ff, transparent: true, opacity: 0.5 }),
@@ -156,7 +158,7 @@ function buildLootMesh(kind: LootKind): THREE.Group {
     wm.group.rotation.set(-0.32, 0, 0.55);
     wm.group.position.y = 0.05;
     holder.add(wm.group);
-  } else if (kind === 'frag' || kind === 'smoke') {
+  } else if (kind === 'frag' || kind === 'smoke' || kind === 'flash') {
     // 投掷物模型
     const wm = buildWeaponModel(kind);
     wm.group.rotation.set(-0.3, 0, 0.5);
@@ -268,7 +270,7 @@ function buildLootMesh(kind: LootKind): THREE.Group {
 }
 
 export function isGunKind(kind: LootKind): kind is WeaponId {
-  return kind === 'rifle' || kind === 'akm' || kind === 'smg' || kind === 'dmr' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun';
+  return kind === 'rifle' || kind === 'akm' || kind === 'lmg' || kind === 'smg' || kind === 'dmr' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun';
 }
 
 export function isMeleeKind(kind: LootKind): kind is Exclude<MeleeId, 'fists'> {
@@ -611,21 +613,21 @@ export class LootManager {
   private rollKind(table: 'wild' | 'indoor' | 'premium', tier: LootTier, profile: LootProfile): LootKind {
     type Entry = readonly [LootKind, number];
     const common: Entry[] = table === 'wild'
-      ? [['ammoRifle', 12], ['ammoSmg', 9], ['ammoPistol', 7], ['ammoShotgun', 5], ['bandage', 8], ['drink', 4], ['helmet1', 5], ['vest1', 5], ['pack1', 4], ['frag', 3], ['smoke', 3]]
-      : [['ammoRifle', 8], ['ammoSmg', 6], ['ammoPistol', 4], ['ammoShotgun', 3], ['bandage', 5], ['drink', 3], ['medkit', 1.5], ['helmet1', 4], ['vest1', 4], ['pack1', 3], ['frag', 3], ['smoke', 3], ['attReddot', 3], ['attExtmag', 2.5], ['attComp', 2]];
+      ? [['ammoRifle', 12], ['ammoSmg', 9], ['ammoPistol', 7], ['ammoShotgun', 5], ['bandage', 8], ['drink', 4], ['helmet1', 5], ['vest1', 5], ['pack1', 4], ['frag', 3], ['smoke', 3], ['flash', 1.5]]
+      : [['ammoRifle', 8], ['ammoSmg', 6], ['ammoPistol', 4], ['ammoShotgun', 3], ['bandage', 5], ['drink', 3], ['medkit', 1.5], ['helmet1', 4], ['vest1', 4], ['pack1', 3], ['frag', 3], ['smoke', 3], ['flash', 2], ['attReddot', 3], ['attExtmag', 2.5], ['attComp', 2]];
     const low: Entry[] = [['pistol', 11], ['smg', 8], ['shotgun', 8], ['rifle', 3], ['knife', 4], ['crowbar', 4], ['pan', 2], ['pack2', 1], ['helmet2', 1], ['vest2', 1]];
     const medium: Entry[] = [['pistol', 6], ['smg', 9], ['shotgun', 7], ['rifle', 8], ['akm', 5], ['dmr', 2], ['knife', 2], ['crowbar', 2], ['pan', 2], ['pack2', 3], ['helmet2', 3], ['vest2', 3], ['attScope2', 2], ['attSuppressor', 1]];
-    const high: Entry[] = [['smg', 5], ['shotgun', 4], ['rifle', 10], ['akm', 9], ['dmr', 7], ['sniper', 3], ['pan', 2], ['pack2', 4], ['pack3', 2], ['helmet2', 4], ['vest2', 4], ['helmet3', 2], ['vest3', 2], ['attScope2', 3], ['attScope4', 2], ['attSuppressor', 2], ['attExtmag', 2]];
+    const high: Entry[] = [['smg', 5], ['shotgun', 4], ['rifle', 10], ['akm', 9], ['lmg', 4], ['dmr', 7], ['sniper', 3], ['pan', 2], ['pack2', 4], ['pack3', 2], ['helmet2', 4], ['vest2', 4], ['helmet3', 2], ['vest3', 2], ['attScope2', 3], ['attScope4', 2], ['attSuppressor', 2], ['attExtmag', 2]];
     const profileBonus: Record<LootProfile, Entry[]> = {
       urban: [['rifle', 4], ['smg', 4], ['frag', 2], ['attReddot', 2]],
-      arena: [['akm', 5], ['rifle', 4], ['shotgun', 4], ['helmet2', 2], ['vest2', 2]],
+      arena: [['akm', 5], ['rifle', 4], ['lmg', 3], ['shotgun', 4], ['flash', 2], ['helmet2', 2], ['vest2', 2]],
       farm: [['shotgun', 5], ['rifle', 3], ['crowbar', 4], ['bandage', 3]],
       forest: [['smg', 3], ['pistol', 3], ['knife', 3], ['smoke', 3], ['drink', 2]],
       ridge: [['dmr', 6], ['sniper', 4], ['attScope4', 3], ['attComp', 2]],
       harbor: [['smg', 5], ['shotgun', 4], ['pan', 3], ['medkit', 2], ['smoke', 2]],
     };
     const entries = [...common, ...(tier === 'high' ? high : tier === 'medium' ? medium : low), ...profileBonus[profile]];
-    if (table === 'premium') entries.push(['dmr', 4], ['sniper', 3], ['helmet3', 2], ['vest3', 2], ['pack3', 2], ['attScope4', 2], ['medkit', 2]);
+    if (table === 'premium') entries.push(['lmg', 4], ['dmr', 4], ['sniper', 3], ['flash', 2], ['helmet3', 2], ['vest3', 2], ['pack3', 2], ['attScope4', 2], ['medkit', 2]);
     const total = entries.reduce((sum, e) => sum + e[1], 0);
     let r = random() * total;
     for (const [kind, weight] of entries) {
@@ -656,7 +658,7 @@ export class LootManager {
       item.ammo = Math.max(0, ammo);
       item.att = att ? { sight: att.sight, mag: att.mag, muzzle: att.muzzle } : null;
       if (att) attachWeaponMods(item.group, att); // 地面枪模型也带配件
-    } else if (kind === 'frag' || kind === 'smoke') {
+    } else if (kind === 'frag' || kind === 'smoke' || kind === 'flash') {
       item.mag = -1;
       // 投掷物掉落用 ammo 字段携带堆叠数(死亡掉落时为 >1 的 stack)
       item.ammo = Math.max(1, ammo);

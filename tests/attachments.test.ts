@@ -6,6 +6,7 @@ describe('武器配件规则', () => {
   it('扩容弹匣按枪型增加正确容量', () => {
     expect(magSizeOf({ def: WEAPONS.rifle, mag: 30, att: { ...emptyAttachments(), mag: 'extmag' } })).toBe(40);
     expect(magSizeOf({ def: WEAPONS.sniper, mag: 5, att: { ...emptyAttachments(), mag: 'extmag' } })).toBe(7);
+    expect(magSizeOf({ def: WEAPONS.lmg, mag: 50, att: { ...emptyAttachments(), mag: 'extmag' } })).toBe(75);
   });
 
   it('瞄具提供真实 ADS 倍率', () => {

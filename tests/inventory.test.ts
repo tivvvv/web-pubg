@@ -16,8 +16,13 @@ describe('局内物资与容量规则', () => {
     expect(carryWeight({
       ammo: { pistol: 10, rifle: 20, smg: 30, sniper: 5, shotgun: 5 },
       heals: { bandage: 4, medkit: 1, drink: 2 },
-      throwables: { frag: 1, smoke: 2 },
+      throwables: { frag: 1, smoke: 2, flash: 0 },
     })).toBe(85);
+    expect(carryWeight({
+      ammo: { pistol: 0, rifle: 0, smg: 0, sniper: 0, shotgun: 0 },
+      heals: { bandage: 0, medkit: 0, drink: 0 },
+      throwables: { frag: 0, smoke: 0, flash: 2 },
+    })).toBe(12);
   });
 
   it('恢复品数值和护具等级保持递进', () => {

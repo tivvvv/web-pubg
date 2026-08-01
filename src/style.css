@@ -1299,6 +1299,28 @@ body {
   }
 }
 
+/* 闪光弹: 纯白曝光后缓慢恢复，持续时间由实际距离和朝向决定。 */
+#stun-flash {
+  --stun-duration: 1s;
+  --stun-strength: 0;
+  position: absolute;
+  inset: 0;
+  z-index: 28;
+  pointer-events: none;
+  opacity: 0;
+  background: #fff;
+  mix-blend-mode: screen;
+}
+
+#stun-flash.show {
+  animation: stun-flash var(--stun-duration) ease-out forwards;
+}
+
+@keyframes stun-flash {
+  0%, 18% { opacity: var(--stun-strength); }
+  100% { opacity: 0; }
+}
+
 /* 读条/进度条圆角微光 */
 .heal-bar,
 .buff-bar {

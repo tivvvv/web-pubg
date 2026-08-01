@@ -2,7 +2,7 @@
 // backpack.ts - 背包装备: 三级定义, 负重容量/重量计算, 地面与人物背部模型
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import type { AmmoType, LootKind } from './types';
+import type { AmmoType, LootKind, ThrowableId } from './types';
 import type { HealId } from './heals';
 
 export type PackLevel = 1 | 2 | 3;
@@ -41,13 +41,13 @@ export function packLootKind(level: PackLevel): LootKind {
 // 单位重量: 每发子弹 0.5(不分弹种), 绷带 2, 饮料 3, 医疗包 8, 手雷 12, 烟雾弹 8
 export const ROUND_WEIGHT = 0.5;
 export const HEAL_WEIGHT: Record<HealId, number> = { bandage: 2, drink: 3, medkit: 8 };
-export const THROW_WEIGHT = { frag: 12, smoke: 8 } as const;
+export const THROW_WEIGHT: Record<ThrowableId, number> = { frag: 12, smoke: 8, flash: 6 };
 
 // 结构化负重输入(避免与 character.ts 循环引用)
 export interface CarryState {
   ammo: Record<AmmoType, number>;
   heals: Record<HealId, number>;
-  throwables: Record<'frag' | 'smoke', number>;
+  throwables: Record<ThrowableId, number>;
 }
 
 export function carryCapacity(pack: { level: PackLevel } | null): number {
@@ -62,7 +62,8 @@ export function carryWeight(c: CarryState): number {
     c.heals.medkit * HEAL_WEIGHT.medkit +
     c.heals.drink * HEAL_WEIGHT.drink +
     c.throwables.frag * THROW_WEIGHT.frag +
-    c.throwables.smoke * THROW_WEIGHT.smoke
+    c.throwables.smoke * THROW_WEIGHT.smoke +
+    c.throwables.flash * THROW_WEIGHT.flash
   );
 }
 

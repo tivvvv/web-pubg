@@ -5,7 +5,7 @@ import type { HealId } from './heals';
 import { HEALS, HEAL_ORDER } from './heals';
 import { HEAL_WEIGHT, ROUND_WEIGHT, THROW_WEIGHT, carryCapacity, carryWeight, type PackLevel } from './backpack';
 import type { AmmoType, ArmorState, GunState, MeleeId, ThrowableId } from './types';
-import { MELEE, THROWABLES } from './weapons';
+import { MELEE, THROWABLES, THROWABLE_IDS } from './weapons';
 
 export interface DeathCrateContents {
   guns: (GunState | null)[];
@@ -152,7 +152,7 @@ export function autoLootDeathCrate(c: Character, crate: DeathCrate): number {
     bag.heals[id] -= n;
     taken += n;
   }
-  for (const id of ['frag', 'smoke'] as const) {
+  for (const id of THROWABLE_IDS) {
     const afford = Math.max(0, Math.floor((carryCapacity(c.pack) - carryWeight(c) + 1e-6) / THROW_WEIGHT[id]));
     const n = Math.min(bag.throwables[id], THROWABLES[id].max - c.throwables[id], afford);
     if (n <= 0) continue;

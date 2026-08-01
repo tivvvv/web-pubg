@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { stepProjectile } from '../src/throwables';
+import { flashStunDuration, stepProjectile } from '../src/throwables';
 import type { World } from '../src/world';
 
 function mockWorld(height = 0): World {
@@ -12,6 +12,16 @@ function mockWorld(height = 0): World {
 }
 
 describe('投掷物共享物理', () => {
+  it('闪光弹按距离朝向和遮挡缩短失能时间', () => {
+    const closeFacing = flashStunDuration(2, 1, false);
+    const farFacing = flashStunDuration(10, 1, false);
+    const closeBack = flashStunDuration(2, -1, false);
+    expect(closeFacing).toBeGreaterThan(farFacing);
+    expect(closeFacing).toBeGreaterThan(closeBack);
+    expect(flashStunDuration(2, 1, true)).toBe(0);
+    expect(flashStunDuration(13, 1, false)).toBe(0);
+  });
+
   it('空中推进应用重力且不误报碰撞', () => {
     const world = mockWorld(-100);
     const pos = new THREE.Vector3(0, 10, 0);

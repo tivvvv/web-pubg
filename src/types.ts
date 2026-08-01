@@ -1,8 +1,8 @@
 // 共享类型定义
-export type WeaponId = 'pistol' | 'rifle' | 'akm' | 'smg' | 'dmr' | 'sniper' | 'shotgun';
+export type WeaponId = 'pistol' | 'rifle' | 'akm' | 'lmg' | 'smg' | 'dmr' | 'sniper' | 'shotgun';
 export type MeleeId = 'fists' | 'knife' | 'pan' | 'crowbar';
 export type AmmoType = 'pistol' | 'rifle' | 'smg' | 'sniper' | 'shotgun';
-export type ThrowableId = 'frag' | 'smoke';
+export type ThrowableId = 'frag' | 'smoke' | 'flash';
 export type AttachmentId = 'reddot' | 'scope2' | 'scope4' | 'extmag' | 'comp' | 'suppressor';
 export type FireMode = 'single' | 'auto';
 export type AttSlot = 'sight' | 'mag' | 'muzzle';

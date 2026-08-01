@@ -15,7 +15,7 @@ export type SurfaceAssetId =
   | 'paintedMetal';
 export type FootstepSurface = 'grass' | 'dirt' | 'wood' | 'stone' | 'metal' | 'water';
 export type AudioAssetId =
-  | `shot-${WeaponId}`
+  | `shot-${Exclude<WeaponId, 'lmg'>}`
   | 'shot-suppressed'
   | 'impact-body'
   | 'impact-head'
@@ -189,5 +189,6 @@ varying vec3 vAssetLocalNormal;`,
 }
 
 export function shotAssetId(kind: WeaponId, suppressed: boolean): AudioAssetId {
-  return suppressed ? 'shot-suppressed' : `shot-${kind}`;
+  if (suppressed) return 'shot-suppressed';
+  return kind === 'lmg' ? 'shot-rifle' : `shot-${kind}`;
 }

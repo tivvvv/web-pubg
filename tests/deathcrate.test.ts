@@ -23,6 +23,7 @@ describe('死亡盒集中掉落与自动搜索', () => {
     donor.heals.drink = 2;
     donor.throwables.frag = 1;
     donor.throwables.smoke = 1;
+    donor.throwables.flash = 2;
     donor.pack = { level: 3 };
     donor.helmet = { level: 3, durability: ARMORS.helmet[3].maxDurability };
     donor.vest = { level: 3, durability: ARMORS.vest[3].maxDurability };
@@ -41,6 +42,7 @@ describe('死亡盒集中掉落与自动搜索', () => {
     expect(looter.pack?.level).toBe(3);
     expect(looter.helmet?.level).toBe(3);
     expect(looter.vest?.level).toBe(3);
+    expect(looter.throwables.flash).toBe(2);
     expect(deathCrateEmpty(crate)).toBe(true);
     manager.consumeIfEmpty(crate);
     expect(crate.active).toBe(false);

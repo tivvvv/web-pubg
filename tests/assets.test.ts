@@ -44,10 +44,10 @@ describe('美术与音效静态资产', () => {
     expect(total).toBeLessThan(1024 * 1024);
   });
 
-  it('所有枪械均映射独立枪声且消音器统一使用消音采样', () => {
-    const weapons: WeaponId[] = ['pistol', 'rifle', 'akm', 'smg', 'dmr', 'sniper', 'shotgun'];
+  it('所有枪械均映射枪声且消音器统一使用消音采样', () => {
+    const weapons: WeaponId[] = ['pistol', 'rifle', 'akm', 'lmg', 'smg', 'dmr', 'sniper', 'shotgun'];
     for (const weapon of weapons) {
-      expect(shotAssetId(weapon, false)).toBe(`shot-${weapon}`);
+      expect(shotAssetId(weapon, false)).toBe(weapon === 'lmg' ? 'shot-rifle' : `shot-${weapon}`);
       expect(shotAssetId(weapon, true)).toBe('shot-suppressed');
     }
   });

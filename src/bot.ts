@@ -81,10 +81,12 @@ export class BotController {
   private blockT = 0;
   private blockCheckT = 0;
   private blockedDoor: import('./types').DestructibleLike | null = null;
-  // 手雷: 每局最多扔 1 颗; stillT 记录目标静止时长
+  // 战术投掷物: 每类每局最多主动使用 1 颗。
   private fragUsed = false;
   private smokeUsed = false;
+  private flashUsed = false;
   private stillT = 0;
+  private flashStillT = 0;
   private fragOut = { x: 0, z: 0 };
   private healCd = 0; // bot 恢复品使用冷却(即时结算, 冷却模拟读条间隔)
   private engageCrouch = false; // 本次交战是否蹲下对枪(索敌成功时 15% 掷定)
@@ -211,6 +213,7 @@ export class BotController {
       }
       return;
     }
+    c.flashT = Math.max(0, c.flashT - dt);
     if (this.trainingIdle) {
       c.speed2d = 0;
       c.grounded = true;
@@ -232,6 +235,12 @@ export class BotController {
     // 空降阶段: 自由落体/滑翔, 落地后恢复正常 AI
     if (this.descent) {
       this.updateDescent(dt, game);
+      return;
+    }
+    if (c.flashT > 0 && !this.driving) {
+      this.cancelReload();
+      this.target = null;
+      c.applyMove(0, 0, dt, game.world);
       return;
     }
     this.fireTimer = Math.max(0, this.fireTimer - dt);
@@ -1152,6 +1161,18 @@ export class BotController {
 
     // 扔雷: 持步枪/冲锋枪, 目标在 8-30m 且几乎静止超过 2.5s, 扔出唯一一颗手雷
     const gunId = c.heldGun()?.def.id;
+    // 老练机器人会在中近距离先用闪光弹压制, 但不会在贴脸距离误伤自己。
+    if (!this.flashUsed && c.throwables.flash > 0 && this.losOk &&
+      (this.difficultyTier === 'veteran' || this.difficultyTier === 'elite') &&
+      dist >= 7 && dist <= 18) {
+      if (t.speed2d < 1.2) this.flashStillT += dt; else this.flashStillT = 0;
+      if (this.flashStillT > 1.05) {
+        this.throwFlash(t, dist, game);
+        return;
+      }
+    } else {
+      this.flashStillT = 0;
+    }
     if (Number.isFinite(this.difficulty.fragStillSeconds) &&
       !this.fragUsed && c.throwables.frag > 0 && this.losOk &&
       (gunId === 'rifle' || gunId === 'akm' || gunId === 'dmr' || gunId === 'smg') && dist >= 8 && dist <= 30) {
@@ -1411,6 +1432,21 @@ export class BotController {
     game.throwGrenade(c, 'smoke', this.eye, this.dir, clamp(dist * 0.42, 7, 11));
     c.throwables.smoke--;
     this.smokeUsed = true;
+    c.swingT = 1;
+  }
+
+  private throwFlash(t: Character, dist: number, game: Game): void {
+    const c = this.char;
+    c.chestPos(this.eye);
+    const dx = t.pos.x - c.pos.x;
+    const dz = t.pos.z - c.pos.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    this.eye.x += dx / dl * 0.35;
+    this.eye.z += dz / dl * 0.35;
+    this.dir.set(dx / dl, 0.38 + dist * 0.006, dz / dl).normalize();
+    game.throwGrenade(c, 'flash', this.eye, this.dir, clamp(dist * 0.74, 7.5, 11.5));
+    c.throwables.flash--;
+    this.flashUsed = true;
     c.swingT = 1;
   }
 

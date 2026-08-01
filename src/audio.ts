@@ -300,7 +300,7 @@ export class AudioSys {
     const distanceAtt = clamp(1.35 / (1 + dist * 0.028), 0.015, 1);
     const att = distanceAtt * (suppressed ? 0.24 : 1);
     const sampleGain: Record<WeaponId, number> = {
-      pistol: 0.54, rifle: 0.64, akm: 0.69, smg: 0.46, dmr: 0.72, sniper: 0.82, shotgun: 0.78,
+      pistol: 0.54, rifle: 0.64, akm: 0.69, lmg: 0.72, smg: 0.46, dmr: 0.72, sniper: 0.82, shotgun: 0.78,
     };
     const assetVolume = distanceAtt * (suppressed ? 0.24 : sampleGain[kind]);
     if (this.playAsset(shotAssetId(kind, suppressed), assetVolume, pan, 0.96 + Math.random() * 0.08)) {
@@ -323,6 +323,10 @@ export class AudioSys {
       case 'akm':
         this.noiseBurst(0.68 * att, pan, 620, 0.68, 0.18);
         this.thump(0.52 * att, pan, 165, 48, 0.16);
+        break;
+      case 'lmg':
+        this.noiseBurst(0.72 * att, pan, 560, 0.62, 0.2);
+        this.thump(0.55 * att, pan, 150, 42, 0.18);
         break;
       case 'smg':
         this.noiseBurst(0.42 * att, pan, 1400, 1.1, 0.08);
@@ -347,6 +351,13 @@ export class AudioSys {
   bulletWhiz(pan: number): void {
     this.noiseBurst(0.2, pan, 3600, 1.35, 0.11);
     this.thump(0.055, pan, 520, 180, 0.07);
+  }
+
+  flashbang(dist: number, pan: number): void {
+    const att = clamp(1.25 / (1 + dist * 0.055), 0.04, 1);
+    this.noiseBurst(0.66 * att, pan, 2200, 0.75, 0.09);
+    this.thump(0.34 * att, pan, 260, 70, 0.08);
+    this.blip(2800, 1350, 0.22, 0.17 * att, 'sine');
   }
 
   hit(head: boolean): void {

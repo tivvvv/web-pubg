@@ -327,8 +327,9 @@ export class Character {
   melee: MeleeState = { def: MELEE.fists };        // 近战(默认拳头)
   ammo: Record<AmmoType, number> = { pistol: 0, rifle: 0, smg: 0, sniper: 0, shotgun: 0 };
   heals: Record<HealId, number> = { bandage: 0, medkit: 0, drink: 0 }; // 恢复品存量
-  throwables: Record<ThrowableId, number> = { frag: 0, smoke: 0 };
+  throwables: Record<ThrowableId, number> = { frag: 0, smoke: 0, flash: 0 };
   throwKind: ThrowableId = 'frag'; // 当前选中的投掷物类型
+  flashT = 0; // 闪光弹致盲/失能剩余时间
   curSlot = 3; // 0/1 主武器, 2 手枪, 3 近战, 4 投掷物
   helmet: ArmorState | null = null;  // 已装备头盔(减头部伤害)
   vest: ArmorState | null = null;    // 已装备防弹衣(减身体伤害)

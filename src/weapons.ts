@@ -23,6 +23,11 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     auto: true, magSize: 30, reloadTime: 2.15, spreadHip: 0.022, spreadAim: 0.008,
     recoil: 0.018, zoom: 1.35, tier: 3.35, ammo: 'rifle', falloff: [60, 170, 0.7, 290],
   },
+  lmg: {
+    id: 'lmg', name: 'M249 轻机枪', damage: 20, headMult: 2, fireInterval: 0.092,
+    auto: true, magSize: 50, reloadTime: 3.65, spreadHip: 0.03, spreadAim: 0.0095,
+    recoil: 0.0145, zoom: 1.3, tier: 3.75, ammo: 'rifle', falloff: [70, 185, 0.66, 300],
+  },
   smg: {
     id: 'smg', name: 'UMP 冲锋枪', damage: 13, headMult: 2, fireInterval: 0.077,
     auto: true, magSize: 32, reloadTime: 1.7, spreadHip: 0.028, spreadAim: 0.013,
@@ -72,7 +77,10 @@ export const MELEE: Record<MeleeId, MeleeDef> = {
 export const THROWABLES: Record<ThrowableId, { id: ThrowableId; name: string; max: number }> = {
   frag: { id: 'frag', name: '手雷', max: 5 },
   smoke: { id: 'smoke', name: '烟雾弹', max: 5 },
+  flash: { id: 'flash', name: '闪光弹', max: 4 },
 };
+
+export const THROWABLE_IDS: readonly ThrowableId[] = ['frag', 'smoke', 'flash'];
 
 export const AMMO_NAME: Record<AmmoType, string> = {
   pistol: '手枪弹', rifle: '步枪弹', smg: '冲锋枪弹', sniper: '狙击弹', shotgun: '霰弹(12号)',
