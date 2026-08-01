@@ -83,6 +83,7 @@ export class Hud {
   private envIcon = el('env-icon');
   private envTime = el('env-time');
   private envLabel = el('env-label');
+  private matchRule = el('match-rule');
   private locationStatus = el('location-status');
   private locationName = el('location-name');
   private locationTier = el('location-tier');
@@ -322,6 +323,11 @@ export class Hud {
     this.envTime.textContent = time;
     this.envLabel.textContent = `${phase} · ${label}`;
     this.environmentStatus.dataset.weather = weather;
+  }
+
+  setMatchRule(label: string, detail: string): void {
+    this.matchRule.textContent = label;
+    this.matchRule.title = detail;
   }
 
   setLocation(name: string, tier: 'low' | 'medium' | 'high', feature: string): void {

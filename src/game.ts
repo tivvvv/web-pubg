@@ -113,6 +113,9 @@ import {
 } from './squadcommands';
 import { playerDeathDetail, resolvePlayerFlowCue, shouldCelebrateFirstGun } from './playerflow';
 import { regionEventAt, selectRegionEvents, type RegionEvent } from './regionevents';
+import {
+  DEFAULT_MATCH_VARIATION, matchVariationById, selectMatchVariation, type MatchVariation,
+} from './matchvariation';
 
 const TOTAL = MATCH_PLAYER_COUNT;
 const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
@@ -145,6 +148,7 @@ export class Game {
   readonly squadCommands: SquadCommandSystem;
   readonly squadIntel = new SquadIntelSystem();
   regionEvents: RegionEvent[] = [];
+  matchVariation: MatchVariation = DEFAULT_MATCH_VARIATION;
   readonly chars: Character[] = [];
   readonly tmpV2 = new THREE.Vector2();
   readonly staticHit: StaticHit = { t: 0, kind: 'terrain' };
@@ -920,15 +924,24 @@ export class Game {
     this.shotDots = this.bots.map(() => ({ x: 0, z: 0 }));
     this.world.buildings.reset(); // 门窗恢复: 窗全修好, 门 30% 预破坏
     this.grenades.reset();
-    this.airdrop.reset(); // 空投清零(飞机/箱子/烟柱/碰撞)
+    const matchParams = new URLSearchParams(window.location.search);
+    const variationOverride = matchParams.get('test') === '1'
+      ? matchVariationById(matchParams.get('variation'))
+      : null;
+    this.matchVariation = variationOverride ?? selectMatchVariation(random);
+    this.airdrop.reset({
+      firstDelay: this.matchVariation.airdropFirstDelay,
+      intervalMin: this.matchVariation.airdropInterval[0],
+      intervalMax: this.matchVariation.airdropInterval[1],
+    }); // 空投清零并应用本局节奏
     this.shakeAmp = 0;
-    this.regionEvents = selectRegionEvents(this.world.mapSites, random);
+    this.regionEvents = selectRegionEvents(this.world.mapSites, random, this.matchVariation.eventKinds);
     this.loot.populate(this.world, this.regionEvents);
     this.deathCrates.clear();
     this.vehicles.populate(this.world);
     this.mapVehicles = this.vehicles.list.map(() => ({ x: 0, z: 0, dead: false }));
     this.zone.reset();
-    this.bombardment.reset();
+    this.bombardment.reset(this.matchVariation.bombardmentCooldownScale);
     this.effects.reset();
     this.promptVehicle = null;
     this.audio.engineStop();
@@ -969,10 +982,11 @@ export class Game {
     this.hud.setPickupPrompt(null);
     this.hud.setSwimming(false);
     this.hud.setSquadOrder('follow');
+    this.hud.setMatchRule(this.matchVariation.label, this.matchVariation.detail);
     this.hud.showScreen(null);
     this.hud.resetFeedback();
     if (this.regionEvents.length > 0) {
-      this.hud.toast(`本局区域事件: ${this.regionEvents.map((event) => event.label).join(' · ')}`);
+      this.hud.toast(`${this.matchVariation.label}: ${this.matchVariation.detail}`);
     }
     this.state = 'playing';
     this.onResize();

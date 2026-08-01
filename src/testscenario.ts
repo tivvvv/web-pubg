@@ -60,6 +60,9 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=maptour&region=mistwood',
   'scenario=maptour&region=eagleridge',
   'scenario=maptour&region=tideharbor',
+  'scenario=maptour&region=stonegate&variation=arsenal',
+  'scenario=maptour&region=tideharbor&variation=lifeline',
+  'scenario=maptour&region=ironring&variation=firestorm',
   'scenario=stability&seed=1337&simSteps=12&rounds=2&deadline=390',
 ] as const;
 
@@ -171,6 +174,14 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
     x: Number(event.x.toFixed(1)),
     z: Number(event.z.toFixed(1)),
   })));
+  panel.dataset.matchVariation = game.matchVariation.id;
+  panel.dataset.matchVariationLabel = game.matchVariation.label;
+  panel.dataset.matchVariationEvents = game.matchVariation.eventKinds.join(',');
+  panel.dataset.matchVariationAirdrop = [
+    game.matchVariation.airdropFirstDelay,
+    ...game.matchVariation.airdropInterval,
+  ].join(',');
+  panel.dataset.matchVariationBombardment = game.matchVariation.bombardmentCooldownScale.toFixed(2);
   panel.dataset.botDropIssues = game.bots.flatMap((bot, index) => {
     const { x, z } = bot.dropTarget;
     if (!Number.isFinite(x) || !Number.isFinite(z)) return [`${index}:non-finite`];

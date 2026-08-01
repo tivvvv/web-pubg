@@ -30,6 +30,7 @@ export const REGION_EVENT_LOOT: Readonly<Record<RegionEventKind, readonly LootKi
 export function selectRegionEvents(
   sites: readonly ResolvedMapContentSite[],
   rng: () => number,
+  kinds: readonly RegionEventKind[] = ['armory', 'medical', 'workshop'],
 ): RegionEvent[] {
   if (sites.length === 0) return [];
   const candidates = [...sites];
@@ -37,7 +38,6 @@ export function selectRegionEvents(
     const j = Math.min(i, Math.floor(rng() * (i + 1)));
     [candidates[i], candidates[j]] = [candidates[j] as ResolvedMapContentSite, candidates[i] as ResolvedMapContentSite];
   }
-  const kinds: readonly RegionEventKind[] = ['armory', 'medical', 'workshop'];
   return candidates.slice(0, Math.min(kinds.length, candidates.length)).map((site, index) => {
     const kind = kinds[index] as RegionEventKind;
     const meta = EVENT_META[kind];

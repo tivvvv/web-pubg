@@ -19,6 +19,12 @@ const INTEREST_TIME = 45; // bot 兴趣窗口(s)
 const INTEREST_DIST = 120; // bot 好奇半径(m)
 const MAX_DROPS = 3;
 
+export interface AirdropPacing {
+  firstDelay: number;
+  intervalMin: number;
+  intervalMax: number;
+}
+
 export interface Crate {
   group: THREE.Group;
   lid: THREE.Group;       // 铰链盖(开启时翻转)
@@ -110,6 +116,7 @@ export class AirdropManager {
   private smokeAcc = 0;
   private tmpV = new THREE.Vector3();
   private planeKit: { group: THREE.Group; props: THREE.Object3D[] } | null = null;
+  private pacing: AirdropPacing = { firstDelay: 70, intervalMin: 75, intervalMax: 90 };
 
   constructor(game: Game, scene: THREE.Scene) {
     this.game = game;
@@ -203,12 +210,12 @@ export class AirdropManager {
     if (!g.zoneArmed) return;
     if (this.jumpT < 0) {
       this.jumpT = g.now;
-      this.nextDropT = this.jumpT + 70;
+      this.nextDropT = this.jumpT + this.pacing.firstDelay;
     }
     if (this.dropCount < MAX_DROPS && g.now >= this.nextDropT && g.zone.radius > 80) {
       this.startPass();
       this.dropCount++;
-      this.nextDropT = g.now + rand(75, 90);
+      this.nextDropT = g.now + rand(this.pacing.intervalMin, this.pacing.intervalMax);
     }
     // 飞机过顶
     if (this.plane) {
@@ -362,7 +369,8 @@ export class AirdropManager {
   }
 
   // 重开清零(无残留飞机/箱子/烟柱/碰撞)
-  reset(): void {
+  reset(pacing: AirdropPacing = { firstDelay: 70, intervalMin: 75, intervalMax: 90 }): void {
+    this.pacing = { ...pacing };
     if (this.plane) {
       this.game.scene.remove(this.plane.group);
       this.plane = null;

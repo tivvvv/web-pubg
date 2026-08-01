@@ -200,6 +200,15 @@ body {
   white-space: nowrap;
 }
 
+#match-rule {
+  margin-left: 2px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 215, 125, 0.38);
+  color: #ffe2a0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 #environment-status[data-weather='rain'] #env-icon,
 #environment-status[data-weather='fog'] #env-icon {
   color: #b8d8e8;

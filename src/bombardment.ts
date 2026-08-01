@@ -113,6 +113,7 @@ export class BombardmentSystem {
   private tmp = new THREE.Vector3();
   private tmpNormal = new THREE.Vector3();
   private testOverride: string | null;
+  private cooldownScale = 1;
 
   constructor(scene: THREE.Scene) {
     this.testOverride = new URLSearchParams(window.location.search).get('bombardment');
@@ -204,10 +205,11 @@ export class BombardmentSystem {
     this.reset();
   }
 
-  reset(): void {
+  reset(cooldownScale = 1): void {
+    this.cooldownScale = Math.max(0.5, Math.min(1.5, cooldownScale));
     this.state = 'idle';
     this.timer = 0;
-    this.cooldown = this.testOverride ? 0.35 : rand(18, 25);
+    this.cooldown = this.testOverride ? 0.35 : rand(18, 25) * this.cooldownScale;
     this.shellTimer = 0;
     this.marker.visible = false;
     for (const shell of this.shells) {
@@ -249,7 +251,7 @@ export class BombardmentSystem {
     if (this.timer <= 0) {
       this.state = 'idle';
       this.marker.visible = false;
-      this.cooldown = rand(34, 48);
+      this.cooldown = rand(34, 48) * this.cooldownScale;
     }
   }
 
