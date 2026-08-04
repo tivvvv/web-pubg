@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { Character } from '../src/character';
-import { seatWorldAt, Vehicle, VehicleManager, VEHICLE_SPEC } from '../src/vehicles';
+import { seatWorldAt, vehicleExitCandidates, Vehicle, VehicleManager, VEHICLE_SPEC } from '../src/vehicles';
 
 describe('载具座位 命中和损毁状态', () => {
   it('三类载具保留近景机械和车身细节', () => {
@@ -27,6 +27,18 @@ describe('载具座位 命中和损毁状态', () => {
     expect(driver.y - vehicle.pos.y).toBeLessThan(0.3);
     expect(driver.distanceTo(passenger)).toBeCloseTo(1, 6);
     expect(driver.z).toBeGreaterThan(passenger.z);
+  });
+
+  it('下车候选优先驾驶侧并覆盖车辆四周', () => {
+    const vehicle = new Vehicle('car', new THREE.Vector3(10, 2, 20), 0);
+    const exits = vehicleExitCandidates(vehicle);
+
+    expect(exits.map((candidate) => candidate.side)).toEqual(['driver', 'passenger', 'rear', 'front']);
+    expect(exits[0]?.x).toBeLessThan(10);
+    expect(exits[1]?.x).toBeGreaterThan(10);
+    expect(exits[2]?.z).toBeLessThan(20);
+    expect(exits[3]?.z).toBeGreaterThan(20);
+    expect(exits.every((candidate) => Math.hypot(candidate.x - 10, candidate.z - 20) > 1.5)).toBe(true);
   });
 
   it('三类载具都使用坐姿根节点且角色腿部进入坐姿', () => {

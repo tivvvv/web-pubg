@@ -87,6 +87,7 @@ import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathc
 import { Hud, shouldShowSwimmingStatus, type BackpackData, type SquadHudRow } from './hud';
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
 import { Input, type Action } from './input';
+import { doorwayOccupied } from './interaction';
 import { LootManager, isGunKind, isMeleeKind, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
@@ -417,7 +418,8 @@ export class Game {
       case 'slot3': this.player.switchSlot(2, this); break;
       case 'slot4': this.player.switchSlot(3, this); break;
       case 'pickup': {
-        if (this.player.driving) this.player.tryExitVehicle(this);
+        if (this.player.char.reviveTarget) this.knock.cancelRevive(this.player.char, '已取消救援');
+        else if (this.player.driving) this.player.tryExitVehicle(this);
         else this.playerPick();
         break;
       }
@@ -632,7 +634,10 @@ export class Game {
 
   // X = 智能快速恢复: ≤50 优先医疗包; <75 用绷带; 否则补饮料
   quickHeal(c: Character): void {
-    if (this.healT > 0) return;
+    if (this.healT > 0) {
+      this.cancelHeal('已取消恢复');
+      return;
+    }
     if (c.hp <= 50 && c.heals.medkit > 0) return this.startHeal(c, 'medkit');
     if (c.hp < 75 && c.heals.bandage > 0) return this.startHeal(c, 'bandage');
     if (c.hp < 99.5 && c.heals.drink > 0) return this.startHeal(c, 'drink');
@@ -1069,12 +1074,30 @@ export class Game {
     this.blobs.instanceMatrix.needsUpdate = true;
   }
 
-  // 交互高亮: F 拾取菱形浮动标记 / 目标门脉冲描边
+  // 交互高亮: 当前 F 目标统一使用浮动标记，门额外使用门框描边。
   private updateMarkers(): void {
-    const marked = this.promptItem?.group.position ?? this.promptDeathCrate?.group.position;
+    let marked: { x: number; y: number; z: number } | null = null;
+    let markerColor = 0xffe14d;
+    let markerLift = 1.1;
+    if (this.promptItem) marked = this.promptItem.group.position;
+    else if (this.promptDeathCrate) marked = this.promptDeathCrate.group.position;
+    else if (this.promptCrate) {
+      marked = this.promptCrate.pos;
+      markerColor = 0xffcf58;
+      markerLift = 1.45;
+    } else if (this.promptVehicle) {
+      marked = this.promptVehicle.pos;
+      markerColor = 0xff9d52;
+      markerLift = 1.75;
+    } else if (this.promptAlly) {
+      marked = this.promptAlly.pos;
+      markerColor = 0x7be6a1;
+      markerLift = 1.25;
+    }
     if (marked) {
       this.lootMarker.visible = true;
-      this.lootMarker.position.set(marked.x, marked.y + 1.1 + Math.sin(this.now * 5) * 0.07, marked.z);
+      this.lootMarker.material.color.setHex(markerColor);
+      this.lootMarker.position.set(marked.x, marked.y + markerLift + Math.sin(this.now * 5) * 0.07, marked.z);
       this.lootMarker.material.opacity = 0.75 + Math.sin(this.now * 6) * 0.25;
     } else {
       this.lootMarker.visible = false;
@@ -1562,13 +1585,13 @@ export class Game {
   }
 
   // 开/关门切换(玩家按 F); 带方位吱呀声
-  toggleDoor(d: DestructibleLike, actor?: Character): void {
-    this.setDoor(d, !this.asDoor(d)?.open, actor);
+  toggleDoor(d: DestructibleLike, actor?: Character): boolean {
+    return this.setDoor(d, !this.asDoor(d)?.open, actor);
   }
 
   // bot 开门(幂等, 只开不关)
-  openDoor(d: DestructibleLike, actor?: Character): void {
-    this.setDoor(d, true, actor);
+  openDoor(d: DestructibleLike, actor?: Character): boolean {
+    return this.setDoor(d, true, actor);
   }
 
   private asDoor(d: DestructibleLike): Destructible | null {
@@ -1576,12 +1599,24 @@ export class Game {
     return dd.kind === 'door' && dd.alive ? dd : null;
   }
 
-  private setDoor(d: DestructibleLike, open: boolean, actor?: Character): void {
+  private setDoor(d: DestructibleLike, open: boolean, actor?: Character): boolean {
     const dd = this.asDoor(d);
-    if (!dd) return;
-    if (!this.world.buildings.setDoorOpen(dd, open, actor?.pos.x, actor?.pos.z)) return;
+    if (!dd) return false;
+    if (!open && doorwayOccupied(dd.collider, this.chars.map((character) => ({
+      x: character.pos.x,
+      y: character.pos.y,
+      z: character.pos.z,
+      radius: character.radius,
+      height: character.knocked ? 0.72 : 1.65,
+      active: character.alive && character.group.visible && !character.airPose,
+    })))) {
+      if (actor?.isPlayer) this.hud.toast('门口有人, 无法关门', 'warning');
+      return false;
+    }
+    if (!this.world.buildings.setDoorOpen(dd, open, actor?.pos.x, actor?.pos.z)) return false;
     this.tmpEnd.set(dd.cx, dd.cy, dd.cz);
     this.soundAt(this.tmpEnd, (dist, pan) => this.audio.creak(dist, pan, open));
+    return true;
   }
 
   // ---- 投掷物 ----
@@ -1940,8 +1975,10 @@ export class Game {
     }
     const door = this.promptDoor;
     if (door && door.alive) {
-      this.toggleDoor(door, player.char);
-      player.beginInteractionFeedback(this, { x: door.cx, y: door.cy, z: door.cz }, 'interact', 0.38);
+      const toggled = this.toggleDoor(door, player.char);
+      if (toggled) {
+        player.beginInteractionFeedback(this, { x: door.cx, y: door.cy, z: door.cz }, 'interact', 0.38);
+      }
       this.promptDoor = null;
       this.hud.setPickupPrompt(null);
       return;

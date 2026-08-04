@@ -9,7 +9,7 @@ import { ARMORS, armorFromLoot } from './armor';
 import { PACKS, isPackKind, packLevelFromLoot } from './backpack';
 import { MELEE, THROWABLE_IDS, WEAPONS } from './weapons';
 import { WATER_Y, WORLD_HALF } from './world';
-import { driveVehicleStep, VEHICLE_SPEC, seatWorld, type Vehicle } from './vehicles';
+import { driveVehicleStep, VEHICLE_SPEC, seatWorld, vehicleExitCandidates, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
 import { clamp, lerp, turnToward } from './utils';
 import { ATTACHMENTS, attachFromLoot, canAttach, isAttachKind, magSizeOf, sightZoomOf } from './attachments';
@@ -24,7 +24,8 @@ import {
   smoothCameraDistance, type CameraShakeSample,
 } from './camera';
 import {
-  chooseInteractionCandidate, equipmentComparison, type ComparisonTone, type InteractionCandidate,
+  chooseInteractionCandidate, equipmentComparison, interactionDistanceText, isAutomaticPickupKind,
+  type ComparisonTone, type InteractionCandidate,
   type InteractionKind,
 } from './interaction';
 import type { Destructible } from './buildings';
@@ -99,6 +100,7 @@ export class PlayerController {
   private interactionFocusF = 0;
   private interactionTarget: InteractionTarget | null = null;
   private interactionKind: InteractionKind | null = null;
+  private interactionDistance = 0;
   spreadRad = 0.004;
 
   private viewDir = new THREE.Vector3();
@@ -141,6 +143,10 @@ export class PlayerController {
 
   get interactionTargetKind(): InteractionKind | null {
     return this.interactionKind;
+  }
+
+  get interactionTargetDistance(): number {
+    return this.interactionTarget ? this.interactionDistance : -1;
   }
 
   swapShoulder(game: Game): void {
@@ -203,7 +209,7 @@ export class PlayerController {
     // ---- 驾驶阶段: 载具运动学 + 追逐相机(禁射击/道具) ----
     if (this.driving) {
       if (this.driving.dead) {
-        this.exitVehicle(game, false);
+        this.exitVehicle(game, true);
       } else {
         this.driveVehicle(dt, input, game);
         return;
@@ -478,11 +484,9 @@ export class PlayerController {
 
     // ---- 拾取提示(武器需按 F) ----
     this.refreshInteractionPrompt(game);
-    // 弹药/医疗包/投掷物走近自动拾取
-    const auto = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
-    if (auto && !isWeaponKind(auto.kind) && !isAttachKind(auto.kind)) {
-      game.applyAutoPickup(c, auto);
-    }
+    // 弹药/医疗品/投掷物走近自动拾取。必须同楼层且视线可达，避免隔墙或穿楼板吸取。
+    const auto = this.nearestVisibleAutoPickup(game);
+    if (auto) game.applyAutoPickup(c, auto);
 
     this.updateCamera(dt, game);
   }
@@ -498,6 +502,7 @@ export class PlayerController {
     if (c.reviveTarget || c.knocked || c.swimming || this.descent || this.driving || this.interactionLockT > 0) {
       this.interactionTarget = null;
       this.interactionKind = null;
+      this.interactionDistance = 0;
       game.hud.setPickupPrompt(null);
       return;
     }
@@ -588,36 +593,56 @@ export class PlayerController {
     if (!selected) {
       this.interactionTarget = null;
       this.interactionKind = null;
+      this.interactionDistance = 0;
       game.hud.setPickupPrompt(null);
       return;
     }
     this.interactionTarget = selected.target;
     this.interactionKind = selected.kind;
+    this.interactionDistance = selected.distance;
+    const contextualDetail = (
+      detail = '',
+      tone: ComparisonTone = 'neutral',
+    ): { detail: string; tone: ComparisonTone } => {
+      const parts = [interactionDistanceText(selected.distance)];
+      if (detail) parts.push(detail);
+      if (game.healT > 0) parts.push('会打断恢复');
+      return { detail: parts.join(' · '), tone: game.healT > 0 ? 'warning' : tone };
+    };
     if (selected.kind === 'ally') {
-      game.promptAlly = selected.target as Character;
-      game.hud.setPickupPrompt('按 F 救援', 'ally');
+      const selectedAlly = selected.target as Character;
+      const context = contextualDetail('8 秒 · 移动, 受伤或距离过远会打断', 'positive');
+      game.promptAlly = selectedAlly;
+      game.hud.setPickupPrompt(`按 F 救援 ${selectedAlly.name}`, 'ally', context.detail, context.tone);
       return;
     }
     if (selected.kind === 'door') {
       const selectedDoor = selected.target as Destructible;
+      const context = contextualDetail(selectedDoor.open ? '门口有人时无法关闭' : '门扇向远离你的一侧打开');
       game.promptDoor = selectedDoor;
-      game.hud.setPickupPrompt(selectedDoor.open ? '按 F 关门' : '按 F 开门', 'door');
+      game.hud.setPickupPrompt(selectedDoor.open ? '按 F 关门' : '按 F 开门', 'door', context.detail, context.tone);
       return;
     }
     if (selected.kind === 'airdrop') {
+      const context = contextualDetail('开启后物资散落在补给箱周围', 'positive');
       game.promptCrate = selected.target as Crate;
-      game.hud.setPickupPrompt('按 F 打开空投', 'airdrop');
+      game.hud.setPickupPrompt('按 F 打开空投', 'airdrop', context.detail, context.tone);
       return;
     }
     if (selected.kind === 'deathcrate') {
       const selectedCrate = selected.target as DeathCrate;
+      const context = contextualDetail('自动装备升级并按负重拾取', 'positive');
       game.promptDeathCrate = selectedCrate;
-      game.hud.setPickupPrompt(`按 F 搜索 ${selectedCrate.owner} 的盒子`, 'deathcrate');
+      game.hud.setPickupPrompt(`按 F 搜索 ${selectedCrate.owner} 的盒子`, 'deathcrate', context.detail, context.tone);
       return;
     }
     if (selected.kind === 'vehicle') {
-      game.promptVehicle = selected.target as Vehicle;
-      game.hud.setPickupPrompt('按 F 驾驶', 'vehicle');
+      const selectedVehicle = selected.target as Vehicle;
+      const spec = VEHICLE_SPEC[selectedVehicle.kind];
+      const vehicleName = selectedVehicle.kind === 'car' ? '越野车' : selectedVehicle.kind === 'moto' ? '摩托车' : '沙滩车';
+      const context = contextualDetail(`${spec.seats} 座 · 耐久 ${Math.ceil(selectedVehicle.hp / spec.hp * 100)}%`);
+      game.promptVehicle = selectedVehicle;
+      game.hud.setPickupPrompt(`按 F 驾驶 ${vehicleName}`, 'vehicle', context.detail, context.tone);
       return;
     }
 
@@ -626,11 +651,12 @@ export class PlayerController {
     const k = selectedItem.kind;
     if (isMeleeKind(k)) {
       const current = c.melee.def.id === 'fists' ? null : c.melee.def.name;
+      const context = contextualDetail(current ? `将替换 ${current}` : '空栏位 · 直接装备', current ? 'neutral' : 'positive');
       game.hud.setPickupPrompt(
         `按 F 拾取 ${MELEE[k].name}`,
         'item',
-        current ? `将替换 ${current}` : '空栏位 · 直接装备',
-        current ? 'neutral' : 'positive',
+        context.detail,
+        context.tone,
       );
     } else if (isGunKind(k)) {
       const def = WEAPONS[k];
@@ -646,7 +672,8 @@ export class PlayerController {
       const comparison = emptySlot
         ? equipmentComparison(null, null, def.tier)
         : equipmentComparison(compared?.def.name ?? null, compared?.def.tier ?? null, def.tier);
-      game.hud.setPickupPrompt(`按 F 拾取 ${def.name} (${state})`, 'item', comparison.text, comparison.tone);
+      const context = contextualDetail(`${state} · ${comparison.text}`, comparison.tone);
+      game.hud.setPickupPrompt(`按 F 拾取 ${def.name}`, 'item', context.detail, context.tone);
     } else if (isAttachKind(k)) {
       const id = attachFromLoot(k);
       if (id) {
@@ -660,7 +687,8 @@ export class PlayerController {
         } else if (gun) {
           detail = `不适配 ${gun.def.name}`;
         }
-        game.hud.setPickupPrompt(`按 F 装配 ${ATTACHMENTS[id].name}`, 'item', detail, tone);
+        const context = contextualDetail(detail, tone);
+        game.hud.setPickupPrompt(`按 F 装配 ${ATTACHMENTS[id].name}`, 'item', context.detail, context.tone);
       }
     } else if (isPackKind(k)) {
       const level = packLevelFromLoot(k);
@@ -670,7 +698,8 @@ export class PlayerController {
           c.pack?.level ?? null,
           level,
         );
-        game.hud.setPickupPrompt(`按 F 拾取 ${PACKS[level].name}`, 'item', comparison.text, comparison.tone);
+        const context = contextualDetail(comparison.text, comparison.tone);
+        game.hud.setPickupPrompt(`按 F 拾取 ${PACKS[level].name}`, 'item', context.detail, context.tone);
       }
     } else {
       const info = armorFromLoot(k);
@@ -681,11 +710,12 @@ export class PlayerController {
           current?.level ?? null,
           info.level,
         );
+        const context = contextualDetail(comparison.text, comparison.tone);
         game.hud.setPickupPrompt(
           `按 F 拾取 ${ARMORS[info.kind][info.level].name}`,
           'item',
-          comparison.text,
-          comparison.tone,
+          context.detail,
+          context.tone,
         );
       }
     }
@@ -704,6 +734,28 @@ export class PlayerController {
       blockedAt = Math.min(blockedAt, game.staticHit.t);
     }
     return blockedAt >= distance - (kind === 'door' ? 0.45 : 0.32);
+  }
+
+  private nearestVisibleAutoPickup(game: Game): LootItem | null {
+    const c = this.char;
+    let best: LootItem | null = null;
+    let bestDistanceSq = 1.9 * 1.9;
+    c.eyePos(this.interactionOrigin);
+    for (const item of game.loot.items) {
+      if (!item.active || !isAutomaticPickupKind(item.kind)) continue;
+      const dx = item.group.position.x - c.pos.x;
+      const dy = item.baseY - c.pos.y;
+      const dz = item.group.position.z - c.pos.z;
+      if (Math.abs(dy) > 1.15) continue;
+      const distanceSq = dx * dx + dy * dy + dz * dz;
+      if (distanceSq >= bestDistanceSq) continue;
+      this.interactionPos.set(item.group.position.x, item.baseY + 0.3, item.group.position.z);
+      const sightDistance = this.interactionPos.distanceTo(this.interactionOrigin);
+      if (!this.interactionVisible(game, 'item', this.interactionPos, sightDistance)) continue;
+      best = item;
+      bestDistanceSq = distanceSq;
+    }
+    return best;
   }
 
   canStartInteraction(): boolean {
@@ -725,6 +777,7 @@ export class PlayerController {
     this.interactionFocus.set(target.x, target.y, target.z);
     this.interactionTarget = null;
     this.interactionKind = null;
+    this.interactionDistance = 0;
   }
 
   // 投掷起点: TPP 从胸前出手, FPP 从眼位前方出手(不穿脸); 均随姿态高度
@@ -932,15 +985,24 @@ export class PlayerController {
     this.exitVehicle(game, false);
   }
 
-  // 落座右侧下车(强制下车也走这里)
+  // 依次尝试驾驶侧, 副驾侧, 车尾和车头，避免下车落进墙体或深水。
   exitVehicle(game: Game, forced: boolean): void {
     const v = this.driving;
     if (!v) return;
     const c = this.char;
-    const rx = Math.cos(v.yaw);
-    const rz = -Math.sin(v.yaw);
-    c.pos.set(v.pos.x + rx * 2.0, 0, v.pos.z + rz * 2.0);
-    c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, v.pos.y + 1);
+    const candidates = vehicleExitCandidates(v);
+    let exit = candidates.find((candidate) => {
+      const ground = game.world.groundHeight(candidate.x, candidate.z, v.pos.y + 1.4);
+      return ground >= WATER_Y - 0.05 &&
+        game.world.navPointFree(candidate.x, candidate.z, v.pos.y, c.radius, false, false, true);
+    }) ?? null;
+    if (!exit && !forced) {
+      game.hud.toast('周围没有安全下车空间', 'warning');
+      return;
+    }
+    exit ??= candidates[0] as (typeof candidates)[number];
+    c.pos.set(exit.x, 0, exit.z);
+    c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, v.pos.y + 1.4);
     c.airPose = null;
     c.stance = 'stand';
     c.stanceF = 0;

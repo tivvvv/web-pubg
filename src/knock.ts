@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Character } from './character';
 import type { Game } from './game';
+import { reviveCancellationReason } from './interaction';
 
 const KNOCK_HP = 30;        // 击倒血上限
 const REVIVE_TIME = 8;      // 救援读条秒数
@@ -76,17 +77,22 @@ export class KnockSys {
     target.rescuerId = reviver.id;
   }
 
+  cancelRevive(reviver: Character, message = ''): boolean {
+    const target = reviver.reviveTarget;
+    if (!target) return false;
+    target.rescuerId = 0;
+    reviver.reviveTarget = null;
+    reviver.reviveT = 0;
+    if (reviver.isPlayer) {
+      this.game.hud.setHealCast(-1);
+      if (message) this.game.hud.toast(message);
+    }
+    return true;
+  }
+
   // 救援者受伤中断(damageChar 钩子)
   onDamaged(c: Character): void {
-    if (c.reviveTarget) {
-      c.reviveTarget.rescuerId = 0;
-      c.reviveTarget = null;
-      c.reviveT = 0;
-      if (c.isPlayer) {
-        this.game.hud.setHealCast(-1);
-        this.game.hud.toast('救援被打断');
-      }
-    }
+    this.cancelRevive(c, '救援被打断');
   }
 
   // 流血衰减 + 救援读条推进
@@ -106,11 +112,19 @@ export class KnockSys {
       // 救援读条(仅救援者移动/倒地/目标复活或死亡打断; 被救者缓慢爬行不断条)
       if (c.reviveTarget) {
         const t = c.reviveTarget;
-        if (!t.knocked || !t.alive || c.knocked || c.speed2d > 0.2) {
-          t.rescuerId = 0;
-          c.reviveTarget = null;
-          c.reviveT = 0;
-          if (c.isPlayer) g.hud.setHealCast(-1);
+        const cancelReason = reviveCancellationReason({
+          targetValid: t.knocked && t.alive,
+          reviverIncapacitated: c.knocked || !c.alive,
+          reviverSpeed: c.speed2d,
+          distance: Math.hypot(t.pos.x - c.pos.x, t.pos.z - c.pos.z),
+        });
+        if (cancelReason) {
+          this.cancelRevive(
+            c,
+            cancelReason === 'movement'
+              ? '移动打断了救援'
+              : cancelReason === 'range' ? '距离过远, 救援已中断' : '',
+          );
         } else {
           c.reviveT += dt;
           if (c.reviveT >= REVIVE_TIME) {

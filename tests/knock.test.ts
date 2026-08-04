@@ -68,6 +68,30 @@ describe('击倒与救援读条', () => {
     expect(setHealCast).toHaveBeenLastCalledWith(-1);
   });
 
+  it('被救者爬出交互范围会打断救援并给玩家反馈', () => {
+    const { reviver, target, knock, setHealCast } = knockFixture();
+    knock.knockDown(target, null, false);
+    knock.startRevive(reviver, target);
+    target.pos.x = 3;
+    knock.update(0.1);
+
+    expect(reviver.reviveTarget).toBeNull();
+    expect(target.rescuerId).toBe(0);
+    expect(setHealCast).toHaveBeenLastCalledWith(-1);
+  });
+
+  it('玩家可以主动取消正在进行的救援', () => {
+    const { reviver, target, knock, setHealCast } = knockFixture();
+    knock.knockDown(target, null, false);
+    knock.startRevive(reviver, target);
+
+    expect(knock.cancelRevive(reviver, '已取消救援')).toBe(true);
+    expect(reviver.reviveTarget).toBeNull();
+    expect(target.rescuerId).toBe(0);
+    expect(setHealCast).toHaveBeenLastCalledWith(-1);
+    expect(knock.cancelRevive(reviver)).toBe(false);
+  });
+
   it('流血值耗尽时触发最终淘汰', () => {
     const { target, knock, bleedOutKill } = knockFixture();
     knock.knockDown(target, null, false);

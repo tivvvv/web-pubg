@@ -11,6 +11,7 @@ import { parseRandomSeed, setRandomSeed } from './random';
 import { REGIONS, regionOrWilderness } from './regions';
 import type { AttachmentId, GunState } from './types';
 import { fireModeOf } from './gunplay';
+import type { HealId } from './heals';
 import { auditReleaseState } from './releaseaudit';
 import type { ArchId } from './buildings';
 import {
@@ -40,6 +41,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=combat&weapon=sniper&burst=2&sight=scope4&ads=1',
   'scenario=combat&weapon=shotgun&burst=2',
   'scenario=combat&weapon=pistol&burst=4&sight=reddot&ads=1',
+  'scenario=combat&weapon=rifle&hp=40&heal=medkit&autoheal=1',
   'scenario=effects',
   'scenario=effects&flash=1',
   'scenario=bottactics',
@@ -354,6 +356,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.cameraDistance = controller.cameraDistance.toFixed(3);
       panel.dataset.cameraFov = controller.camera.fov.toFixed(2);
       panel.dataset.interactionKind = controller.interactionTargetKind ?? 'none';
+      panel.dataset.interactionDistance = controller.interactionTargetDistance.toFixed(2);
       panel.dataset.cameraPosition = [
         controller.camera.position.x,
         controller.camera.position.y,
@@ -1119,6 +1122,15 @@ function setupCombat(game: Game): void {
   c.guns[0] = gun;
   c.ammo[def.ammo] = Math.max(60, def.magSize * 6);
   c.curSlot = 0;
+  const healParam = params.get('heal');
+  if (healParam === 'bandage' || healParam === 'medkit' || healParam === 'drink') {
+    c.heals[healParam as HealId] = 1;
+    if (params.get('autoheal') === '1') {
+      const requestedDelay = Number(params.get('healdelay'));
+      const delay = Number.isFinite(requestedDelay) ? Math.max(100, Math.min(10000, requestedDelay)) : 350;
+      window.setTimeout(() => game.quickHeal(c), delay);
+    }
+  }
   const action = params.get('action');
   if (action === 'interact' || action === 'pickup' || action === 'equip' || action === 'heal' || action === 'drink') {
     c.beginAction(action, params.get('hold') === '1' ? 3 : 0.5);

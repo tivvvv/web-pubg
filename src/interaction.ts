@@ -1,7 +1,75 @@
 import { clamp } from './utils';
+import type { LootKind } from './types';
 
 export type InteractionKind = 'ally' | 'door' | 'airdrop' | 'deathcrate' | 'vehicle' | 'item';
 export type ComparisonTone = 'positive' | 'neutral' | 'warning';
+export type ReviveCancelReason = 'target' | 'incapacitated' | 'movement' | 'range';
+
+export const REVIVE_INTERACTION_RANGE = 2.75;
+
+const AUTOMATIC_PICKUP_KINDS: ReadonlySet<LootKind> = new Set([
+  'ammoRifle', 'ammoSmg', 'ammoSniper', 'ammoPistol', 'ammoShotgun',
+  'bandage', 'medkit', 'drink', 'frag', 'smoke', 'flash',
+]);
+
+export function isAutomaticPickupKind(kind: LootKind): boolean {
+  return AUTOMATIC_PICKUP_KINDS.has(kind);
+}
+
+export function interactionDistanceText(distance: number): string {
+  return `${Math.max(0, distance).toFixed(1)} 米`;
+}
+
+export function reviveCancellationReason(input: {
+  targetValid: boolean;
+  reviverIncapacitated: boolean;
+  reviverSpeed: number;
+  distance: number;
+}): ReviveCancelReason | null {
+  if (!input.targetValid) return 'target';
+  if (input.reviverIncapacitated) return 'incapacitated';
+  if (input.reviverSpeed > 0.2) return 'movement';
+  if (input.distance > REVIVE_INTERACTION_RANGE) return 'range';
+  return null;
+}
+
+export interface DoorwayBounds {
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+}
+
+export interface DoorwayActorSample {
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  height?: number;
+  active: boolean;
+}
+
+// 关门前按真实门洞范围检测角色胶囊，避免门扇穿人或把角色锁进碰撞体。
+export function doorwayOccupied(
+  bounds: DoorwayBounds,
+  actors: readonly DoorwayActorSample[],
+  clearance = 0.08,
+): boolean {
+  for (const actor of actors) {
+    if (!actor.active) continue;
+    const height = actor.height ?? 1.65;
+    if (actor.y + height <= bounds.minY || actor.y >= bounds.maxY) continue;
+    const cx = clamp(actor.x, bounds.minX, bounds.maxX);
+    const cz = clamp(actor.z, bounds.minZ, bounds.maxZ);
+    const dx = actor.x - cx;
+    const dz = actor.z - cz;
+    const radius = actor.radius + clearance;
+    if (dx * dx + dz * dz < radius * radius) return true;
+  }
+  return false;
+}
 
 export interface EquipmentComparison {
   text: string;

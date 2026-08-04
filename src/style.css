@@ -849,15 +849,15 @@ body {
   transform: translate(-50%, 6px);
   background: rgba(10, 14, 10, 0.75);
   border: 1px solid rgba(232, 200, 96, 0.6);
-  border-radius: 4px;
+  border-radius: 7px;
   color: #ffe9a8;
   font-size: 15px;
   font-weight: 600;
-  padding: 7px 16px;
+  padding: 8px 18px 7px;
   opacity: 0;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(4px);
-  transition: opacity 0.12s, transform 0.12s, border-color 0.12s;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.34), inset 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(7px);
+  transition: opacity 0.12s, transform 0.12s, border-color 0.12s, background 0.12s;
   pointer-events: none;
   white-space: nowrap;
 }
@@ -872,6 +872,22 @@ body {
   display: block;
   text-align: center;
 }
+
+#pickup-prompt .prompt-primary::before {
+  display: inline-block;
+  width: 18px;
+  margin-right: 5px;
+  color: rgba(255, 233, 168, 0.82);
+  content: '◆';
+  font-size: 10px;
+  transform: translateY(-1px);
+}
+
+#pickup-prompt[data-kind='ally'] .prompt-primary::before { content: '+'; color: #8ef0ae; font-size: 15px; }
+#pickup-prompt[data-kind='door'] .prompt-primary::before { content: '▱'; color: #9edcff; font-size: 15px; }
+#pickup-prompt[data-kind='vehicle'] .prompt-primary::before { content: '◉'; color: #ffb36f; font-size: 13px; }
+#pickup-prompt[data-kind='airdrop'] .prompt-primary::before { content: '⬇'; color: #ffe084; font-size: 13px; }
+#pickup-prompt[data-kind='deathcrate'] .prompt-primary::before { content: '▣'; color: #e5bd65; font-size: 13px; }
 
 #pickup-prompt .prompt-detail {
   margin-top: 3px;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  chooseInteractionCandidate, equipmentComparison, interactionScore, type InteractionCandidate,
+  chooseInteractionCandidate, doorwayOccupied, equipmentComparison, interactionDistanceText,
+  interactionScore, isAutomaticPickupKind, reviveCancellationReason, type InteractionCandidate,
 } from '../src/interaction';
 
 function candidate(
@@ -43,5 +44,39 @@ describe('交互目标选择', () => {
     expect(equipmentComparison('一级头盔', 1, 2).tone).toBe('positive');
     expect(equipmentComparison('二级头盔', 2, 2).tone).toBe('neutral');
     expect(equipmentComparison('三级头盔', 3, 2).tone).toBe('warning');
+  });
+
+  it('提示距离统一为一位小数并钳制负值', () => {
+    expect(interactionDistanceText(1.26)).toBe('1.3 米');
+    expect(interactionDistanceText(-1)).toBe('0.0 米');
+  });
+
+  it('自动拾取只包含消耗品且不自动装备武器护具和背包', () => {
+    for (const kind of ['ammoRifle', 'bandage', 'drink', 'frag', 'smoke', 'flash'] as const) {
+      expect(isAutomaticPickupKind(kind)).toBe(true);
+    }
+    for (const kind of ['rifle', 'reddot', 'pack3', 'helmet3', 'vest3'] as const) {
+      expect(isAutomaticPickupKind(kind)).toBe(false);
+    }
+  });
+
+  it('救援会被移动和目标距离过远可靠打断', () => {
+    const base = { targetValid: true, reviverIncapacitated: false, reviverSpeed: 0, distance: 1.5 };
+    expect(reviveCancellationReason(base)).toBeNull();
+    expect(reviveCancellationReason({ ...base, reviverSpeed: 0.21 })).toBe('movement');
+    expect(reviveCancellationReason({ ...base, distance: 2.76 })).toBe('range');
+    expect(reviveCancellationReason({ ...base, targetValid: false })).toBe('target');
+  });
+
+  it('门洞占用检测只阻止与门洞高度和足迹重叠的角色', () => {
+    const bounds = { minX: -0.7, minY: 0, minZ: -0.08, maxX: 0.7, maxY: 2, maxZ: 0.08 };
+    expect(doorwayOccupied(bounds, [
+      { x: 0, y: 0, z: 0.3, radius: 0.42, active: true },
+    ])).toBe(true);
+    expect(doorwayOccupied(bounds, [
+      { x: 0, y: 2.1, z: 0, radius: 0.42, active: true },
+      { x: 2, y: 0, z: 0, radius: 0.42, active: true },
+      { x: 0, y: 0, z: 0, radius: 0.42, active: false },
+    ])).toBe(false);
   });
 });

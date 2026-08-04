@@ -346,7 +346,7 @@ export class Hud {
     this.pickupKey = key;
     if (text) {
       // 键位名渲染为 kbd 芯片
-      const primary = text.replace(/ F /, ' <span class="kbd">F</span> ');
+      const primary = text.replace(/ (F|Space) /g, ' <span class="kbd">$1</span> ');
       this.pickupPrompt.innerHTML = detail
         ? `<span class="prompt-primary">${primary}</span><span class="prompt-detail" data-tone="${detailTone}">${detail}</span>`
         : primary;

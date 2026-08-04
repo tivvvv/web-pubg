@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  doorOpenAngleForActor, GABLE_ROOF_COURSES, gableRoofPitch, REGIONAL_BUILDING_STYLES,
+  doorColliderDisabled, doorOpenAngleForActor, GABLE_ROOF_COURSES, gableRoofPitch, REGIONAL_BUILDING_STYLES,
   regionalBuildingStyle, stairRailX,
 } from '../src/buildings';
 import { REGIONS } from '../src/regions';
@@ -57,6 +57,13 @@ describe('建筑门交互方向', () => {
 
     expect(left).toBeLessThan(0);
     expect(right).toBeGreaterThan(0);
+  });
+
+  it('关门动画接近门框后才恢复碰撞且破门永久放行', () => {
+    expect(doorColliderDisabled(true, true, 0.8)).toBe(true);
+    expect(doorColliderDisabled(true, false, 0.7)).toBe(true);
+    expect(doorColliderDisabled(true, false, 0.11)).toBe(false);
+    expect(doorColliderDisabled(false, false, 0)).toBe(true);
   });
 
   it('靠两侧外墙的楼梯把扶手放在各自开放侧', () => {

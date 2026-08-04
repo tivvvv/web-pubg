@@ -85,6 +85,32 @@ export interface VehicleDriveResult {
   distance: number;
 }
 
+export interface VehicleExitPoint {
+  x: number;
+  z: number;
+  side: 'driver' | 'passenger' | 'rear' | 'front';
+}
+
+// 按驾驶侧, 副驾侧, 车尾, 车头依次给出下车候选点。调用方负责检查地形和碰撞。
+export function vehicleExitCandidates(v: Pick<Vehicle, 'kind' | 'pos' | 'yaw'>): VehicleExitPoint[] {
+  const half = VEHICLE_SPEC[v.kind].half;
+  const side = half[0] + 0.78;
+  const end = half[2] + 0.78;
+  const local = [
+    [-side, 0, 'driver'],
+    [side, 0, 'passenger'],
+    [0, -end, 'rear'],
+    [0, end, 'front'],
+  ] as const;
+  const sin = Math.sin(v.yaw);
+  const cos = Math.cos(v.yaw);
+  return local.map(([lx, lz, label]) => ({
+    x: v.pos.x + lx * cos + lz * sin,
+    z: v.pos.z - lx * sin + lz * cos,
+    side: label,
+  }));
+}
+
 // Shared vehicle movement for player and bot drivers.
 export function driveVehicleStep(
   v: Vehicle,

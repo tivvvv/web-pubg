@@ -174,6 +174,10 @@ export function doorOpenAngleForActor(
   return (axis === 'x' ? Math.sign(side) : -Math.sign(side)) * hinge * DOOR_SWING;
 }
 
+export function doorColliderDisabled(alive: boolean, open: boolean, currentAngle: number): boolean {
+  return !alive || open || Math.abs(currentAngle) > 0.12;
+}
+
 export function stairRailX(x0: number, x1: number, side: 'min' | 'max'): number {
   return side === 'max' ? x1 : x0;
 }
@@ -1535,7 +1539,8 @@ export class Buildings {
       );
     }
     d.open = open;
-    d.collider.off = open; // 开门: 通行/子弹/视线全通过; 关门: 恢复阻挡
+    // 开门立即放行；关门则等门扇接近门框后才恢复碰撞，避免动画期间出现空气墙。
+    d.collider.off = doorColliderDisabled(d.alive, open, d.pivot?.rotation.y ?? 0);
     return true;
   }
 
@@ -1550,6 +1555,7 @@ export class Buildings {
       const delta = target - cur;
       const step = Math.min(speed * dt, Math.abs(delta));
       d.pivot.rotation.y = cur + Math.sign(delta) * step;
+      d.collider.off = doorColliderDisabled(d.alive, d.open, d.pivot.rotation.y);
     }
   }
 }
