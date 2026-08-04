@@ -96,6 +96,7 @@ export class BotController {
   private tacticMode: BotCombatMode = 'advance';
   private navigationIntent = false;
   private combatStuckT = 0;
+  private combatNoProgressT = 0;
   private strategicStuckT = 0;
   private strategicProgressT = 0;
   private strategicProgressX = 0;
@@ -194,6 +195,7 @@ export class BotController {
       this.lastNavMoved.toFixed(3),
       this.lastNavBlocked ? 'blocked' : 'clear',
       this.lastNavStuck.toFixed(1),
+      this.combatNoProgressT.toFixed(1),
       loot ? `${loot.kind}@${loot.group.position.x.toFixed(1)},${loot.group.position.z.toFixed(1)}` : '-',
       blocked ? `${blocked.kind}@${blocked.group.position.x.toFixed(1)},${blocked.group.position.z.toFixed(1)}` : '-',
     ].join(',');
@@ -1108,6 +1110,8 @@ export class BotController {
     this.strategicProgressT = 0;
     const t = this.target as Character;
     if (!t.alive) {
+      this.combatStuckT = 0;
+      this.combatNoProgressT = 0;
       this.lastKnown.copy(t.pos);
       this.moveTarget.copy(t.pos);
       this.searchOrigin.copy(t.pos);
@@ -1145,6 +1149,8 @@ export class BotController {
       this.lostT += dt;
       if (this.lostT > this.difficulty.lostTargetSeconds ||
         dist > this.difficulty.detectionDistance + 20) {
+        this.combatStuckT = 0;
+        this.combatNoProgressT = 0;
         this.target = null;
         this.state = 'wander';
         c.setStance('stand');
@@ -1298,9 +1304,38 @@ export class BotController {
     this.navigationIntent = !nav.reached;
     if (nav.reached || nav.moved >= 0.025) {
       this.combatStuckT = Math.max(0, this.combatStuckT - dt * 2);
+      this.combatNoProgressT = Math.max(0, this.combatNoProgressT - dt * 2);
       if (nav.reached) this.rotationAttempt = 0;
     } else if (this.navigationIntent) {
       this.combatStuckT += dt;
+      this.combatNoProgressT += dt;
+      // 高层房间和屋顶的复合碰撞极少数会让局部绕行反复选到可采样但实际无法迈出的点.
+      // 连续多轮战术改道仍无位移时只做一次短距离合法点校正, 避免整局原地切换搜索/推进.
+      if (this.combatNoProgressT >= 6.4 && !c.vault && !c.swimming && findEmergencyNavPoint(
+        this.tacticPoint,
+        c.pos.x,
+        c.pos.z,
+        c.pos.y,
+        combatGoalX,
+        combatGoalZ,
+        game.world,
+        allowCombatDrop,
+      )) {
+        c.pos.x = this.tacticPoint.x;
+        c.pos.z = this.tacticPoint.y;
+        c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y + 0.4);
+        c.groundH = c.pos.y;
+        c.grounded = true;
+        c.vy = 0;
+        c.speed2d = 0;
+        c.setStance('stand');
+        this.combatStuckT = 0;
+        this.combatNoProgressT = 0;
+        this.tacticMode = 'search';
+        this.tacticT = 1.6;
+        this.navigator.reset(c);
+        return;
+      }
       if (this.combatStuckT >= 2.2) {
         this.combatStuckT = 0;
         this.routeSide *= -1;
@@ -1523,6 +1558,8 @@ export class BotController {
   }
 
   private updateWander(dt: number, game: Game): void {
+    this.combatStuckT = 0;
+    this.combatNoProgressT = 0;
     const c = this.char;
     if (this.lootTarget && !this.lootTarget.active) {
       this.lootTarget = null;
