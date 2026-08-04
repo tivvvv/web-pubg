@@ -22,6 +22,9 @@ describe('固定回归场景入口', () => {
     expect(RELEASE_SCENARIO_ROUTES.filter((route) => route.includes('scenario=stability'))).toHaveLength(3);
     expect(RELEASE_SCENARIO_ROUTES.filter((route) => route.includes('scenario=stability'))
       .every((route) => route.includes('rounds=3'))).toBe(true);
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=facade&arch=apartment&plot=last');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=interior&arch=cottage1&plot=last');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=roof&arch=cottage1');
     for (const sight of ['scope2', 'scope4', 'reddot']) {
       const route = RELEASE_SCENARIO_ROUTES.find((candidate) =>
         candidate.includes('scenario=combat') &&

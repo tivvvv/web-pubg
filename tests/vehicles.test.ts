@@ -4,6 +4,20 @@ import { Character } from '../src/character';
 import { seatWorldAt, Vehicle, VehicleManager, VEHICLE_SPEC } from '../src/vehicles';
 
 describe('载具座位 命中和损毁状态', () => {
+  it('三类载具保留近景机械和车身细节', () => {
+    const expected: Record<'car' | 'moto' | 'buggy', { minParts: number; names: string[] }> = {
+      car: { minParts: 50, names: ['windshield-divider', 'windshield-wiper', 'grille-slat', 'door-handle', 'license-plate'] },
+      moto: { minParts: 25, names: ['engine-block', 'cooling-fin', 'foot-pegs', 'rear-suspension'] },
+      buggy: { minParts: 30, names: ['engine-block', 'suspension-arm', 'headlamp', 'exhaust'] },
+    };
+
+    for (const kind of ['car', 'moto', 'buggy'] as const) {
+      const vehicle = new Vehicle(kind, new THREE.Vector3(), 0);
+      expect(vehicle.modelPartCount).toBeGreaterThanOrEqual(expected[kind].minParts);
+      for (const name of expected[kind].names) expect(vehicle.group.getObjectByName(name)).toBeTruthy();
+    }
+  });
+
   it('按朝向计算驾驶位和乘客位世界坐标', () => {
     const vehicle = new Vehicle('car', new THREE.Vector3(10, 2, 20), Math.PI / 2);
     const driver = seatWorldAt(vehicle, 0, new THREE.Vector3());

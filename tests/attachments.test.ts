@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { canAttach, emptyAttachments, magSizeOf, recoilFactorOf, sightZoomOf } from '../src/attachments';
 import { WEAPONS } from '../src/weapons';
+import { attachWeaponMods, buildWeaponModel } from '../src/weaponmodels';
 
 describe('武器配件规则', () => {
+  it('瞄具和枪口配件具有可辨认的近景结构', () => {
+    const scoped = buildWeaponModel('rifle');
+    attachWeaponMods(scoped.group, { sight: 'scope4', muzzle: 'suppressor', mag: null });
+    expect(scoped.group.getObjectsByProperty('name', 'optic-lens')).toHaveLength(2);
+    expect(scoped.group.getObjectsByProperty('name', 'scope-mount')).toHaveLength(2);
+    expect(scoped.group.getObjectByName('scope-turret')).toBeTruthy();
+    expect(scoped.group.getObjectsByProperty('name', 'suppressor-band')).toHaveLength(2);
+
+    const dotted = buildWeaponModel('akm');
+    attachWeaponMods(dotted.group, { sight: 'reddot', muzzle: 'comp', mag: null });
+    expect(dotted.group.getObjectByName('reddot-hood')).toBeTruthy();
+    expect(dotted.group.getObjectByName('reddot-reticle')).toBeTruthy();
+    expect(dotted.group.getObjectsByProperty('name', 'compensator-port')).toHaveLength(2);
+  });
+
   it('扩容弹匣按枪型增加正确容量', () => {
     expect(magSizeOf({ def: WEAPONS.rifle, mag: 30, att: { ...emptyAttachments(), mag: 'extmag' } })).toBe(40);
     expect(magSizeOf({ def: WEAPONS.sniper, mag: 5, att: { ...emptyAttachments(), mag: 'extmag' } })).toBe(7);

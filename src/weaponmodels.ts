@@ -31,6 +31,16 @@ const MAT_PO = new THREE.MeshStandardMaterial({ color: 0x3d4148, roughness: 0.84
 const MAT_TN = new THREE.MeshStandardMaterial({ color: 0x9a7a52, roughness: 0.82, metalness: 0.02 }); // 木色/沙色家具
 const MAT_FG = new THREE.MeshStandardMaterial({ color: 0x39543a, roughness: 0.68, metalness: 0.18 }); // 手雷墨绿
 const MAT_BD = new THREE.MeshStandardMaterial({ color: 0xc8503c, roughness: 0.62, metalness: 0.12 }); // 烟雾弹色带
+const MAT_LENS = new THREE.MeshStandardMaterial({
+  color: 0x77b9c8,
+  emissive: 0x153943,
+  emissiveIntensity: 0.24,
+  roughness: 0.08,
+  metalness: 0.12,
+  transparent: true,
+  opacity: 0.72,
+});
+const MAT_RETICLE = new THREE.MeshBasicMaterial({ color: 0xff4d35 });
 applySurfaceAsset(MAT_DK, 'metal', 5.5, 1);
 applySurfaceAsset(MAT_LT, 'metal', 7.5, 0.85);
 applySurfaceAsset(MAT_PO, 'fabric', 4, 0.5);
@@ -410,11 +420,18 @@ export function buildWeaponModel(id: WeaponModelId): WeaponModel {
 // ── 配件可视化: 在克隆武器模型上挂瞄具/枪口/扩容弹匣(共享几何/材质) ──
 const ATT_GEO = {
   dotBase: new THREE.BoxGeometry(0.03, 0.035, 0.05),
+  dotGlass: new THREE.BoxGeometry(0.036, 0.034, 0.004),
+  dotHood: new THREE.TorusGeometry(0.024, 0.004, 5, 10),
+  reticle: new THREE.SphereGeometry(0.0025, 6, 4),
   scopeTube: new THREE.CylinderGeometry(0.016, 0.016, 0.09, 8),
   scopeBell: new THREE.CylinderGeometry(0.024, 0.02, 0.03, 8),
+  scopeLens: new THREE.CylinderGeometry(0.018, 0.018, 0.003, 12),
+  scopeTurret: new THREE.CylinderGeometry(0.006, 0.006, 0.015, 8),
   scopeBase: new THREE.BoxGeometry(0.014, 0.02, 0.05),
   suppressor: new THREE.CylinderGeometry(0.02, 0.02, 0.15, 8),
+  suppressorBand: new THREE.TorusGeometry(0.021, 0.0025, 5, 10),
   comp: new THREE.BoxGeometry(0.034, 0.034, 0.06),
+  compPort: new THREE.BoxGeometry(0.036, 0.012, 0.013),
 };
 export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void {
   // 地面 loot 外面还有 holder 包装层, 实际配件应挂到枪模型根节点上
@@ -427,17 +444,49 @@ export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void 
     weaponGroup.add(base);
     if (att.sight === 'reddot') {
       const dot = new THREE.Mesh(ATT_GEO.dotBase, MAT_DK);
+      dot.name = 'reddot-housing';
       dot.position.set(0, 0.108, 0.02);
       weaponGroup.add(dot);
+      const hood = new THREE.Mesh(ATT_GEO.dotHood, MAT_DK);
+      hood.name = 'reddot-hood';
+      hood.position.set(0, 0.126, 0.035);
+      weaponGroup.add(hood);
+      const glass = new THREE.Mesh(ATT_GEO.dotGlass, MAT_LENS);
+      glass.name = 'optic-lens';
+      glass.position.set(0, 0.126, 0.036);
+      weaponGroup.add(glass);
+      const reticle = new THREE.Mesh(ATT_GEO.reticle, MAT_RETICLE);
+      reticle.name = 'reddot-reticle';
+      reticle.position.set(0, 0.126, 0.039);
+      weaponGroup.add(reticle);
     } else {
       const tube = new THREE.Mesh(ATT_GEO.scopeTube, MAT_DK);
+      tube.name = 'scope-tube';
       tube.rotation.x = Math.PI / 2;
       tube.position.set(0, 0.112, 0.02);
       weaponGroup.add(tube);
       const bell = new THREE.Mesh(ATT_GEO.scopeBell, MAT_DK);
+      bell.name = 'scope-bell';
       bell.rotation.x = Math.PI / 2;
       bell.position.set(0, 0.112, 0.068);
       weaponGroup.add(bell);
+      for (const z of [-0.032, 0.032]) {
+        const foot = new THREE.Mesh(ATT_GEO.scopeBase, MAT_LT);
+        foot.name = 'scope-mount';
+        foot.position.set(0, 0.094, z);
+        weaponGroup.add(foot);
+      }
+      for (const z of [-0.028, 0.084]) {
+        const lens = new THREE.Mesh(ATT_GEO.scopeLens, MAT_LENS);
+        lens.name = 'optic-lens';
+        lens.rotation.x = Math.PI / 2;
+        lens.position.set(0, 0.112, z);
+        weaponGroup.add(lens);
+      }
+      const turret = new THREE.Mesh(ATT_GEO.scopeTurret, MAT_LT);
+      turret.name = 'scope-turret';
+      turret.position.set(0, 0.143, 0.018);
+      weaponGroup.add(turret);
     }
   }
   // 枪口(消音器/补偿器, 挂 muzzle 节点后段)
@@ -445,14 +494,28 @@ export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void 
     const muzzleZ = muzzleNode.position.z;
     if (att.muzzle === 'suppressor') {
       const sup = new THREE.Mesh(ATT_GEO.suppressor, MAT_DK);
+      sup.name = 'suppressor-body';
       sup.rotation.x = Math.PI / 2;
       sup.position.set(muzzleNode.position.x, muzzleNode.position.y, muzzleZ + 0.068);
       weaponGroup.add(sup);
+      for (const z of [muzzleZ + 0.02, muzzleZ + 0.115]) {
+        const band = new THREE.Mesh(ATT_GEO.suppressorBand, MAT_LT);
+        band.name = 'suppressor-band';
+        band.position.set(muzzleNode.position.x, muzzleNode.position.y, z);
+        weaponGroup.add(band);
+      }
       muzzleNode.position.z = muzzleZ + 0.14;
     } else {
       const comp = new THREE.Mesh(ATT_GEO.comp, MAT_LT);
+      comp.name = 'compensator-body';
       comp.position.set(muzzleNode.position.x, muzzleNode.position.y, muzzleZ + 0.026);
       weaponGroup.add(comp);
+      for (const z of [muzzleZ + 0.012, muzzleZ + 0.036]) {
+        const port = new THREE.Mesh(ATT_GEO.compPort, MAT_DK);
+        port.name = 'compensator-port';
+        port.position.set(muzzleNode.position.x, muzzleNode.position.y + 0.014, z);
+        weaponGroup.add(port);
+      }
       muzzleNode.position.z = muzzleZ + 0.052;
     }
   }

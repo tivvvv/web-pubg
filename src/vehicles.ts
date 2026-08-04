@@ -187,6 +187,14 @@ export class Vehicle {
   private steerWheels: THREE.Object3D[] = [];
   private mats: THREE.MeshStandardMaterial[] = [];
 
+  get modelPartCount(): number {
+    let count = 0;
+    this.group.traverse((part) => {
+      if (part instanceof THREE.Mesh) count++;
+    });
+    return count;
+  }
+
   constructor(kind: VehicleKind, pos: THREE.Vector3, yaw0: number) {
     this.kind = kind;
     this.pos = pos;
@@ -228,14 +236,28 @@ export class Vehicle {
       add(new THREE.BoxGeometry(1.4, 0.5, 0.08), frame, 0, 1.25, -0.85);
       // 挡风玻璃(框在立柱上, 玻璃微透)
       add(new THREE.BoxGeometry(1.36, 0.52, 0.05), glass, 0, 1.34, 0.56, -0.12);
+      // 雨刷、玻璃中柱和引擎盖折线，近景不再是一整块平面。
+      add(new THREE.BoxGeometry(0.035, 0.48, 0.035), frame, 0, 1.34, 0.535, -0.12).name = 'windshield-divider';
+      for (const sx of [-1, 1] as const) {
+        const wiper = add(new THREE.BoxGeometry(0.025, 0.34, 0.025), dark, sx * 0.31, 1.18, 0.515, -0.72);
+        wiper.rotation.z = sx * 0.16;
+        wiper.name = 'windshield-wiper';
+        add(new THREE.BoxGeometry(0.025, 0.07, 0.025), dark, sx * 0.2, 1.08, 0.51, -0.2).name = 'wiper-pivot';
+        add(new THREE.BoxGeometry(0.03, 0.035, 0.82), frame, sx * 0.38, 1.02, 1.13, -0.29).name = 'hood-crease';
+      }
       // 前脸: 格栅/大灯/前杠; 尾部: 尾灯/后杠/备胎
       add(new THREE.BoxGeometry(0.95, 0.2, 0.06), dark, 0, 0.6, 1.58);
+      for (let gx = -0.36; gx <= 0.36; gx += 0.18) {
+        add(new THREE.BoxGeometry(0.045, 0.16, 0.025), frame, gx, 0.6, 1.616).name = 'grille-slat';
+      }
       add(new THREE.BoxGeometry(0.2, 0.12, 0.06), lampF, -0.55, 0.74, 1.57);
       add(new THREE.BoxGeometry(0.2, 0.12, 0.06), lampF, 0.55, 0.74, 1.57);
       add(new THREE.BoxGeometry(1.55, 0.12, 0.1), dark, 0, 0.4, 1.62);
       add(new THREE.BoxGeometry(0.16, 0.1, 0.05), lampR, -0.6, 0.66, -1.56);
       add(new THREE.BoxGeometry(0.16, 0.1, 0.05), lampR, 0.6, 0.66, -1.56);
       add(new THREE.BoxGeometry(1.5, 0.12, 0.1), dark, 0, 0.4, -1.62);
+      const plate = add(new THREE.BoxGeometry(0.42, 0.16, 0.025), this.mat(0xd7d1bd), 0, 0.58, -1.626);
+      plate.name = 'license-plate';
       const spare = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.18, 10), dark);
       spare.rotation.z = Math.PI / 2;
       spare.position.set(0, 1.05, -1.66);
@@ -254,6 +276,14 @@ export class Vehicle {
       wheel0.castShadow = true;
       g.add(wheel0);
       add(new THREE.BoxGeometry(0.06, 0.2, 0.06), dark, -0.5, 1.06, 0.46);
+      // 四门接缝、把手和底部踏板，强调车身板件关系。
+      for (const sx of [-1, 1] as const) {
+        for (const z of [0.24, -0.72]) {
+          add(new THREE.BoxGeometry(0.026, 0.43, 0.7), frame, sx * 0.806, 0.91, z).name = 'door-seam';
+          add(new THREE.BoxGeometry(0.035, 0.045, 0.22), dark, sx * 0.832, 1.12, z - 0.12).name = 'door-handle';
+        }
+        add(new THREE.BoxGeometry(0.1, 0.09, 2.0), dark, sx * 0.86, 0.43, -0.05).name = 'side-step';
+      }
       // 轮(前可转向): 轮胎 + 侧壁圈 + 轮毂盖
       const sidewallGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.24, 10);
       const hubGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.27, 8);
@@ -305,6 +335,16 @@ export class Vehicle {
       add(new THREE.BoxGeometry(0.09, 0.07, 0.14), dark, -0.31, 0.95, 0.82);
       add(new THREE.BoxGeometry(0.09, 0.07, 0.14), dark, 0.31, 0.95, 0.82);
       add(new THREE.BoxGeometry(0.04, 0.34, 0.05), dark, -0.16, 0.22, -0.15, 0, 0.35);
+      // 发动机、散热鳍片、脚踏和后避震，让裸露机械结构在近景成立。
+      add(new THREE.BoxGeometry(0.32, 0.3, 0.34), chrome, 0, 0.45, 0.02).name = 'engine-block';
+      for (let fy = 0.34; fy <= 0.58; fy += 0.06) {
+        add(new THREE.BoxGeometry(0.39, 0.025, 0.31), dark, 0, fy, 0.02).name = 'cooling-fin';
+      }
+      add(new THREE.BoxGeometry(0.52, 0.045, 0.08), chrome, 0, 0.36, -0.12).name = 'foot-pegs';
+      for (const sx of [-1, 1] as const) {
+        const spring = add(new THREE.BoxGeometry(0.045, 0.46, 0.045), chrome, sx * 0.17, 0.55, -0.48, -0.28);
+        spring.name = 'rear-suspension';
+      }
       // 轮: 轮胎 + 轮毂盖
       const wheelGeo = new THREE.CylinderGeometry(0.33, 0.33, 0.14, 10);
       const hubGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.15, 8);
@@ -340,6 +380,13 @@ export class Vehicle {
       add(new THREE.BoxGeometry(1.08, 0.36, 0.78), body, 0, 0.72, 0.88, -0.12);
       add(new THREE.BoxGeometry(0.42, 0.4, 0.48), dark, -0.28, 0.8, -0.14);
       add(new THREE.BoxGeometry(0.42, 0.4, 0.48), dark, 0.28, 0.8, -0.14);
+      add(new THREE.BoxGeometry(0.92, 0.14, 0.2), frame, 0, 1.02, 0.42, -0.18).name = 'dashboard';
+      const steering = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.025, 6, 12), dark);
+      steering.position.set(-0.28, 1.12, 0.42);
+      steering.rotation.x = -0.82;
+      steering.name = 'steering-wheel';
+      steering.castShadow = true;
+      g.add(steering);
       // 防滚架和尾部发动机护框。
       for (const sx of [-0.58, 0.58]) {
         add(new THREE.BoxGeometry(0.08, 1.0, 0.08), frame, sx, 1.08, -0.35, 0, sx * 0.14);
@@ -349,6 +396,24 @@ export class Vehicle {
       add(new THREE.BoxGeometry(1.15, 0.5, 0.58), frame, 0, 0.69, -0.95);
       add(new THREE.BoxGeometry(1.55, 0.1, 0.1), dark, 0, 0.35, 1.32);
       add(new THREE.BoxGeometry(1.55, 0.1, 0.1), dark, 0, 0.35, -1.32);
+      // 外露悬挂、发动机和灯组是沙滩车的主要辨识细节。
+      add(new THREE.BoxGeometry(0.82, 0.4, 0.52), dark, 0, 0.72, -0.95).name = 'engine-block';
+      for (const sy of [-0.12, 0, 0.12]) {
+        add(new THREE.BoxGeometry(0.72, 0.035, 0.06), hub, 0, 0.72 + sy, -1.255).name = 'engine-vent';
+      }
+      for (const sx of [-1, 1] as const) {
+        for (const z of [0.88, -0.88]) {
+          const arm = add(new THREE.BoxGeometry(0.54, 0.06, 0.08), frame, sx * 0.48, 0.42, z, 0, sx * 0.2);
+          arm.name = 'suspension-arm';
+        }
+        add(new THREE.BoxGeometry(0.18, 0.14, 0.08), this.mat(0xffe1a0), sx * 0.42, 0.76, 1.29).name = 'headlamp';
+      }
+      const buggyExhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 0.62, 8), hub);
+      buggyExhaust.rotation.x = Math.PI / 2;
+      buggyExhaust.position.set(0.42, 0.72, -1.26);
+      buggyExhaust.name = 'exhaust';
+      buggyExhaust.castShadow = true;
+      g.add(buggyExhaust);
       const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.24, 10);
       const hubGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.27, 8);
       for (const [wx, wz, front] of [[-0.72, 0.92, 1], [0.72, 0.92, 1], [-0.72, -0.92, 0], [0.72, -0.92, 0]] as const) {

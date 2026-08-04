@@ -92,7 +92,10 @@ const GEO = {
 // 细节件共享几何(面部/领口/护具/鞋底等, 一次创建全局复用)
 const GEO_D = {
   neck: new THREE.BoxGeometry(0.14, 0.08, 0.14),
-  visor: new THREE.BoxGeometry(0.22, 0.055, 0.02),
+  eye: new THREE.BoxGeometry(0.052, 0.042, 0.018),
+  brow: new THREE.BoxGeometry(0.068, 0.018, 0.016),
+  mouth: new THREE.BoxGeometry(0.085, 0.016, 0.014),
+  shirtPlacket: new THREE.BoxGeometry(0.026, 0.42, 0.018),
   collar: new THREE.BoxGeometry(0.36, 0.06, 0.26),
   shoulder: new THREE.BoxGeometry(0.15, 0.06, 0.17),
   strap: new THREE.BoxGeometry(0.07, 0.5, 0.02),
@@ -117,6 +120,8 @@ const MAT = {
   glove: new THREE.MeshStandardMaterial({ color: 0x3a342c, roughness: 0.92 }),
   sole: new THREE.MeshStandardMaterial({ color: 0x1b1712, roughness: 0.96 }),
   hair: new THREE.MeshStandardMaterial({ color: 0x3a2a20, roughness: 0.9 }),
+  face: new THREE.MeshStandardMaterial({ color: 0x292522, roughness: 0.88 }),
+  lip: new THREE.MeshStandardMaterial({ color: 0x8a5142, roughness: 0.9 }),
 };
 applySurfaceAsset(MAT.boot, 'fabric', 3.6, 0.48);
 applySurfaceAsset(MAT.dark, 'fabric', 3.8, 0.42);
@@ -148,6 +153,7 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   const pants = shirtMat(PANTS_COLORS[variant % PANTS_COLORS.length] as number);
 
   const torso = new THREE.Mesh(GEO.torso, shirt);
+  torso.name = 'torso';
   torso.position.set(0, 1.05, 0);
   torso.castShadow = true;
   body.add(torso);
@@ -156,6 +162,10 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     pocket.position.set(0.11 * side, -0.02, 0.15);
     torso.add(pocket);
   }
+  const placket = new THREE.Mesh(GEO_D.shirtPlacket, MAT.strap);
+  placket.name = 'shirt-placket';
+  placket.position.set(0, 0, 0.151);
+  torso.add(placket);
   // 腰带/裤腰色块
   const waist = new THREE.Mesh(GEO.waist, pants);
   waist.position.set(0, 0.79, 0);
@@ -184,12 +194,25 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   body.add(buckle);
 
   const head = new THREE.Mesh(GEO.head, MAT.skin);
+  head.name = 'head';
   head.position.set(0, 1.53, 0);
   head.castShadow = true;
-  // 面部面罩条(跟随头部; FPP 隐藏头部时一并隐藏)
-  const visor = new THREE.Mesh(GEO_D.visor, MAT.dark);
-  visor.position.set(0, 0.03, 0.155);
-  head.add(visor);
+  // 独立眼睛、眉毛和嘴部让近景表情可读，仍保持低多边形块面风格。
+  for (const side of [-1, 1] as const) {
+    const eye = new THREE.Mesh(GEO_D.eye, MAT.face);
+    eye.name = side < 0 ? 'eye-left' : 'eye-right';
+    eye.position.set(side * 0.072, 0.025, 0.159);
+    head.add(eye);
+    const brow = new THREE.Mesh(GEO_D.brow, MAT.hair);
+    brow.name = side < 0 ? 'brow-left' : 'brow-right';
+    brow.position.set(side * 0.072, 0.073, 0.158);
+    brow.rotation.z = side * -0.08;
+    head.add(brow);
+  }
+  const mouth = new THREE.Mesh(GEO_D.mouth, MAT.lip);
+  mouth.name = 'mouth';
+  mouth.position.set(0, -0.095, 0.16);
+  head.add(mouth);
   const hair = new THREE.Mesh(GEO_D.hair, MAT.hair);
   hair.position.set(0, 0.165, -0.01);
   head.add(hair);

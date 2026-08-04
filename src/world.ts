@@ -25,6 +25,7 @@ export const WORLD_HALF = 350;
 export const WATER_Y = 0.9;
 export const SUN_SHADOW_MAP_SIZE = 2048;
 export const CHARACTER_COLLISION_HEIGHT = 1.7;
+export const PLATFORM_TOP_SNAP_TOLERANCE = 0.12;
 
 export function characterOverlapsColliderHeight(feetY: number, minY: number, maxY: number): boolean {
   return feetY < maxY - 0.02 && feetY + CHARACTER_COLLISION_HEIGHT > minY;
@@ -90,6 +91,7 @@ export class World {
   readonly mapSites: ResolvedMapContentSite[] = [];
   readonly mapLootSpots: MapLootSpot[] = [];
   tacticalCoverCount = 0;
+  environmentDetailInstanceCount = 0;
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -483,7 +485,7 @@ varying vec3 vTerrainWorld;`,
       treeCap * 2, // 两段收分树干
     );
     const canopyMat = new THREE.MeshLambertMaterial({ color: 0x3f7a33 });
-    const canopyMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(1.7, 4.4, 7), canopyMat, treeCap * 2);
+    const canopyMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(1.7, 4.4, 7), canopyMat, treeCap * 3);
     const broadMat = new THREE.MeshLambertMaterial({ color: 0x568c3f });
     const broadMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.9, 1), broadMat, treeCap * 3);
     // 枝丫残桩(小斜枝)
@@ -492,12 +494,19 @@ varying vec3 vTerrainWorld;`,
       new THREE.MeshLambertMaterial({ color: 0x5e4026 }),
       treeCap * 2,
     );
+    const rootMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.2, 0.18, 1.15),
+      new THREE.MeshLambertMaterial({ color: 0x5a3c24 }),
+      treeCap * 3,
+    );
     this.addSway(canopyMat, 0.09, -2.0, 2.5);
     this.addSway(broadMat, 0.09, -1.5, 2.0);
     trunkMesh.castShadow = true;
     canopyMesh.castShadow = true;
     broadMesh.castShadow = true;
     branchMesh.castShadow = true;
+    rootMesh.castShadow = true;
+    rootMesh.receiveShadow = true;
     const placedPts: number[] = [];
     const canopyC = new THREE.Color();
     let pineCount = 0;
@@ -526,19 +535,24 @@ varying vec3 vTerrainWorld;`,
         vScale.set(s * 0.58, s * 0.62, s * 0.58);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2 + 1, m4);
-        // 主冠 + 顶冠
+        // 三层错落松冠: 下裙、主冠、顶冠，远看轮廓更自然。
+        vPos.set(x, h + 4.05 * s, z);
+        vScale.set(s * 1.12, s * 0.72, s * 1.12);
+        m4.compose(vPos, q0, vScale);
+        canopyMesh.setMatrixAt(pineCount * 3, m4);
+        const g = 0.75 + rng() * 0.5;
+        canopyC.setRGB(0.22 * g, 0.42 * g, 0.18 * g);
+        canopyMesh.setColorAt(pineCount * 3, canopyC);
         vPos.set(x, h + (3.4 + 2.0) * s, z);
         vScale.set(s, s, s);
         m4.compose(vPos, q0, vScale);
-        canopyMesh.setMatrixAt(pineCount * 2, m4);
-        const g = 0.75 + rng() * 0.5;
-        canopyC.setRGB(0.22 * g, 0.42 * g, 0.18 * g);
-        canopyMesh.setColorAt(pineCount * 2, canopyC);
+        canopyMesh.setMatrixAt(pineCount * 3 + 1, m4);
+        canopyMesh.setColorAt(pineCount * 3 + 1, canopyC);
         vPos.set(x, h + (3.4 + 2.0 + 2.3) * s, z);
         vScale.set(s * 0.58, s * 0.58, s * 0.58);
         m4.compose(vPos, q0, vScale);
-        canopyMesh.setMatrixAt(pineCount * 2 + 1, m4);
-        canopyMesh.setColorAt(pineCount * 2 + 1, canopyC);
+        canopyMesh.setMatrixAt(pineCount * 3 + 2, m4);
+        canopyMesh.setColorAt(pineCount * 3 + 2, canopyC);
         pineCount++;
       } else {
         // 阔叶: 双段树干 + 三团错落树冠
@@ -581,6 +595,15 @@ varying vec3 vTerrainWorld;`,
         m4.compose(vPos, q0, vScale);
         branchMesh.setMatrixAt(treeCount * 2 + bi, m4);
       }
+      // 三向根系贴住地面，消除树干像插在地表上的感觉。
+      for (let ri = 0; ri < 3; ri++) {
+        const ra = rng() * 0.45 + ri * Math.PI * 2 / 3;
+        q0.setFromEuler(new THREE.Euler(0, ra, 0.08));
+        vPos.set(x + Math.sin(ra) * 0.4 * s, h + 0.075 * s, z + Math.cos(ra) * 0.4 * s);
+        vScale.set(s * (0.8 + rng() * 0.25), s, s * (0.8 + rng() * 0.35));
+        m4.compose(vPos, q0, vScale);
+        rootMesh.setMatrixAt(treeCount * 3 + ri, m4);
+      }
       treeCount++;
       this.addCollider({ kind: 'cyl', x, z, r: 0.42 * s, y0: h - 0.5, y1: h + 3.4 * s, tag: 'tree' });
       return true;
@@ -593,23 +616,28 @@ varying vec3 vTerrainWorld;`,
       tryTree((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
     trunkMesh.count = treeCount * 2;
-    canopyMesh.count = pineCount * 2;
+    canopyMesh.count = pineCount * 3;
     broadMesh.count = broadCount * 3;
     branchMesh.count = treeCount * 2;
+    rootMesh.count = treeCount * 3;
     trunkMesh.instanceMatrix.needsUpdate = true;
     canopyMesh.instanceMatrix.needsUpdate = true;
     broadMesh.instanceMatrix.needsUpdate = true;
     branchMesh.instanceMatrix.needsUpdate = true;
+    rootMesh.instanceMatrix.needsUpdate = true;
     if (canopyMesh.instanceColor) canopyMesh.instanceColor.needsUpdate = true;
     if (broadMesh.instanceColor) broadMesh.instanceColor.needsUpdate = true;
     trunkMesh.computeBoundingSphere();
     canopyMesh.computeBoundingSphere();
     broadMesh.computeBoundingSphere();
     branchMesh.computeBoundingSphere();
+    rootMesh.computeBoundingSphere();
     scene.add(trunkMesh);
     scene.add(canopyMesh);
     scene.add(broadMesh);
     scene.add(branchMesh);
+    scene.add(rootMesh);
+    this.environmentDetailInstanceCount += rootMesh.count + pineCount;
 
     // ---- 岩石(西部山地加密; 两种棱角变体, 平直着色) ----
     const rockCap = 200; // 全图 120 + 山地加密 80
@@ -622,10 +650,13 @@ varying vec3 vTerrainWorld;`,
     applySurfaceAsset(rockMat, 'stone', 1.8, 0.72);
     const rockMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), rockMat, rockCap);
     const rockMesh2 = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, rockCap);
+    const rockAccentMat = new THREE.MeshStandardMaterial({ color: 0x68774f, roughness: 1, flatShading: true });
+    const rockAccentMesh = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockAccentMat, rockCap);
     rockMesh.castShadow = true;
     rockMesh.receiveShadow = true;
     rockMesh2.castShadow = true;
     rockMesh2.receiveShadow = true;
+    rockAccentMesh.receiveShadow = true;
     let rockCount = 0;
     let rockCount2 = 0;
     const tryRock = (x: number, z: number): boolean => {
@@ -649,6 +680,12 @@ varying vec3 vTerrainWorld;`,
         rockMesh2.setColorAt(rockCount2, canopyC);
         rockCount2++;
       }
+      // 扁平苔藓斑覆盖在向上的岩面，打破整块单色石头。
+      vPos.set(x + (rng() - 0.5) * s * 0.18, h + sy * 0.72, z + (rng() - 0.5) * s * 0.18);
+      vScale.set(s * (0.28 + rng() * 0.16), sy * 0.035, s * (0.24 + rng() * 0.14));
+      q0.setFromEuler(new THREE.Euler(0, rng() * Math.PI * 2, 0));
+      m4.compose(vPos, q0, vScale);
+      rockAccentMesh.setMatrixAt(rockCount + rockCount2 - 1, m4);
       this.addCollider({ kind: 'cyl', x, z, r: s * 0.92, y0: h - 1, y1: h + sy * 0.95, tag: 'rock' });
       return true;
     };
@@ -663,12 +700,17 @@ varying vec3 vTerrainWorld;`,
     rockMesh2.count = rockCount2;
     rockMesh.instanceMatrix.needsUpdate = true;
     rockMesh2.instanceMatrix.needsUpdate = true;
+    rockAccentMesh.count = rockCount + rockCount2;
+    rockAccentMesh.instanceMatrix.needsUpdate = true;
     if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
     if (rockMesh2.instanceColor) rockMesh2.instanceColor.needsUpdate = true;
     rockMesh.computeBoundingSphere();
     rockMesh2.computeBoundingSphere();
+    rockAccentMesh.computeBoundingSphere();
     scene.add(rockMesh);
     scene.add(rockMesh2);
+    scene.add(rockAccentMesh);
+    this.environmentDetailInstanceCount += rockAccentMesh.count;
 
     // ---- 灌木丛(无碰撞体: 子弹/移动均可穿过, 供隐蔽判定; 密林加密) ----
     const bushCap = 420; // 全图 300 + 密林加密 120
@@ -684,6 +726,13 @@ varying vec3 vTerrainWorld;`,
       bushMeshes.push(mesh);
       scene.add(mesh);
     }
+    const bushStemMesh = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.035, 0.055, 0.9, 5),
+      new THREE.MeshLambertMaterial({ color: 0x51432a }),
+      bushCap * 2,
+    );
+    bushStemMesh.castShadow = true;
+    scene.add(bushStemMesh);
     const bushPts: number[] = [];
     let bushCount = 0;
     const tryBush = (x: number, z: number): boolean => {
@@ -712,6 +761,14 @@ varying vec3 vTerrainWorld;`,
         canopyC.setHex(BUSH_COLORS[colorIdx] as number).multiplyScalar(0.85 + rng() * 0.3);
         mesh.setColorAt(bushCount, canopyC);
       }
+      for (let stem = 0; stem < 2; stem++) {
+        const sa = rng() * Math.PI * 2;
+        q0.setFromEuler(new THREE.Euler(stem === 0 ? 0.14 : -0.18, sa, 0));
+        vPos.set(x + Math.sin(sa) * 0.12 * s, h + 0.38 * s, z + Math.cos(sa) * 0.12 * s);
+        vScale.set(s, s, s);
+        m4.compose(vPos, q0, vScale);
+        bushStemMesh.setMatrixAt(bushCount * 2 + stem, m4);
+      }
       this.bushes.push({ x, z, r: s * 1.5 });
       bushCount++;
       return true;
@@ -723,6 +780,16 @@ varying vec3 vTerrainWorld;`,
     for (let t = 0; t < bushCap * 8 && bushCount < bushCap; t++) {
       tryBush((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
+    for (const mesh of bushMeshes) {
+      mesh.count = bushCount;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.computeBoundingSphere();
+    }
+    bushStemMesh.count = bushCount * 2;
+    bushStemMesh.instanceMatrix.needsUpdate = true;
+    bushStemMesh.computeBoundingSphere();
+    this.environmentDetailInstanceCount += bushStemMesh.count;
 
     // ---- 草丛(纯装饰: 无碰撞体, 不挡子弹/视线) ----
     const grassCap = navigator.hardwareConcurrency <= 4 ? 2600 : 4500;
@@ -2066,6 +2133,8 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
       if (b.off) continue;
       // 已站在楼板上方或拥有完整净空时不阻挡；否则楼板边缘也必须横向推出，
       // 避免 AI 从高台侧面钻进楼板并在室内穿模。
+      // 首帧或卡顿帧会让脚底在地面吸附前短暂下沉，顶部容差避免整块楼板把角色横向推出房屋。
+      if ((b.tag === 'floor' || b.tag === 'roof') && p.y >= b.maxY - PLATFORM_TOP_SNAP_TOLERANCE) continue;
       if (!characterOverlapsColliderHeight(p.y, b.minY, b.maxY)) continue;
       const cx = clamp(p.x, b.minX, b.maxX);
       const cz = clamp(p.z, b.minZ, b.maxZ);

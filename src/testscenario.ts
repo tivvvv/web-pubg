@@ -12,6 +12,7 @@ import { REGIONS, regionOrWilderness } from './regions';
 import type { AttachmentId, GunState } from './types';
 import { fireModeOf } from './gunplay';
 import { auditReleaseState } from './releaseaudit';
+import type { ArchId } from './buildings';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
@@ -26,6 +27,9 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=stairs&traverse=up&arch=cottage2',
   'scenario=stairs&traverse=up&arch=apartment&flight=2',
   'scenario=stairs&view=entrance&arch=cottage2',
+  'scenario=stairs&view=facade&arch=apartment&plot=last',
+  'scenario=stairs&view=interior&arch=cottage1&plot=last',
+  'scenario=stairs&view=roof&arch=cottage1',
   'scenario=swim&auto=1',
   'scenario=botswim',
   'scenario=combat&weapon=rifle&burst=8&ads=1',
@@ -118,6 +122,19 @@ function scenarioFromUrl(): ScenarioId | null {
   return parseScenarioId(params.get('scenario'));
 }
 
+function scenarioBuildingArch(params: URLSearchParams): ArchId {
+  const requested = params.get('arch');
+  return requested === 'cottage1' || requested === 'terrace' || requested === 'apartment' ||
+    requested === 'barn' || requested === 'shop' || requested === 'gym'
+    ? requested
+    : 'cottage2';
+}
+
+function scenarioBuildingPlot(game: Game, params: URLSearchParams) {
+  const matches = game.world.buildings.plots.filter((candidate) => candidate.arch === scenarioBuildingArch(params));
+  return params.get('plot') === 'last' ? matches[matches.length - 1] : matches[0];
+}
+
 function showScenarioPanel(id: ScenarioId, game: Game): void {
   const panel = document.createElement('aside');
   panel.id = 'test-scenario-panel';
@@ -125,6 +142,10 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.tacticalCoverCount = String(game.world.tacticalCoverCount);
   panel.dataset.mapSiteCount = String(game.world.mapSites.length);
   panel.dataset.mapLootSpotCount = String(game.world.mapLootSpots.length);
+  panel.dataset.buildingVisualInstances = String(game.world.buildings.visualInstanceCount);
+  panel.dataset.buildingDetailInstances = String(game.world.buildings.modelDetailInstanceCount);
+  panel.dataset.environmentDetailInstances = String(game.world.environmentDetailInstanceCount);
+  panel.dataset.vehicleModelParts = game.vehicles.list.map((vehicle) => `${vehicle.kind}:${vehicle.modelPartCount}`).join(',');
   let terrainMin = Infinity;
   let terrainMax = -Infinity;
   let terrainNonFinite = 0;
@@ -279,6 +300,14 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   }
   panel.innerHTML = `<strong>TEST / ${id.toUpperCase()}</strong><span>${SCENARIO_TEXT[id]}</span>`;
   const params = new URLSearchParams(window.location.search);
+  if (id === 'stairs') {
+    const plot = scenarioBuildingPlot(game, params);
+    if (plot) {
+      panel.dataset.buildingArch = plot.arch;
+      panel.dataset.buildingBounds = [plot.minX + 2, plot.minZ + 2, plot.maxX - 2, plot.maxZ - 2]
+        .map((value) => value.toFixed(2)).join(',');
+    }
+  }
   const rawReleaseCase = Number(params.get('case'));
   const releaseCase = Number.isFinite(rawReleaseCase)
     ? Math.max(0, Math.min(RELEASE_SCENARIO_ROUTES.length - 1, Math.trunc(rawReleaseCase)))
@@ -316,6 +345,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.characterHp = character.hp.toFixed(1);
       panel.dataset.characterFlash = character.flashT.toFixed(2);
       panel.dataset.characterGrounded = String(character.grounded);
+      panel.dataset.inputKeys = [...game.input.keys].sort().join(',');
       panel.dataset.characterPosition = [character.pos.x, character.pos.y, character.pos.z]
         .map((value) => value.toFixed(2)).join(',');
       panel.dataset.playerDescent = controller.descent ?? 'none';
@@ -812,14 +842,77 @@ function laneDirection(lane: readonly [number, number, number, number]): { x: nu
 
 function setupStairs(game: Game): void {
   const params = new URLSearchParams(window.location.search);
-  const requestedArch = params.get('arch');
-  const arch = requestedArch === 'cottage1' || requestedArch === 'terrace' || requestedArch === 'apartment' ||
-    requestedArch === 'barn' || requestedArch === 'shop' || requestedArch === 'gym'
-    ? requestedArch
-    : 'cottage2';
-  const plot = game.world.buildings.plots.find((candidate) => candidate.arch === arch);
+  const arch = scenarioBuildingArch(params);
+  const plot = scenarioBuildingPlot(game, params);
   if (!plot) {
     setGroundPlayer(game, -60, -20);
+    return;
+  }
+  if (params.get('view') === 'roof') {
+    const ix0 = plot.minX + 2;
+    const ix1 = plot.maxX - 2;
+    const iz0 = plot.minZ + 2;
+    const iz1 = plot.maxZ - 2;
+    const x = (ix0 + ix1) * 0.5;
+    const z = iz0 + (iz1 - iz0) * 0.24;
+    setGroundPlayer(game, x, z);
+    const player = game.playerCtl;
+    if (player) {
+      const roofY = game.world.groundHeight(x, z, plot.flatH + 5.2);
+      player.char.pos.y = roofY;
+      player.char.groundH = roofY;
+      player.char.grounded = true;
+      player.char.vy = 0;
+      player.vy = 0;
+      player.yaw = 0;
+      player.pitch = -0.08;
+    }
+    return;
+  }
+  if (params.get('view') === 'facade') {
+    const cx = (plot.minX + plot.maxX) / 2;
+    const cz = (plot.minZ + plot.maxZ) / 2;
+    const halfX = (plot.maxX - plot.minX) / 2;
+    const halfZ = (plot.maxZ - plot.minZ) / 2;
+    const candidates = [
+      { x: cx, z: cz - halfZ - 7.5 },
+      { x: cx, z: cz + halfZ + 7.5 },
+      { x: cx - halfX - 7.5, z: cz },
+      { x: cx + halfX + 7.5, z: cz },
+    ];
+    const chosen = candidates.find((candidate) => {
+      const terrain = game.world.getHeight(candidate.x, candidate.z);
+      if (terrain < WATER_Y + 0.45 || !game.world.pointFree(candidate.x, candidate.z, 0.65, WATER_Y + 0.2, 17)) return false;
+      const dx = candidate.x - cx;
+      const dz = candidate.z - cz;
+      const length = Math.hypot(dx, dz) || 1;
+      return game.world.pointFree(candidate.x + dx / length * 3.6, candidate.z + dz / length * 3.6, 0.45, WATER_Y + 0.2, 17);
+    }) ?? candidates[0];
+    setGroundPlayer(game, chosen.x, chosen.z);
+    const player = game.playerCtl;
+    if (player) {
+      player.yaw = Math.atan2(cx - chosen.x, cz - chosen.z);
+      player.pitch = 0.18;
+    }
+    return;
+  }
+  if (params.get('view') === 'interior') {
+    const ix0 = plot.minX + 2;
+    const ix1 = plot.maxX - 2;
+    const iz0 = plot.minZ + 2;
+    const iz1 = plot.maxZ - 2;
+    // 入口房中央避开东侧餐桌、西侧楼梯和后方隔墙，保证镜头不会被碰撞推出室外。
+    const x = ix0 + (ix1 - ix0) * 0.5;
+    const z = iz0 + (iz1 - iz0) * 0.34;
+    setGroundPlayer(game, x, z);
+    game.viewFpp = true;
+    const player = game.playerCtl;
+    if (player) {
+      const targetX = ix1 - 1.55;
+      const targetZ = iz0 + 1.55;
+      player.yaw = Math.atan2(targetX - x, targetZ - z);
+      player.pitch = -0.05;
+    }
     return;
   }
   if (params.get('view') === 'entrance') {

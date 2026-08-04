@@ -8,7 +8,9 @@ import {
   GROUND_SNAP_DISTANCE, shouldEnterSwimming, shouldExitSwimming, shouldSnapToGround, SWIM_ENTER_DEPTH,
   SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
 } from '../src/character';
-import { CHARACTER_COLLISION_HEIGHT, characterOverlapsColliderHeight, WATER_Y } from '../src/world';
+import {
+  CHARACTER_COLLISION_HEIGHT, characterOverlapsColliderHeight, PLATFORM_TOP_SNAP_TOLERANCE, WATER_Y,
+} from '../src/world';
 
 describe('游泳上岸点搜索', () => {
   it('优先寻找移动方向上的可站立岸点', () => {
@@ -85,6 +87,8 @@ describe('长途转移恢复', () => {
     expect(characterOverlapsColliderHeight(3.86, 4.7, 4.9)).toBe(true);
     expect(characterOverlapsColliderHeight(4.9, 4.7, 4.9)).toBe(false);
     expect(characterOverlapsColliderHeight(4.7 - CHARACTER_COLLISION_HEIGHT, 4.7, 4.9)).toBe(false);
+    expect(PLATFORM_TOP_SNAP_TOLERANCE).toBeGreaterThan(0.05);
+    expect(PLATFORM_TOP_SNAP_TOLERANCE).toBeLessThan(0.2);
   });
 
   it('正前方被阻挡时选择一段连续可达的局部逃生线', () => {

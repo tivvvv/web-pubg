@@ -9,6 +9,8 @@ import { random } from './random';
 import { applySurfaceAsset } from './assets';
 import { regionAt, type RegionId } from './regions';
 
+const UP_X = new THREE.Vector3(1, 0, 0);
+
 export interface LootSpot {
   x: number; y: number; z: number;
   premium: boolean; // 高级点位(二楼顶/体育馆/三楼), 偏高级枪
@@ -47,6 +49,20 @@ const FRAME_C = 0x5f5245; // 深色框边
 const SHUTTER_C = 0x6a5a48; // 百叶窗板
 const SKIRT_C = 0x6f6a5e; // 墙基裙(加深, 接地点缀)
 const CRATE_C = 0x9a7f56;
+const GUTTER_C = 0x545c5b;
+const INTERIOR_WOOD_C = 0x6d5138;
+const FABRIC_C = 0x7d836c;
+
+// 坡屋面瓦层的纵深位置和高度。三组成对分布，保持屋面左右对称。
+export const GABLE_ROOF_COURSES = Object.freeze([
+  { z: 0.1, y: 0.205 }, { z: 0.9, y: 0.205 },
+  { z: 0.25, y: 0.425 }, { z: 0.75, y: 0.425 },
+  { z: 0.4, y: 0.645 }, { z: 0.6, y: 0.645 },
+]);
+
+export function gableRoofPitch(depth: number): number {
+  return Math.atan2(0.72, Math.max(1, depth * 0.5 + 0.22));
+}
 
 export interface RegionalBuildingStyle {
   walls: readonly number[];
@@ -176,7 +192,7 @@ type BoxFn = (
   tag: 'wall' | 'floor' | 'roof',
   x0: number, y0: number, z0: number, x1: number, y1: number, z1: number,
   c: number,
-  o?: { collider?: boolean; platform?: boolean },
+  o?: { collider?: boolean; platform?: boolean; detail?: boolean; visual?: boolean; rotateX?: number },
 ) => void;
 
 interface Palette { wall: number; roof: number; chimney: boolean; ac: boolean }
@@ -235,6 +251,8 @@ export class Buildings {
   lootSpots: LootSpot[] = [];
   destructibles: Destructible[] = [];
   root: THREE.Group | null = null;
+  visualInstanceCount = 0;
+  modelDetailInstanceCount = 0;
 
   // 门/窗几何体按墙的走向区分: AlongX 用于沿 X 延伸的墙(南/北墙), AlongZ 用于沿 Z 延伸的墙(东/西墙)
   private doorGeoAlongX = new THREE.BoxGeometry(DOOR_W, DOOR_H, 0.1);
@@ -250,6 +268,8 @@ export class Buildings {
   // 门扇细节共享几何(拼缝/把手板/把手珠, 按墙走向两套)
   private trimGeoX = new THREE.BoxGeometry(0.05, DOOR_H * 0.88, 0.02);
   private trimGeoZ = new THREE.BoxGeometry(0.02, DOOR_H * 0.88, 0.05);
+  private railGeoX = new THREE.BoxGeometry(DOOR_W * 0.82, 0.07, 0.025);
+  private railGeoZ = new THREE.BoxGeometry(0.025, 0.07, DOOR_W * 0.82);
   private handleGeoX = new THREE.BoxGeometry(0.1, 0.05, 0.05);
   private handleGeoZ = new THREE.BoxGeometry(0.05, 0.05, 0.1);
   private plateGeoX = new THREE.BoxGeometry(0.09, 0.16, 0.02);
@@ -370,13 +390,22 @@ export class Buildings {
       tag: 'wall' | 'floor' | 'roof';
       x0: number; y0: number; z0: number; x1: number; y1: number; z1: number;
       c: THREE.Color;
+      detail: boolean;
+      rotateX: number;
     }
     const insts: Inst[] = [];
     const col = new THREE.Color();
     const box: BoxFn = (tag, x0, y0, z0, x1, y1, z1, color, opts = {}) => {
       col.setHex(color);
       const jitter = 0.94 + ((insts.length * 7919) % 13) / 100;
-      insts.push({ tag, x0, y0, z0, x1, y1, z1, c: col.clone().multiplyScalar(jitter) });
+      if (opts.visual !== false) {
+        insts.push({
+          tag, x0, y0, z0, x1, y1, z1,
+          c: col.clone().multiplyScalar(jitter),
+          detail: opts.detail === true,
+          rotateX: opts.rotateX ?? 0,
+        });
+      }
       if (opts.collider !== false) {
         world.addCollider({ kind: 'aabb', minX: x0, minY: y0, minZ: z0, maxX: x1, maxY: y1, maxZ: z1, tag });
       }
@@ -413,9 +442,12 @@ export class Buildings {
       if (plot.arch !== 'gym') this.addInteriorDetails(world, plot, box, idx);
       this.addYardCover(plot, box, idx);
       if (regionalStyle) this.addRegionalFacade(plot, box, regionalStyle, idx);
+      this.addExteriorHardware(plot, box, idx);
     });
 
     this.sanitizeLootSpots(world);
+    this.visualInstanceCount = insts.length;
+    this.modelDetailInstanceCount = insts.filter((item) => item.detail).length;
 
     // 墙体、楼地板和屋面分别使用专用表面资产。仍然保持实例化，只增加两个固定绘制调用。
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -444,6 +476,8 @@ export class Buildings {
       items.forEach((b, i) => {
         t.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
         s.set(Math.max(0.02, b.x1 - b.x0), Math.max(0.02, b.y1 - b.y0), Math.max(0.02, b.z1 - b.z0));
+        if (b.rotateX === 0) q.identity();
+        else q.setFromAxisAngle(UP_X, b.rotateX);
         m.compose(t, q, s);
         mesh.setMatrixAt(i, m);
         mesh.setColorAt(i, b.c);
@@ -607,6 +641,35 @@ export class Buildings {
     box('wall', x0, y, z0, x1, y + h, z1, RAIL_C);
   }
 
+  private addChair(box: BoxFn, x: number, z: number, floorY: number, back: 1 | -1): void {
+    const opts = { collider: false, detail: true } as const;
+    box('wall', x - 0.25, floorY + 0.4, z - 0.23, x + 0.25, floorY + 0.49, z + 0.23, INTERIOR_WOOD_C, opts);
+    for (const dx of [-0.19, 0.19]) for (const dz of [-0.17, 0.17]) {
+      box('wall', x + dx - 0.035, floorY, z + dz - 0.035, x + dx + 0.035, floorY + 0.4, z + dz + 0.035, INTERIOR_WOOD_C, opts);
+    }
+    const bz = z + back * 0.21;
+    box('wall', x - 0.25, floorY + 0.48, bz - 0.035, x + 0.25, floorY + 0.98, bz + 0.035, INTERIOR_WOOD_C, opts);
+    box('wall', x - 0.2, floorY + 0.68, bz - 0.055, x + 0.2, floorY + 0.75, bz + 0.055, 0x8d6f4c, opts);
+  }
+
+  private addCrateBands(
+    box: BoxFn,
+    x0: number, y0: number, z0: number,
+    x1: number, y1: number, z1: number,
+  ): void {
+    const opts = { collider: false, detail: true } as const;
+    const t = 0.045;
+    const inset = 0.08;
+    for (const y of [y0 + (y1 - y0) * 0.26, y0 + (y1 - y0) * 0.74]) {
+      box('wall', x0 - t, y - t, z0 + inset, x1 + t, y + t, z0 + inset + t, FRAME_C, opts);
+      box('wall', x0 - t, y - t, z1 - inset - t, x1 + t, y + t, z1 - inset, FRAME_C, opts);
+    }
+    for (const x of [x0 + inset, x1 - inset]) {
+      box('wall', x - t, y0 + inset, z0 - t, x + t, y1 - inset, z0 + t, FRAME_C, opts);
+      box('wall', x - t, y0 + inset, z1 - t, x + t, y1 - inset, z1 + t, FRAME_C, opts);
+    }
+  }
+
   // 房间隔断和家具都参与碰撞，既让室内更像正式空间，也形成可利用的近战掩体。
   private addInteriorDetails(world: World, plot: HousePlot, box: BoxFn, idx: number): void {
     const ix0 = plot.minX + 2, ix1 = plot.maxX - 2, iz0 = plot.minZ + 2, iz1 = plot.maxZ - 2;
@@ -637,8 +700,10 @@ export class Buildings {
           : ix1 - 1.15;
         const cz = iz0 + (floor === 1 ? 1.35 : 1.5);
         box('wall', cx - 0.45, fy, cz - 0.45, cx + 0.45, fy + 0.78, cz + 0.45, CRATE_C);
+        this.addCrateBands(box, cx - 0.45, fy, cz - 0.45, cx + 0.45, fy + 0.78, cz + 0.45);
         if (floor === floors) {
           box('wall', cx - 0.28, fy + 0.78, cz - 0.28, cx + 0.36, fy + 1.34, cz + 0.36, CRATE_C);
+          this.addCrateBands(box, cx - 0.28, fy + 0.78, cz - 0.28, cx + 0.36, fy + 1.34, cz + 0.36);
         }
       }
     }
@@ -651,6 +716,11 @@ export class Buildings {
       for (const sx of [-0.57, 0.57]) for (const sz of [-0.31, 0.31]) {
         box('wall', tx + sx - 0.045, f1, tz + sz - 0.045, tx + sx + 0.045, f1 + 0.68, tz + sz + 0.045, 0x554334, { collider: false });
       }
+      // 餐椅、地毯和桌面小物只做视觉层，不扩大家具碰撞范围。
+      box('floor', tx - 1.05, f1 + 0.015, tz - 1.12, tx + 1.05, f1 + 0.035, tz + 1.12, FABRIC_C, { collider: false, detail: true });
+      this.addChair(box, tx, tz - 0.86, f1, -1);
+      this.addChair(box, tx, tz + 0.86, f1, 1);
+      box('wall', tx - 0.12, f1 + 0.8, tz - 0.12, tx + 0.12, f1 + 1.02, tz + 0.12, 0x777d65, { collider: false, detail: true });
       // 南侧房间的置物架贴东墙布置，不再与餐桌或楼梯重叠。
       const shelfX = ix1 - 0.48;
       const shelfZ = iz1 - 1.35;
@@ -663,6 +733,9 @@ export class Buildings {
         const bedZ = iz1 - 1.8;
         box('wall', ix0 + 0.65, f1, bedZ - 0.9, ix0 + 1.9, f1 + 0.48, bedZ + 0.9, 0x726957);
         box('wall', ix0 + 0.68, f1 + 0.48, bedZ - 0.88, ix0 + 1.87, f1 + 0.62, bedZ + 0.88, 0x9b8f73, { collider: false });
+        box('wall', ix0 + 0.59, f1, bedZ - 0.94, ix0 + 0.72, f1 + 1.05, bedZ + 0.94, INTERIOR_WOOD_C, { collider: false, detail: true });
+        box('wall', ix0 + 0.74, f1 + 0.62, bedZ - 0.66, ix0 + 1.08, f1 + 0.74, bedZ + 0.66, 0xd5cbb7, { collider: false, detail: true });
+        box('wall', ix0 + 1.54, f1 + 0.62, bedZ - 0.88, ix0 + 1.78, f1 + 0.68, bedZ + 0.88, 0x6e765f, { collider: false, detail: true });
       }
       lootX = tx - 1.05;
       lootZ = tz + 0.85;
@@ -673,6 +746,11 @@ export class Buildings {
       for (const sy of [0.45, 0.95, 1.45]) {
         box('wall', sx0 - 0.06, f1 + sy, iz1 - 0.56, ix1 - 0.39, f1 + sy + 0.06, iz1 - 0.12, 0x9b815e, { collider: false });
       }
+      for (let i = 0; i < 6; i++) {
+        const px = sx0 + 0.16 + (i % 3) * 0.5;
+        const py = f1 + (i < 3 ? 0.53 : 1.03);
+        box('wall', px, py, iz1 - 0.62, px + 0.23, py + 0.28, iz1 - 0.3, i % 2 === 0 ? 0x9f7652 : 0x657b70, { collider: false, detail: true });
+      }
       lootX = sx0 - 0.55;
       lootZ = iz1 - 1.0;
     } else if (plot.arch === 'barn') {
@@ -680,6 +758,13 @@ export class Buildings {
       box('wall', ix0 + 0.5, f1 + 0.7, iz1 - 0.7, ix0 + 2.75, f1 + 0.84, iz1 - 0.28, 0x806548);
       for (const x of [ix0 + 0.68, ix0 + 2.57]) {
         box('wall', x - 0.06, f1, iz1 - 0.58, x + 0.06, f1 + 0.7, iz1 - 0.4, 0x554334, { collider: false });
+      }
+      // 工具墙和长柄农具增强谷仓的功能辨识度。
+      box('wall', ix0 + 0.52, f1 + 1.05, iz1 - 0.22, ix0 + 2.7, f1 + 2.0, iz1 - 0.14, 0x66533e, { collider: false, detail: true });
+      for (let i = 0; i < 4; i++) {
+        const x = ix0 + 0.82 + i * 0.5;
+        box('wall', x - 0.035, f1 + 0.82, iz1 - 0.29, x + 0.035, f1 + 1.78, iz1 - 0.2, 0x4b4237, { collider: false, detail: true });
+        box('wall', x - 0.18, f1 + 0.78, iz1 - 0.31, x + 0.18, f1 + 0.86, iz1 - 0.18, 0x6c6e65, { collider: false, detail: true });
       }
       lootX = ix0 + 3.35;
       lootZ = iz1 - 1.0;
@@ -742,7 +827,11 @@ export class Buildings {
     const cx = plot.minX + 0.55;
     const cz = plot.minZ + 0.7;
     box('wall', cx, y, cz, cx + 0.9, y + 0.72, cz + 0.9, CRATE_C);
-    if (idx % 2 === 1) box('wall', cx + 0.18, y + 0.72, cz + 0.15, cx + 0.86, y + 1.32, cz + 0.83, CRATE_C);
+    this.addCrateBands(box, cx, y, cz, cx + 0.9, y + 0.72, cz + 0.9);
+    if (idx % 2 === 1) {
+      box('wall', cx + 0.18, y + 0.72, cz + 0.15, cx + 0.86, y + 1.32, cz + 0.83, CRATE_C);
+      this.addCrateBands(box, cx + 0.18, y + 0.72, cz + 0.15, cx + 0.86, y + 1.32, cz + 0.83);
+    }
   }
 
   // 六区建筑共享结构规则，但用檐线、墙脚和屋顶设备形成远距离可辨认的区域视觉语言。
@@ -796,14 +885,106 @@ export class Buildings {
     }
   }
 
-  // 阶梯坡屋顶(3 级: 檐口→中段→脊, ridge 沿 x 走向) + 屋脊压条
+  // 檐沟、落水管、墙面线盒和基础通风口补齐建筑外立面的功能构件。
+  // 这些细件全部合并进既有实例网格且不参与碰撞，不改变门窗和屋顶通行。
+  private addExteriorHardware(plot: HousePlot, box: BoxFn, idx: number): void {
+    const ix0 = plot.minX + 2;
+    const ix1 = plot.maxX - 2;
+    const iz0 = plot.minZ + 2;
+    const iz1 = plot.maxZ - 2;
+    const f1 = plot.flatH + 0.28;
+    const d = iz1 - iz0;
+    const roofBase = (() => {
+      if (plot.arch === 'barn') return f1 + 4.2;
+      if (plot.arch === 'gym') return f1 + 8.6;
+      if (plot.arch === 'apartment') return f1 + WALL_H * 3 + SLAB_T * 2;
+      if (plot.arch === 'cottage2' || plot.arch === 'terrace') return f1 + WALL_H * 2 + SLAB_T - 0.15;
+      return f1 + WALL_H;
+    })();
+    const farZ = plot.arch === 'terrace' ? iz0 + d * 0.55 + 0.1 : iz1;
+    const opts = { collider: false, detail: true } as const;
+
+    // 双侧檐沟和前立面落水管。
+    box('roof', ix0 - 0.24, roofBase + 0.08, iz0 - 0.25, ix1 + 0.24, roofBase + 0.18, iz0 - 0.12, GUTTER_C, opts);
+    box('roof', ix0 - 0.24, roofBase + 0.08, farZ + 0.12, ix1 + 0.24, roofBase + 0.18, farZ + 0.25, GUTTER_C, opts);
+    const pipeX = idx % 2 === 0 ? ix0 + 0.16 : ix1 - 0.16;
+    const pipeZ = iz0 - 0.18;
+    box('roof', pipeX - 0.055, f1 - 0.16, pipeZ - 0.055, pipeX + 0.055, roofBase + 0.13, pipeZ + 0.055, GUTTER_C, opts);
+    box('roof', pipeX - 0.055, f1 - 0.18, pipeZ - 0.32, pipeX + 0.055, f1 - 0.05, pipeZ + 0.02, GUTTER_C, opts);
+    for (const t of [0.22, 0.52, 0.82]) {
+      const y = f1 + (roofBase - f1) * t;
+      box('roof', pipeX - 0.1, y - 0.025, iz0 - 0.21, pipeX + 0.1, y + 0.025, iz0 - 0.08, FRAME_C, opts);
+    }
+
+    // 基础通风口避开居中的正门，侧墙线盒只在一半建筑出现，保持变化。
+    for (const x of [ix0 + 1.05, ix1 - 1.05]) {
+      box('wall', x - 0.26, f1 + 0.18, iz0 - 0.17, x + 0.26, f1 + 0.42, iz0 - 0.115, 0x4e5654, opts);
+      for (let i = 0; i < 3; i++) {
+        const yy = f1 + 0.23 + i * 0.065;
+        box('wall', x - 0.21, yy, iz0 - 0.19, x + 0.21, yy + 0.018, iz0 - 0.1, 0x2f3534, opts);
+      }
+    }
+    if (idx % 2 === 0 && plot.arch !== 'gym') {
+      const meterZ = iz0 + Math.min(1.35, d * 0.24);
+      box('wall', ix1 + 0.075, f1 + 1.02, meterZ - 0.22, ix1 + 0.19, f1 + 1.48, meterZ + 0.22, 0x747d79, opts);
+      box('wall', ix1 + 0.09, f1 + 0.2, meterZ - 0.035, ix1 + 0.15, f1 + 1.03, meterZ + 0.035, GUTTER_C, opts);
+    }
+  }
+
+  // 真双坡屋面使用旋转薄板表现，隐藏的六级碰撞阶梯让站立高度贴近斜面。
   private gableRoof(box: BoxFn, ix0: number, iz0: number, ix1: number, iz1: number, yBase: number, c: number): void {
     const dz = iz1 - iz0;
-    box('roof', ix0 - 0.18, yBase, iz0 - 0.18, ix1 + 0.18, yBase + 0.2, iz1 + 0.18, c);
-    box('roof', ix0 - 0.1, yBase + 0.2, iz0 + dz * 0.16, ix1 + 0.1, yBase + 0.42, iz1 - dz * 0.16, c);
-    box('roof', ix0 - 0.02, yBase + 0.42, iz0 + dz * 0.34, ix1 + 0.02, yBase + 0.64, iz1 - dz * 0.34, c);
     const zm = (iz0 + iz1) / 2;
-    box('roof', ix0 - 0.06, yBase + 0.64, zm - 0.16, ix1 + 0.06, yBase + 0.76, zm + 0.16, FRAME_C, { collider: false });
+    const rise = 0.72;
+    const overhang = 0.22;
+    const halfRun = dz * 0.5 + overhang;
+    const panelLength = Math.hypot(halfRun, rise);
+    const pitch = gableRoofPitch(dz);
+    const northCenterZ = (iz0 - overhang + zm) * 0.5;
+    const southCenterZ = (zm + iz1 + overhang) * 0.5;
+    const panelCenterY = yBase + rise * 0.5 + 0.06;
+
+    // 六级隐藏碰撞体把斜面高度误差压到 6cm 左右。
+    const collisionSteps = 6;
+    for (let side = 0; side < 2; side++) {
+      for (let i = 0; i < collisionSteps; i++) {
+        const near = dz * 0.5 * (i / collisionSteps);
+        const far = dz * 0.5 * ((i + 1) / collisionSteps);
+        const z0 = side === 0 ? iz0 + near : iz1 - far;
+        const z1 = side === 0 ? iz0 + far : iz1 - near;
+        const top = yBase + rise * ((i + 0.5) / collisionSteps);
+        box('roof', ix0 - 0.18, yBase - 0.04, z0, ix1 + 0.18, top, z1, c, { visual: false });
+      }
+    }
+
+    const panelOptsNorth = { collider: false, detail: true, rotateX: -pitch } as const;
+    const panelOptsSouth = { collider: false, detail: true, rotateX: pitch } as const;
+    box(
+      'roof', ix0 - overhang, panelCenterY - 0.06, northCenterZ - panelLength / 2,
+      ix1 + overhang, panelCenterY + 0.06, northCenterZ + panelLength / 2,
+      c, panelOptsNorth,
+    );
+    box(
+      'roof', ix0 - overhang, panelCenterY - 0.06, southCenterZ - panelLength / 2,
+      ix1 + overhang, panelCenterY + 0.06, southCenterZ + panelLength / 2,
+      c, panelOptsSouth,
+    );
+    box('roof', ix0 - 0.08, yBase + rise, zm - 0.15, ix1 + 0.08, yBase + rise + 0.12, zm + 0.15, FRAME_C, { collider: false, detail: true });
+    // 成对瓦层压条打破大块水平屋面的塑料感，同时保留原屋顶平台碰撞。
+    for (const course of GABLE_ROOF_COURSES) {
+      const z = iz0 + dz * course.z;
+      const rotateX = course.z < 0.5 ? -pitch : pitch;
+      box(
+        'roof', ix0 - 0.14, yBase + course.y, z - 0.045,
+        ix1 + 0.14, yBase + course.y + 0.055, z + 0.045,
+        FRAME_C, { collider: false, detail: true, rotateX },
+      );
+    }
+    // 山墙两端以同角度深色封边，远处轮廓连续且没有矩形挡板。
+    for (const x of [ix0 - 0.22, ix1 + 0.12]) {
+      box('roof', x, panelCenterY - 0.075, northCenterZ - panelLength / 2, x + 0.1, panelCenterY + 0.075, northCenterZ + panelLength / 2, FRAME_C, panelOptsNorth);
+      box('roof', x, panelCenterY - 0.075, southCenterZ - panelLength / 2, x + 0.1, panelCenterY + 0.075, southCenterZ + panelLength / 2, FRAME_C, panelOptsSouth);
+    }
   }
 
   // 墙基裙(一周, 纯装饰)
@@ -875,6 +1056,13 @@ export class Buildings {
         seam.position.set(axis === 'x' ? off : 0.056, -0.05, axis === 'x' ? 0.056 : off);
         mesh.add(seam);
       }
+      // 横档把门板分成上下三块，近距离不再只是一整块平面。
+      const railGeo = axis === 'x' ? this.railGeoX : this.railGeoZ;
+      for (const offY of [-DOOR_H * 0.27, DOOR_H * 0.22]) {
+        const rail = new THREE.Mesh(railGeo, this.doorTrimMat);
+        rail.position.set(axis === 'x' ? 0 : 0.056, offY, axis === 'x' ? 0.056 : 0);
+        mesh.add(rail);
+      }
       // 把手在远离铰链侧(局部坐标铰链在 -DOOR_W/2 侧)
       const hx = (DOOR_W / 2 - 0.18) * hinge;
       const plate = new THREE.Mesh(plateGeo, this.doorTrimMat);
@@ -908,18 +1096,22 @@ export class Buildings {
     world: World, box: BoxFn, axis: 'x' | 'z', fixed: number,
     a0: number, a1: number, y0: number, y1: number, midA: number, midY: number,
   ): void {
-    // 窗框: 上下左右四条细边(纯装饰)
+    // 窗框: 上下左右四条细边 + 十字窗格(纯装饰)
     const ft = 0.09;
     if (axis === 'x') {
       box('wall', a0 - 0.03, y0 - 0.03, fixed - ft, a1 + 0.03, y0 + 0.03, fixed + ft, FRAME_C, { collider: false });
       box('wall', a0 - 0.03, y1 - 0.03, fixed - ft, a1 + 0.03, y1 + 0.03, fixed + ft, FRAME_C, { collider: false });
       box('wall', a0 - 0.03, y0, fixed - ft, a0 + 0.03, y1, fixed + ft, FRAME_C, { collider: false });
       box('wall', a1 - 0.03, y0, fixed - ft, a1 + 0.03, y1, fixed + ft, FRAME_C, { collider: false });
+      box('wall', midA - 0.025, y0 + 0.04, fixed - ft, midA + 0.025, y1 - 0.04, fixed + ft, FRAME_C, { collider: false, detail: true });
+      box('wall', a0 + 0.04, midY - 0.025, fixed - ft, a1 - 0.04, midY + 0.025, fixed + ft, FRAME_C, { collider: false, detail: true });
     } else {
       box('wall', fixed - ft, y0 - 0.03, a0 - 0.03, fixed + ft, y0 + 0.03, a1 + 0.03, FRAME_C, { collider: false });
       box('wall', fixed - ft, y1 - 0.03, a0 - 0.03, fixed + ft, y1 + 0.03, a1 + 0.03, FRAME_C, { collider: false });
       box('wall', fixed - ft, y0, a0 - 0.03, fixed + ft, y1, a0 + 0.03, FRAME_C, { collider: false });
       box('wall', fixed - ft, y0, a1 - 0.03, fixed + ft, y1, a1 + 0.03, FRAME_C, { collider: false });
+      box('wall', fixed - ft, y0 + 0.04, midA - 0.025, fixed + ft, y1 - 0.04, midA + 0.025, FRAME_C, { collider: false, detail: true });
+      box('wall', fixed - ft, midY - 0.025, a0 + 0.04, fixed + ft, midY + 0.025, a1 - 0.04, FRAME_C, { collider: false, detail: true });
     }
     const t = 0.06;
     // 窗台挑檐 + 部分窗户百叶板(纯装饰, 位置确定性抽样)
@@ -928,14 +1120,22 @@ export class Buildings {
     if (axis === 'x') {
       box('wall', a0 - 0.12, y0 - 0.08, fixed - st, a1 + 0.12, y0, fixed + st, TRIM_C, { collider: false });
       if (withShutters) {
-        box('wall', a0 - 0.34, y0, fixed - 0.04, a0 - 0.06, y1, fixed + 0.04, SHUTTER_C, { collider: false });
-        box('wall', a1 + 0.06, y0, fixed - 0.04, a1 + 0.34, y1, fixed + 0.04, SHUTTER_C, { collider: false });
+        box('wall', a0 - 0.34, y0, fixed - 0.04, a0 - 0.06, y1, fixed + 0.04, SHUTTER_C, { collider: false, detail: true });
+        box('wall', a1 + 0.06, y0, fixed - 0.04, a1 + 0.34, y1, fixed + 0.04, SHUTTER_C, { collider: false, detail: true });
+        for (const y of [y0 + 0.25, midY, y1 - 0.25]) {
+          box('wall', a0 - 0.37, y - 0.025, fixed - 0.075, a0 - 0.03, y + 0.025, fixed + 0.075, FRAME_C, { collider: false, detail: true });
+          box('wall', a1 + 0.03, y - 0.025, fixed - 0.075, a1 + 0.37, y + 0.025, fixed + 0.075, FRAME_C, { collider: false, detail: true });
+        }
       }
     } else {
       box('wall', fixed - st, y0 - 0.08, a0 - 0.12, fixed + st, y0, a1 + 0.12, TRIM_C, { collider: false });
       if (withShutters) {
-        box('wall', fixed - 0.04, y0, a0 - 0.34, fixed + 0.04, y1, a0 - 0.06, SHUTTER_C, { collider: false });
-        box('wall', fixed - 0.04, y0, a1 + 0.06, fixed + 0.04, y1, a1 + 0.34, SHUTTER_C, { collider: false });
+        box('wall', fixed - 0.04, y0, a0 - 0.34, fixed + 0.04, y1, a0 - 0.06, SHUTTER_C, { collider: false, detail: true });
+        box('wall', fixed - 0.04, y0, a1 + 0.06, fixed + 0.04, y1, a1 + 0.34, SHUTTER_C, { collider: false, detail: true });
+        for (const y of [y0 + 0.25, midY, y1 - 0.25]) {
+          box('wall', fixed - 0.075, y - 0.025, a0 - 0.37, fixed + 0.075, y + 0.025, a0 - 0.03, FRAME_C, { collider: false, detail: true });
+          box('wall', fixed - 0.075, y - 0.025, a1 + 0.03, fixed + 0.075, y + 0.025, a1 + 0.37, FRAME_C, { collider: false, detail: true });
+        }
       }
     }
     const c: AabbCollider = axis === 'x'

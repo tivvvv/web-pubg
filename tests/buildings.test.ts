@@ -1,10 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
-  doorOpenAngleForActor, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, stairRailX,
+  doorOpenAngleForActor, GABLE_ROOF_COURSES, gableRoofPitch, REGIONAL_BUILDING_STYLES,
+  regionalBuildingStyle, stairRailX,
 } from '../src/buildings';
 import { REGIONS } from '../src/regions';
 
 describe('建筑门交互方向', () => {
+  it('精细坡屋顶瓦层保持成对对称且高度逐级上升', () => {
+    expect(GABLE_ROOF_COURSES).toHaveLength(6);
+    for (let i = 0; i < GABLE_ROOF_COURSES.length; i += 2) {
+      const left = GABLE_ROOF_COURSES[i];
+      const right = GABLE_ROOF_COURSES[i + 1];
+      expect(left).toBeDefined();
+      expect(right).toBeDefined();
+      if (!left || !right) continue;
+      expect(left.z + right.z).toBeCloseTo(1, 6);
+      expect(left.y).toBe(right.y);
+      if (i > 0) expect(left.y).toBeGreaterThan(GABLE_ROOF_COURSES[i - 2]?.y ?? 0);
+    }
+    expect(gableRoofPitch(8)).toBeGreaterThan(0.1);
+    expect(gableRoofPitch(8)).toBeLessThan(0.3);
+    expect(gableRoofPitch(12)).toBeLessThan(gableRoofPitch(8));
+  });
+
   it('六个区域拥有独立建筑主色和完整立面风格', () => {
     expect(Object.keys(REGIONAL_BUILDING_STYLES)).toHaveLength(REGIONS.length);
     const accents = new Set(REGIONS.map((region) => regionalBuildingStyle(region.id).accent));
