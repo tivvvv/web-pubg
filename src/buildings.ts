@@ -59,6 +59,7 @@ export const GABLE_ROOF_COURSES = Object.freeze([
   { z: 0.25, y: 0.425 }, { z: 0.75, y: 0.425 },
   { z: 0.4, y: 0.645 }, { z: 0.6, y: 0.645 },
 ]);
+export const GABLE_INFILL_LAYERS = 16;
 
 export function gableRoofPitch(depth: number): number {
   return Math.atan2(0.72, Math.max(1, depth * 0.5 + 0.22));
@@ -936,7 +937,16 @@ export class Buildings {
   }
 
   // 真双坡屋面使用旋转薄板表现，隐藏的六级碰撞阶梯让站立高度贴近斜面。
-  private gableRoof(box: BoxFn, ix0: number, iz0: number, ix1: number, iz1: number, yBase: number, c: number): void {
+  private gableRoof(
+    box: BoxFn,
+    ix0: number,
+    iz0: number,
+    ix1: number,
+    iz1: number,
+    yBase: number,
+    c: number,
+    wallC: number,
+  ): void {
     const dz = iz1 - iz0;
     const zm = (iz0 + iz1) / 2;
     const rise = 0.72;
@@ -947,6 +957,27 @@ export class Buildings {
     const northCenterZ = (iz0 - overhang + zm) * 0.5;
     const southCenterZ = (zm + iz1 + overhang) * 0.5;
     const panelCenterY = yBase + rise * 0.5 + 0.06;
+
+    // 用细分山墙封住水平墙顶与双坡屋面之间的三角区域.
+    // 细分盒完全藏在屋面包边内, 从室内和侧立面都不会再透出天空.
+    const gableLayers = GABLE_INFILL_LAYERS;
+    const layerH = rise / gableLayers;
+    const endThickness = WT * 0.9;
+    for (let i = 0; i < gableLayers; i++) {
+      const halfSpan = dz * 0.5 * (1 - i / gableLayers) + 0.025;
+      const y0 = yBase + i * layerH - 0.015;
+      const y1 = yBase + (i + 1) * layerH + 0.02;
+      box(
+        'wall', ix0 - endThickness * 0.5, y0, zm - halfSpan,
+        ix0 + endThickness * 0.5, y1, zm + halfSpan,
+        wallC, { collider: false, detail: true },
+      );
+      box(
+        'wall', ix1 - endThickness * 0.5, y0, zm - halfSpan,
+        ix1 + endThickness * 0.5, y1, zm + halfSpan,
+        wallC, { collider: false, detail: true },
+      );
+    }
 
     // 六级隐藏碰撞体把斜面高度误差压到 6cm 左右。
     const collisionSteps = 6;
@@ -1196,7 +1227,7 @@ export class Buildings {
     );
 
     if (!two) {
-      this.gableRoof(box, ix0, iz0, ix1, iz1, wt1, p.roof);
+      this.gableRoof(box, ix0, iz0, ix1, iz1, wt1, p.roof, p.wall);
       this.extras(box, p, ix0, iz0, ix1, wt1 + 0.2, w);
       return;
     }
@@ -1221,7 +1252,7 @@ export class Buildings {
     this.wallRun(world, box, 'x', iz1, ix0, ix1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(ix0 + w * 0.55)], p.wall, WT2, -1);
     this.wallRun(world, box, 'z', ix0, iz0, iz1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.4)], p.wall, WT2, 1);
     this.wallRun(world, box, 'z', ix1, iz0, iz1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.55)], p.wall, WT2, -1);
-    this.gableRoof(box, ix0, iz0, ix1, iz1, uwt, p.roof);
+    this.gableRoof(box, ix0, iz0, ix1, iz1, uwt, p.roof, p.wall);
     this.extras(box, p, ix0, iz0, ix1, uwt + 0.2, w);
   }
 
@@ -1270,7 +1301,7 @@ export class Buildings {
     this.wallRun(world, box, 'z', ix0, iz0, zRoom, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.25)], p.wall, WT2, 1);
     this.wallRun(world, box, 'z', ix1, iz0, zRoom, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.3)], p.wall, WT2, -1);
     // 房间顶(小坡屋顶)
-    this.gableRoof(box, ix0, iz0, ix1, zRoom + 0.1, uwt, p.roof);
+    this.gableRoof(box, ix0, iz0, ix1, zRoom + 0.1, uwt, p.roof, p.wall);
 
     // 露台护栏(南缘 + 东西南段, 矮碰撞)
     this.rail(box, ix0, iz1 - 0.08, ix1, iz1, f2, 0.95);
@@ -1354,7 +1385,7 @@ export class Buildings {
       { x: ix0 + w * 0.4, y: f3, z: iz0 + d * 0.35, premium: true },
       { x: ix1 - w * 0.3, y: f3, z: iz1 - d * 0.3, premium: true },
     );
-    this.gableRoof(box, ix0, iz0, ix1, iz1, f3 + WALL_H, p.roof);
+    this.gableRoof(box, ix0, iz0, ix1, iz1, f3 + WALL_H, p.roof, p.wall);
     this.extras(box, p, ix0, iz0, ix1, f3 + WALL_H + 0.2, w);
   }
 
@@ -1415,7 +1446,7 @@ export class Buildings {
     box('wall', openA0 - 0.45, f1, iz0 - 1.25, openA0 - 0.3, f1 + 2.5, iz0 - 1.1, TRIM_C);
     box('wall', openA0 + 2.75, f1, iz0 - 1.25, openA0 + 2.9, f1 + 2.5, iz0 - 1.1, TRIM_C);
     box('wall', ix0 + w * 0.2, f1, iz0 + d * 0.42, ix0 + w * 0.8, f1 + 0.95, iz0 + d * 0.52, RAIL_C);
-    this.gableRoof(box, ix0, iz0, ix1, iz1, wt1, p.roof);
+    this.gableRoof(box, ix0, iz0, ix1, iz1, wt1, p.roof, p.wall);
     this.lootSpots.push(
       { x: ix0 + w * 0.5, y: f1, z: iz0 + d * 0.7, premium: false },
       { x: ix1 - w * 0.25, y: f1, z: iz1 - d * 0.25, premium: false },
