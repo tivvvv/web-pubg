@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  doorColliderDisabled, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES, gableRoofPitch,
-  REGIONAL_BUILDING_STYLES, regionalBuildingStyle, stairHandrailTransform, stairRailX,
+  doorColliderDisabled, doorLeafSegment, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES,
+  gableRoofPitch, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
+  stairHandrailTransform, stairRailX,
 } from '../src/buildings';
+import type { AabbCollider } from '../src/types';
 import { REGIONS } from '../src/regions';
 
 describe('建筑门交互方向', () => {
@@ -65,6 +67,39 @@ describe('建筑门交互方向', () => {
     expect(doorColliderDisabled(true, false, 0.7)).toBe(true);
     expect(doorColliderDisabled(true, false, 0.11)).toBe(false);
     expect(doorColliderDisabled(false, false, 0)).toBe(true);
+  });
+
+  it('门扇碰撞随铰链和开门角度旋转', () => {
+    const collider: AabbCollider = {
+      kind: 'aabb', minX: 2, minY: 0, minZ: 4.95,
+      maxX: 3.3, maxY: 2.2, maxZ: 5.05, tag: 'door',
+    };
+    const closed = doorLeafSegment(collider, 'x', 1, 0);
+    expect(closed.hingeX).toBe(2);
+    expect(closed.endX).toBeCloseTo(3.3, 6);
+    expect(closed.endZ).toBeCloseTo(5, 6);
+
+    const opened = doorLeafSegment(collider, 'x', 1, -Math.PI / 2);
+    expect(opened.endX).toBeCloseTo(2, 6);
+    expect(opened.endZ).toBeCloseTo(6.3, 6);
+  });
+
+  it('角色无法穿过打开后的门板', () => {
+    const point = { x: 2.45, z: 5.02 };
+    const hit = resolveCircleAgainstDoorLeaf(point, 0.38, {
+      hingeX: 2,
+      hingeZ: 5,
+      endX: 3.3,
+      endZ: 5,
+    });
+    expect(hit).toBe(true);
+    expect(point.z).toBeGreaterThanOrEqual(5.43);
+    expect(resolveCircleAgainstDoorLeaf({ x: 2.6, z: 5.8 }, 0.38, {
+      hingeX: 2,
+      hingeZ: 5,
+      endX: 3.3,
+      endZ: 5,
+    })).toBe(false);
   });
 
   it('靠两侧外墙的楼梯把扶手放在各自开放侧', () => {

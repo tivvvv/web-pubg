@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import type { AabbCollider } from '../src/types';
 import { World } from '../src/world';
+import { doorLeafSegment } from '../src/buildings';
 
 type Plot = {
   minX: number;
@@ -55,6 +56,36 @@ describe('地图与建筑终极几何巡检', () => {
       expect(collider.maxY).toBeGreaterThan(collider.minY);
       expect(collider.maxZ).toBeGreaterThan(collider.minZ);
     }
+  });
+
+  it('打开的真实门扇通过世界碰撞阻挡角色', () => {
+    const world = createWorld();
+    const door = world.buildings.destructibles.find((item) => (
+      item.kind === 'door' && item.pivot && item.doorAxis
+    ));
+    expect(door).toBeDefined();
+    if (!door?.pivot || !door.doorAxis) return;
+    world.buildings.setDoorOpen(door, true, door.cx, door.cz - 2);
+    door.pivot.rotation.y = door.openAngle;
+    door.collider.off = true;
+    const leaf = doorLeafSegment(door.collider, door.doorAxis, door.doorHinge, door.openAngle);
+    const radius = 0.38;
+    const point = new THREE.Vector3(
+      (leaf.hingeX + leaf.endX) * 0.5,
+      door.collider.minY + 0.05,
+      (leaf.hingeZ + leaf.endZ) * 0.5,
+    );
+
+    world.resolveCollision(point, radius);
+
+    const sx = leaf.endX - leaf.hingeX;
+    const sz = leaf.endZ - leaf.hingeZ;
+    const projection = Math.max(0, Math.min(1,
+      ((point.x - leaf.hingeX) * sx + (point.z - leaf.hingeZ) * sz) / (sx * sx + sz * sz),
+    ));
+    const closestX = leaf.hingeX + sx * projection;
+    const closestZ = leaf.hingeZ + sz * projection;
+    expect(Math.hypot(point.x - closestX, point.z - closestZ)).toBeGreaterThanOrEqual(radius + 0.049);
   });
 
   it('每栋建筑至少保留一个可用物资点且物资不会刷进实体', () => {

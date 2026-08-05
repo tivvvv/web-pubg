@@ -2157,6 +2157,8 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
         }
       }
     }
+    // 开合中的门扇已离开静态门框 AABB, 使用跟随转角的线段碰撞继续阻挡角色.
+    this.buildings.resolveDoorCollisions(p, r);
     // 世界边界
     p.x = clamp(p.x, -WORLD_HALF + 1, WORLD_HALF - 1);
     p.z = clamp(p.z, -WORLD_HALF + 1, WORLD_HALF - 1);

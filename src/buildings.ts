@@ -18,7 +18,7 @@ export interface LootSpot {
 
 export type ArchId = 'cottage1' | 'cottage2' | 'terrace' | 'apartment' | 'barn' | 'shop' | 'gym';
 
-interface HousePlot {
+export interface HousePlot {
   minX: number; minZ: number; maxX: number; maxZ: number; // 含 2m 外围安全边
   flatH: number;
   arch: ArchId;
@@ -177,6 +177,78 @@ export function doorOpenAngleForActor(
 
 export function doorColliderDisabled(alive: boolean, open: boolean, currentAngle: number): boolean {
   return !alive || open || Math.abs(currentAngle) > 0.12;
+}
+
+export function isMultiStoreyArch(arch: ArchId): boolean {
+  return arch === 'cottage2' || arch === 'terrace' || arch === 'apartment';
+}
+
+export interface DoorLeafSegment {
+  hingeX: number;
+  hingeZ: number;
+  endX: number;
+  endZ: number;
+}
+
+/** 根据门框、铰链和当前转角计算门扇在地面的真实线段. */
+export function doorLeafSegment(
+  collider: AabbCollider,
+  axis: 'x' | 'z',
+  hinge: 1 | -1,
+  angle: number,
+): DoorLeafSegment {
+  const width = axis === 'x'
+    ? collider.maxX - collider.minX
+    : collider.maxZ - collider.minZ;
+  const hingeX = axis === 'x'
+    ? (hinge === 1 ? collider.minX : collider.maxX)
+    : (collider.minX + collider.maxX) * 0.5;
+  const hingeZ = axis === 'z'
+    ? (hinge === 1 ? collider.minZ : collider.maxZ)
+    : (collider.minZ + collider.maxZ) * 0.5;
+  const localX = axis === 'x' ? width * hinge : 0;
+  const localZ = axis === 'z' ? width * hinge : 0;
+  const sin = Math.sin(angle);
+  const cos = Math.cos(angle);
+  return {
+    hingeX,
+    hingeZ,
+    endX: hingeX + cos * localX + sin * localZ,
+    endZ: hingeZ - sin * localX + cos * localZ,
+  };
+}
+
+/** 将角色圆形占地推出旋转门扇, 返回是否发生了碰撞. */
+export function resolveCircleAgainstDoorLeaf(
+  point: { x: number; z: number },
+  radius: number,
+  leaf: DoorLeafSegment,
+  halfThickness = 0.05,
+): boolean {
+  const sx = leaf.endX - leaf.hingeX;
+  const sz = leaf.endZ - leaf.hingeZ;
+  const lengthSq = sx * sx + sz * sz;
+  if (lengthSq < 0.000001) return false;
+  const projection = Math.max(0, Math.min(1,
+    ((point.x - leaf.hingeX) * sx + (point.z - leaf.hingeZ) * sz) / lengthSq,
+  ));
+  const closestX = leaf.hingeX + sx * projection;
+  const closestZ = leaf.hingeZ + sz * projection;
+  const dx = point.x - closestX;
+  const dz = point.z - closestZ;
+  const minimumDistance = radius + halfThickness;
+  const distanceSq = dx * dx + dz * dz;
+  if (distanceSq >= minimumDistance * minimumDistance) return false;
+  if (distanceSq > 0.000001) {
+    const scale = minimumDistance / Math.sqrt(distanceSq);
+    point.x = closestX + dx * scale;
+    point.z = closestZ + dz * scale;
+  } else {
+    const length = Math.sqrt(lengthSq);
+    point.x = closestX - (sz / length) * minimumDistance;
+    point.z = closestZ + (sx / length) * minimumDistance;
+  }
+  return true;
 }
 
 export function stairRailX(x0: number, x1: number, side: 'min' | 'max'): number {
@@ -1610,6 +1682,26 @@ export class Buildings {
     // 开门立即放行；关门则等门扇接近门框后才恢复碰撞，避免动画期间出现空气墙。
     d.collider.off = doorColliderDisabled(d.alive, open, d.pivot?.rotation.y ?? 0);
     return true;
+  }
+
+  // 已离开门框的旋转门扇仍保持实体碰撞, 防止角色和机器人穿过门板模型.
+  resolveDoorCollisions(point: THREE.Vector3, radius: number): boolean {
+    let hit = false;
+    for (const door of this.destructibles) {
+      if (
+        door.kind !== 'door' || !door.alive || !door.pivot || !door.doorAxis ||
+        !door.collider.off ||
+        point.y >= door.collider.maxY - 0.02 || point.y + 1.7 <= door.collider.minY
+      ) continue;
+      const leaf = doorLeafSegment(
+        door.collider,
+        door.doorAxis,
+        door.doorHinge,
+        door.pivot.rotation.y,
+      );
+      if (resolveCircleAgainstDoorLeaf(point, radius, leaf)) hit = true;
+    }
+    return hit;
   }
 
   // 门扇开关动画: ~0.3s 内旋到目标角

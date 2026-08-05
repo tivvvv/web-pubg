@@ -12,6 +12,7 @@ import { WATER_Y, riverZAt, type World } from './world';
 import { REGIONS, regionOrWilderness, type LootProfile, type LootTier, type RegionDef } from './regions';
 import { random } from './random';
 import { REGION_EVENT_LOOT, type RegionEvent } from './regionevents';
+import { isMultiStoreyArch, type LootSpot } from './buildings';
 
 export interface LootItem {
   kind: LootKind;
@@ -25,7 +26,7 @@ export interface LootItem {
   att: GunAttachments | null; // 枪械已装配件(随枪流转)
 }
 
-export const LOOT_CAP = 240; // 室内配对 + 野外补齐 + 野外武器/弹药 + 空投内容物
+export const LOOT_CAP = 280; // 为每把地图枪配套弹药, 同时给死亡盒和空投保留对象池余量
 export const CORE_LOOT_TARGET = 206; // 24 人轻量局的地图初始物资总量, 为死亡盒和空投保留对象池余量
 
 type LootPlacementWorld = Pick<World, 'aabbs' | 'cyls'>;
@@ -273,6 +274,23 @@ export function isGunKind(kind: LootKind): kind is WeaponId {
   return kind === 'rifle' || kind === 'akm' || kind === 'lmg' || kind === 'smg' || kind === 'dmr' || kind === 'sniper' || kind === 'pistol' || kind === 'shotgun';
 }
 
+export function gunHasMatchingAmmoNearby(
+  gun: LootItem,
+  items: readonly LootItem[],
+  maxDistance = 2.5,
+): boolean {
+  if (!gun.active || !isGunKind(gun.kind)) return false;
+  const ammoKind = AMMO_LOOT_KIND[WEAPONS[gun.kind].ammo];
+  return items.some((item) => (
+    item.active && item.kind === ammoKind &&
+    Math.abs(item.baseY - gun.baseY) <= 0.7 &&
+    Math.hypot(
+      item.group.position.x - gun.group.position.x,
+      item.group.position.z - gun.group.position.z,
+    ) <= maxDistance
+  ));
+}
+
 export function isMeleeKind(kind: LootKind): kind is Exclude<MeleeId, 'fists'> {
   return kind === 'knife' || kind === 'pan' || kind === 'crowbar';
 }
@@ -295,6 +313,7 @@ export class LootManager {
     this.clear();
     let count = this.spawnRegionalEvents(world, regionalEvents);
     const armedSites = new Set<string>();
+    const guaranteedBuildingGuns = this.guaranteedMultiStoreyGunSpots(world);
     // 六区主地标使用稳定室外锚点, 确保地标不只是装饰而是真正的争夺目标.
     for (const s of world.mapLootSpots) {
       if (count >= LOOT_CAP) break;
@@ -315,13 +334,16 @@ export class LootManager {
     for (const s of world.buildings.lootSpots) {
       if (count >= LOOT_CAP) break;
       const region = regionOrWilderness(s.x, s.z);
-      if (this.activeCountInRegion(region.id) >= region.lootBudget) continue;
-      if (random() < region.emptyChance) continue;
-      const kind = this.rollKind(s.premium ? 'premium' : 'indoor', region.tier, region.profile);
+      const guaranteedGun = guaranteedBuildingGuns.has(s);
+      if (!guaranteedGun && this.activeCountInRegion(region.id) >= region.lootBudget) continue;
+      if (!guaranteedGun && random() < region.emptyChance) continue;
+      const kind = guaranteedGun
+        ? this.rollOutdoorGun(region.tier, region.profile)
+        : this.rollKind(s.premium ? 'premium' : 'indoor', region.tier, region.profile);
       const item = this.spawn(kind, s.x, s.y, s.z);
       if (!item) break;
       count++;
-      count += this.pairAmmo(world, kind, s.x, s.y, s.z, 0.8);
+      count += this.pairAmmo(world, kind, s.x, s.y, s.z, guaranteedGun ? 1 : 0.8);
     }
 
     // 战术锚点武器优先于通用散布, 确保桥头/村边/高地有明确争夺价值.
@@ -344,6 +366,46 @@ export class LootManager {
       count++;
       count += this.pairAmmo(world, kind, x, y, z, 0.6);
     }
+    // 概率表只决定物资丰富度, 不允许任何枪成为没有对应弹药的无效拾取物.
+    this.ensureGunAmmoPairs(world);
+  }
+
+  private guaranteedMultiStoreyGunSpots(world: World): Set<LootSpot> {
+    const selected = new Set<LootSpot>();
+    for (const plot of world.buildings.plots) {
+      if (!isMultiStoreyArch(plot.arch)) continue;
+      const candidates = world.buildings.lootSpots.filter((spot) => (
+        spot.x > plot.minX + 2 && spot.x < plot.maxX - 2 &&
+        spot.z > plot.minZ + 2 && spot.z < plot.maxZ - 2
+      )).sort((a, b) => a.y - b.y);
+      const lower = candidates[0];
+      const upper = candidates[candidates.length - 1];
+      if (lower) selected.add(lower);
+      if (upper && upper !== lower) selected.add(upper);
+    }
+    return selected;
+  }
+
+  private ensureGunAmmoPairs(world: World): number {
+    let spawned = 0;
+    const guns = this.items.filter((item) => item.active && isGunKind(item.kind));
+    for (const gun of guns) {
+      if (gunHasMatchingAmmoNearby(gun, this.items)) continue;
+      const groundY = gun.baseY - 1;
+      const followsTerrain = gun.outdoor && Math.abs(
+        world.getHeight(gun.group.position.x, gun.group.position.z) - groundY,
+      ) <= 0.34;
+      spawned += this.pairAmmo(
+        world,
+        gun.kind,
+        gun.group.position.x,
+        groundY,
+        gun.group.position.z,
+        1,
+        followsTerrain,
+      );
+    }
+    return spawned;
   }
 
   private spawnRegionalEvents(world: World, events: readonly RegionEvent[]): number {
@@ -428,7 +490,7 @@ export class LootManager {
       x > plot.minX + 2 && x < plot.maxX - 2 && z > plot.minZ + 2 && z < plot.maxZ - 2
     ));
     const phase = random() * Math.PI * 2;
-    for (let attempt = 0; attempt < 12; attempt++) {
+    for (let attempt = 0; attempt < 28; attempt++) {
       const a = phase + attempt * 2.399963;
       const d = 0.82 + ((attempt * 0.37 + random() * 0.24) % 1.12);
       const ax = x + Math.cos(a) * d;
@@ -448,7 +510,7 @@ export class LootManager {
         )
         : 0;
       if (sampleTerrain && (
-        localRise > 0.2 ||
+        localRise > 0.5 ||
         !world.pointFree(ax, az, 0.24, WATER_Y + 0.25, 16)
       )) continue;
       const support = world.groundHeight(ax, az, ay + 0.32);

@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { canAttach, emptyAttachments, magSizeOf } from './attachments';
 import { ARMORS } from './armor';
 import { findSwimBank } from './botnav';
-import { isGunKind, lootPointClear, LOOT_CAP } from './loot';
+import { gunHasMatchingAmmoNearby, isGunKind, lootPointClear, LOOT_CAP } from './loot';
+import { isMultiStoreyArch, type ArchId } from './buildings';
 import type { Game } from './game';
 import { VEHICLE_SPEC } from './vehicles';
 import { MELEE, WEAPONS } from './weapons';
@@ -13,7 +14,6 @@ import type { AttachmentId, GunState } from './types';
 import { fireModeOf } from './gunplay';
 import type { HealId } from './heals';
 import { auditReleaseState } from './releaseaudit';
-import type { ArchId } from './buildings';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
@@ -249,6 +249,9 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
     if (isGunKind(item.kind)) {
       const counts = weaponsByRegion[region] ?? (weaponsByRegion[region] = {});
       counts[item.kind] = (counts[item.kind] ?? 0) + 1;
+      if (!gunHasMatchingAmmoNearby(item, activeLoot)) {
+        lootIssues.push(`${index}:${item.kind}:missing-ammo`);
+      }
     }
     if (![x, y, z].every(Number.isFinite)) {
       lootIssues.push(`${index}:${item.kind}:non-finite`);
@@ -274,6 +277,15 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       })?.tag ?? 'unknown';
       lootIssues.push(`${index}:${item.kind}:blocked:${blocker}:${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`);
     }
+  }
+  for (const [plotIndex, plot] of game.world.buildings.plots.entries()) {
+    if (!isMultiStoreyArch(plot.arch)) continue;
+    const gunCount = activeLoot.filter((item) => (
+      isGunKind(item.kind) &&
+      item.group.position.x > plot.minX + 2 && item.group.position.x < plot.maxX - 2 &&
+      item.group.position.z > plot.minZ + 2 && item.group.position.z < plot.maxZ - 2
+    )).length;
+    if (gunCount < 2) lootIssues.push(`plot-${plotIndex}:${plot.arch}:guns:${gunCount}`);
   }
   for (let i = 0; i < activeLoot.length; i++) {
     const a = activeLoot[i];

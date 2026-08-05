@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { lootPointClear } from '../src/loot';
+import * as THREE from 'three';
+import { afterEach, describe, expect, it } from 'vitest';
+import { gunHasMatchingAmmoNearby, isGunKind, LootManager, lootPointClear } from '../src/loot';
+import { isMultiStoreyArch } from '../src/buildings';
+import { setRandomSeed } from '../src/random';
+import { World } from '../src/world';
+
+afterEach(() => setRandomSeed(null));
 
 describe('掉落物空间校验', () => {
   const floor = {
@@ -53,4 +59,32 @@ describe('掉落物空间校验', () => {
     expect(lootPointClear(world, 0.5, 0.2, 0)).toBe(false);
     expect(lootPointClear(world, 1.2, 0.2, 0)).toBe(true);
   });
+
+  it.each([1, 7, 41, 313, 2026, 8191, 65537, 99173])(
+    '种子 %s 的多层住宅至少有两把枪且每把枪都有匹配弹药',
+    (seed) => {
+      setRandomSeed(seed);
+      const scene = new THREE.Scene();
+      const world = new World(scene);
+      const loot = new LootManager(scene);
+      loot.populate(world);
+      const active = loot.items.filter((item) => item.active);
+
+      for (const [index, plot] of world.buildings.plots.entries()) {
+        if (!isMultiStoreyArch(plot.arch)) continue;
+        const guns = active.filter((item) => (
+          isGunKind(item.kind) &&
+          item.group.position.x > plot.minX + 2 && item.group.position.x < plot.maxX - 2 &&
+          item.group.position.z > plot.minZ + 2 && item.group.position.z < plot.maxZ - 2
+        ));
+        expect(guns.length, `多层建筑 ${index}:${plot.arch} 枪支不足`).toBeGreaterThanOrEqual(2);
+      }
+      for (const gun of active.filter((item) => isGunKind(item.kind))) {
+        expect(
+          gunHasMatchingAmmoNearby(gun, active),
+          `${gun.kind} @ ${gun.group.position.x.toFixed(1)},${gun.group.position.z.toFixed(1)} 缺少匹配弹药`,
+        ).toBe(true);
+      }
+    },
+  );
 });
