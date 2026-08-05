@@ -1,5 +1,6 @@
 // 动态环境: 昼夜时钟 + 天气转场 + 光照/雾/云/降雨/闪电
 import * as THREE from 'three';
+import { setSurfaceEnvironment } from './assets';
 import type { Sky } from './sky';
 import { clamp, lerp, mulberry32, smoothstep } from './utils';
 
@@ -422,6 +423,7 @@ export class EnvironmentSystem {
       this.current.cloud,
       daylight,
     );
+    setSurfaceEnvironment(surface.wetness, surface.cloudiness, daylight);
     const surfaceUniforms = this.terrainMat.userData.surfaceUniforms as {
       wetness: { value: number };
       cloudiness: { value: number };

@@ -1153,6 +1153,45 @@ export class Buildings {
 
     // 上层窗台花箱、侧挂招牌和屋面老式电视天线形成三级轮廓细节.
     const upperFloor = f1 + WALL_H + SLAB_T;
+    const upperWindowX = ix0 + (ix1 - ix0) * 0.35 + WIN_W * 0.5;
+    const upperWindowY0 = upperFloor + 0.9;
+    // 窗洞外扩的石质侧壁、窗台和过梁形成真实凹进层次，避免玻璃直接贴在平墙上。
+    box('wall', upperWindowX - WIN_W * 0.5 - 0.16, upperWindowY0 - 0.12, iz0 - 0.2,
+      upperWindowX - WIN_W * 0.5 + 0.02, upperWindowY0 + WIN_H + 0.16, iz0 - 0.025,
+      0xc3b6a2, stone); count++;
+    box('wall', upperWindowX + WIN_W * 0.5 - 0.02, upperWindowY0 - 0.12, iz0 - 0.2,
+      upperWindowX + WIN_W * 0.5 + 0.16, upperWindowY0 + WIN_H + 0.16, iz0 - 0.025,
+      0xb8aa97, stone); count++;
+    box('wall', upperWindowX - WIN_W * 0.5 - 0.16, upperWindowY0 + WIN_H,
+      iz0 - 0.22, upperWindowX + WIN_W * 0.5 + 0.16, upperWindowY0 + WIN_H + 0.2,
+      iz0 - 0.02, 0xc7baa5, stone); count++;
+    box('wall', upperWindowX - WIN_W * 0.5 - 0.22, upperWindowY0 - 0.16,
+      iz0 - 0.26, upperWindowX + WIN_W * 0.5 + 0.22, upperWindowY0,
+      iz0 - 0.01, 0xb2a48f, stone); count++;
+
+    // 小型法式阳台打破方盒轮廓，深度受控且不参与导航碰撞。
+    const balconyX0 = upperWindowX - 1.34;
+    const balconyX1 = upperWindowX + 1.34;
+    const balconyZ0 = iz0 - 0.82;
+    const balconyTop = upperFloor + 0.16;
+    box('floor', balconyX0, upperFloor + 0.02, balconyZ0, balconyX1, balconyTop, iz0 + 0.02,
+      0x8d7d69, { collider: false, detail: true, surface: 'stone' }); count++;
+    for (const x of [balconyX0 + 0.06, balconyX1 - 0.06]) {
+      box('wall', x - 0.035, balconyTop, balconyZ0, x + 0.035, balconyTop + 0.92, iz0 - 0.04,
+        0x424a4b, metal); count++;
+    }
+    for (let i = 0; i <= 6; i++) {
+      const x = balconyX0 + 0.12 + (balconyX1 - balconyX0 - 0.24) * i / 6;
+      box('wall', x - 0.025, balconyTop + 0.06, balconyZ0 - 0.025, x + 0.025,
+        balconyTop + 0.88, balconyZ0 + 0.025, 0x41494a, metal); count++;
+    }
+    box('wall', balconyX0 + 0.04, balconyTop + 0.82, balconyZ0 - 0.04,
+      balconyX1 - 0.04, balconyTop + 0.92, balconyZ0 + 0.04, 0x51595a, metal); count++;
+    for (const x of [balconyX0 + 0.42, balconyX1 - 0.42]) {
+      box('wall', x - 0.09, upperFloor - 0.26, balconyZ0 + 0.12, x + 0.09, upperFloor + 0.03,
+        iz0 - 0.06, 0x6b5947, { ...stone, surface: 'wood' }); count++;
+    }
+
     for (const x of [ix0 + (ix1 - ix0) * 0.34, ix0 + (ix1 - ix0) * 0.68]) {
       box('wall', x - 0.52, upperFloor + 0.88, iz0 - 0.22, x + 0.52, upperFloor + 1.03, iz0 - 0.03, 0x6c533f, { ...brick, surface: 'wood' }); count++;
       for (let plant = -1; plant <= 1; plant++) {
@@ -1163,6 +1202,22 @@ export class Buildings {
     }
     box('wall', ix1 + 0.08, f1 + 1.82, iz0 + 0.7, ix1 + 0.18, f1 + 2.72, iz0 + 0.78, 0x3e4647, metal); count++;
     box('wall', ix1 + 0.14, f1 + 1.92, iz0 + 0.62, ix1 + 0.23, f1 + 2.52, iz0 + 1.5, 0xcaa85f, { ...metal, surface: 'wood' }); count++;
+    // 双层檐口、屋顶老虎窗和侧向烟囱让远景不再只是整齐矩形。
+    box('roof', ix0 - 0.32, top - 0.1, iz0 - 0.38, ix1 + 0.32, top + 0.06, iz0 + 0.08,
+      0x66534a, { collider: false, detail: true, surface: 'roof' }); count++;
+    box('roof', ix0 - 0.22, top + 0.08, iz0 - 0.28, ix1 + 0.22, top + 0.16, iz0 + 0.02,
+      0x9f745d, { collider: false, detail: true, surface: 'roof' }); count++;
+    const dormerX = center + (ix1 - ix0) * 0.2;
+    box('wall', dormerX - 0.72, top + 0.12, iz0 + 0.48, dormerX + 0.72, top + 1.12, iz0 + 1.48,
+      0xbca996, { collider: false, detail: true, surface: 'plaster' }); count++;
+    box('roof', dormerX - 0.86, top + 1.02, iz0 + 0.32, dormerX + 0.86, top + 1.18, iz0 + 1.58,
+      0x735448, { collider: false, detail: true, surface: 'roof' }); count++;
+    box('wall', dormerX - 0.34, top + 0.42, iz0 + 0.43, dormerX + 0.34, top + 0.92, iz0 + 0.49,
+      0x78959d, { collider: false, detail: true, surface: 'paintedMetal' }); count++;
+    box('wall', ix0 + 0.72, top - 0.08, iz1 - 1.42, ix0 + 1.34, top + 1.72, iz1 - 0.78,
+      0x8f6c5d, { collider: false, detail: true, surface: 'stonegateBrick' }); count++;
+    box('roof', ix0 + 0.62, top + 1.68, iz1 - 1.52, ix0 + 1.44, top + 1.86, iz1 - 0.68,
+      0xb4a48f, { collider: false, detail: true, surface: 'stone' }); count++;
     const aerialX = ix1 - 1.1;
     box('roof', aerialX - 0.035, top, iz1 - 0.9, aerialX + 0.035, top + 1.4, iz1 - 0.83, 0x4d5554, metal); count++;
     box('roof', aerialX - 0.62, top + 0.94, iz1 - 0.89, aerialX + 0.62, top + 1.0, iz1 - 0.84, 0x4d5554, metal); count++;
@@ -1194,6 +1249,17 @@ export class Buildings {
       box('wall', cx - 0.19, floorY + 2.27, cz - 0.19, cx + 0.19, floorY + 2.4, cz + 0.19, 0xc99c5d, { ...wood, surface: 'paintedMetal' }); count++;
       box('wall', ix1 - 0.11, floorY + 1.08, cz - 0.48, ix1 - 0.04, floorY + 1.86, cz + 0.48, 0x6b513e, wood); count++;
       box('wall', ix1 - 0.13, floorY + 1.18, cz - 0.38, ix1 - 0.02, floorY + 1.76, cz + 0.38, floorY === f1 ? 0x81908a : 0xb08a67, fabric); count++;
+      // 连续护墙板和顶梁形成清晰的上下材质分区，不再是一整面空白墙。
+      for (const z of [iz0 + 0.42, iz1 - 0.42]) {
+        box('wall', ix0 + 0.28, floorY + 0.22, z - 0.035, ix1 - 0.28, floorY + 0.82,
+          z + 0.035, 0x8b755d, { ...wood, surface: 'wood' }); count++;
+        box('wall', ix0 + 0.24, floorY + 0.8, z - 0.05, ix1 - 0.24, floorY + 0.9,
+          z + 0.05, 0x594536, wood); count++;
+      }
+      for (const x of [ix0 + 1.1, ix1 - 1.1]) {
+        box('roof', x - 0.08, floorY + 2.68, iz0 + 0.24, x + 0.08, floorY + 2.82,
+          iz1 - 0.24, 0x5c4736, wood); count++;
+      }
     }
 
     // 二层卧室远离楼梯井, 床和矮柜提供真实碰撞与搜刮掩体.
@@ -1215,6 +1281,56 @@ export class Buildings {
     for (let i = 1; i < 3; i++) {
       const x = counterX0 + (counterX1 - counterX0) * i / 3;
       box('wall', x - 0.025, f1 + 0.08, iz1 - 0.66, x + 0.025, f1 + 0.74, iz1 - 0.1, 0x4e3d31, wood); count++;
+    }
+    // 灶台、金属水槽、吊柜和调味瓶把厨房从一条柜体变成可读功能区。
+    const stoveX = counterX0 + 0.48;
+    box('wall', stoveX - 0.34, f1 + 0.93, iz1 - 0.6, stoveX + 0.34, f1 + 0.99,
+      iz1 - 0.18, 0x343a3b, { ...wood, surface: 'metal' }); count++;
+    for (const x of [stoveX - 0.18, stoveX + 0.18]) {
+      box('wall', x - 0.08, f1 + 0.99, iz1 - 0.5, x + 0.08, f1 + 1.03,
+        iz1 - 0.3, 0x161b1c, { ...wood, surface: 'metal' }); count++;
+    }
+    const sinkX = counterX1 - 0.42;
+    box('wall', sinkX - 0.3, f1 + 0.94, iz1 - 0.58, sinkX + 0.3, f1 + 1.01,
+      iz1 - 0.2, 0x778384, { ...wood, surface: 'metal' }); count++;
+    box('wall', sinkX - 0.025, f1 + 1.01, iz1 - 0.3, sinkX + 0.025, f1 + 1.34,
+      iz1 - 0.23, 0x596263, { ...wood, surface: 'metal' }); count++;
+    for (let i = 0; i < 3; i++) {
+      const x = counterX0 + 0.28 + i * 0.58;
+      box('wall', x - 0.22, f1 + 1.48, iz1 - 0.34, x + 0.22, f1 + 2.14,
+        iz1 - 0.13, i === 1 ? 0x7b684f : 0x6d5945, wood); count++;
+      box('wall', x - 0.12, f1 + 1.62, iz1 - 0.39, x + 0.12, f1 + 1.74,
+        iz1 - 0.29, 0xb28d58, { ...wood, surface: 'paintedMetal' }); count++;
+    }
+
+    // 餐区增加餐具、长凳和墙面挂画，控制碰撞仍由原餐桌承担。
+    const diningX = ix1 - 1.55;
+    const diningZ = iz0 + 1.55;
+    for (const x of [diningX - 0.3, diningX + 0.3]) {
+      box('wall', x - 0.12, f1 + 0.82, diningZ - 0.12, x + 0.12, f1 + 0.86,
+        diningZ + 0.12, 0xd8d1bd, { ...fabric, surface: 'stone' }); count++;
+      box('wall', x - 0.035, f1 + 0.86, diningZ - 0.035, x + 0.035, f1 + 1.04,
+        diningZ + 0.035, x < diningX ? 0x8f493d : 0x617b55, { ...fabric, surface: 'paintedMetal' }); count++;
+    }
+    box('wall', diningX - 0.78, f1 + 0.36, iz0 + 0.42, diningX + 0.78, f1 + 0.76,
+      iz0 + 0.82, 0x66503d, { collider: false, detail: true, surface: 'wood' }); count++;
+    box('wall', diningX - 0.68, f1 + 0.76, iz0 + 0.64, diningX + 0.68, f1 + 1.24,
+      iz0 + 0.78, 0x76624e, wood); count++;
+    box('wall', ix1 - 0.12, f1 + 1.08, diningZ - 0.62, ix1 - 0.04, f1 + 1.9,
+      diningZ + 0.62, 0x604939, wood); count++;
+    box('wall', ix1 - 0.14, f1 + 1.18, diningZ - 0.5, ix1 - 0.02, f1 + 1.8,
+      diningZ + 0.5, 0x6f897f, fabric); count++;
+
+    // 二层增加床头柜、衣柜和床边灯，形成完整卧室而不是孤立床垫。
+    box('wall', bedX0 - 0.72, upper, bedZ1 - 0.78, bedX0 - 0.18, upper + 0.62,
+      bedZ1 - 0.2, 0x684f3c, { detail: true, surface: 'wood' }); count++;
+    box('wall', bedX0 - 0.62, upper + 0.62, bedZ1 - 0.68, bedX0 - 0.28, upper + 0.84,
+      bedZ1 - 0.3, 0xc39458, { collider: false, detail: true, surface: 'paintedMetal' }); count++;
+    box('wall', ix0 + 2.35, upper, iz1 - 0.66, ix0 + 3.55, upper + 2.18,
+      iz1 - 0.18, 0x6d5946, { detail: true, surface: 'wood' }); count++;
+    for (const x of [ix0 + 2.72, ix0 + 3.18]) {
+      box('wall', x - 0.025, upper + 0.3, iz1 - 0.7, x + 0.025, upper + 1.96,
+        iz1 - 0.14, 0x47392f, wood); count++;
     }
     return count;
   }

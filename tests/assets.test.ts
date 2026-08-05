@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
   AUDIO_ASSET_URLS,
   FOOTSTEP_ASSET_IDS,
+  setSurfaceEnvironment,
   shotAssetId,
+  surfaceEnvironmentState,
   SURFACE_ASSET_URLS,
 } from '../src/assets';
 import { ambienceMix } from '../src/audio';
@@ -26,6 +28,14 @@ describe('美术与音效静态资产', () => {
       total += bytes.length;
     }
     expect(total).toBeLessThan(512 * 1024);
+  });
+
+  it('建筑和道具材质共享天气湿润参数并限制在有效范围', () => {
+    setSurfaceEnvironment(0.82, 0.9, 0.56);
+    expect(surfaceEnvironmentState()).toEqual({ wetness: 0.82, cloudiness: 0.9, daylight: 0.56 });
+    setSurfaceEnvironment(2, -1, 4);
+    expect(surfaceEnvironmentState()).toEqual({ wetness: 1, cloudiness: 0, daylight: 1 });
+    setSurfaceEnvironment(0, 0.18, 1);
   });
 
   it('关键音效清单与生成清单一致且保持轻量', () => {

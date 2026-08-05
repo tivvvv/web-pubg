@@ -116,8 +116,8 @@ describe('地图与建筑终极几何巡检', () => {
 
   it('磐石城垂直切片具备独立街区和样板楼细节预算', () => {
     const world = createWorld();
-    expect(world.verticalSliceDetailCount).toBeGreaterThanOrEqual(50);
-    expect(world.buildings.verticalSliceDetailCount).toBeGreaterThanOrEqual(70);
+    expect(world.verticalSliceDetailCount).toBeGreaterThanOrEqual(100);
+    expect(world.buildings.verticalSliceDetailCount).toBeGreaterThanOrEqual(120);
     const plot = world.buildings.plots[world.buildings.verticalSlicePlotIndex];
     expect(plot).toBeDefined();
     if (!plot) return;

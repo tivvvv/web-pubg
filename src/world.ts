@@ -1625,7 +1625,7 @@ varying vec3 vTerrainWorld;`,
       this.verticalSliceDetailCount += this.buildMapContentKit(site, addBox, addCylinder);
       if (site.kind === 'market') {
         this.addStonegatePlazaSurface(scene, site);
-        this.verticalSliceDetailCount++;
+        this.verticalSliceDetailCount += 1 + this.addStonegateMarketProps(scene, site);
       }
     }
 
@@ -1763,6 +1763,132 @@ varying vec3 vTerrainWorld;`,
     mesh.position.set(site.resolvedX, 0, site.resolvedZ);
     mesh.receiveShadow = true;
     scene.add(mesh);
+  }
+
+  // 旧城市场使用少量实例化的非盒体道具，补齐布袋、果蔬、木桶、藤篮和彩旗的轮廓语言。
+  private addStonegateMarketProps(scene: THREE.Scene, site: ResolvedMapContentSite): number {
+    interface PropTransform {
+      x: number; z: number; lift: number;
+      sx: number; sy: number; sz: number;
+      yaw?: number; color?: number;
+    }
+    const addInstances = (
+      geometry: THREE.BufferGeometry,
+      material: THREE.MeshStandardMaterial,
+      transforms: readonly PropTransform[],
+    ): void => {
+      const mesh = new THREE.InstancedMesh(geometry, material, transforms.length);
+      const matrix = new THREE.Matrix4();
+      const position = new THREE.Vector3();
+      const scale = new THREE.Vector3();
+      const quaternion = new THREE.Quaternion();
+      const color = new THREE.Color();
+      for (let i = 0; i < transforms.length; i++) {
+        const prop = transforms[i] as PropTransform;
+        const x = site.resolvedX + prop.x;
+        const z = site.resolvedZ + prop.z;
+        position.set(x, this.getHeight(x, z) + prop.lift, z);
+        quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), prop.yaw ?? 0);
+        scale.set(prop.sx, prop.sy, prop.sz);
+        matrix.compose(position, quaternion, scale);
+        mesh.setMatrixAt(i, matrix);
+        if (prop.color !== undefined) mesh.setColorAt(i, color.setHex(prop.color));
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      scene.add(mesh);
+    };
+
+    const wood = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+    const fabric = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96 });
+    const produce = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86 });
+    const metal = new THREE.MeshStandardMaterial({ color: 0x4d5658, roughness: 0.58, metalness: 0.22 });
+    applySurfaceAsset(wood, 'wood', 3.1, 0.78);
+    applySurfaceAsset(fabric, 'fabric', 4.0, 0.7);
+    applySurfaceAsset(produce, 'foliage', 4.6, 0.48);
+    applySurfaceAsset(metal, 'metal', 3.5, 0.55);
+
+    const barrels: PropTransform[] = [
+      { x: -4.2, z: -2.65, lift: 0.42, sx: 0.82, sy: 1.05, sz: 0.82, yaw: 0.08, color: 0x76523a },
+      { x: -3.55, z: -2.82, lift: 0.38, sx: 0.7, sy: 0.94, sz: 0.7, yaw: -0.12, color: 0x624531 },
+      { x: 4.05, z: 2.08, lift: 0.4, sx: 0.76, sy: 1, sz: 0.76, color: 0x815b3c },
+    ];
+    addInstances(new THREE.CylinderGeometry(0.42, 0.46, 0.8, 12, 2), wood, barrels);
+
+    const sacks: PropTransform[] = [
+      { x: -1.95, z: 0.72, lift: 1.12, sx: 0.52, sy: 0.68, sz: 0.46, yaw: 0.18, color: 0xbda579 },
+      { x: -2.52, z: 0.65, lift: 1.08, sx: 0.46, sy: 0.6, sz: 0.42, yaw: -0.22, color: 0xc7ae7b },
+      { x: 2.05, z: 0.78, lift: 1.1, sx: 0.5, sy: 0.64, sz: 0.44, yaw: 0.3, color: 0xa99a77 },
+      { x: 2.65, z: 0.68, lift: 1.08, sx: 0.44, sy: 0.57, sz: 0.4, yaw: -0.16, color: 0xc1aa83 },
+      { x: 4.72, z: -1.0, lift: 0.34, sx: 0.56, sy: 0.7, sz: 0.5, yaw: 0.2, color: 0xbca477 },
+    ];
+    addInstances(new THREE.SphereGeometry(0.5, 10, 7), fabric, sacks);
+
+    const baskets: PropTransform[] = [
+      { x: -3.1, z: 1.12, lift: 0.98, sx: 0.68, sy: 0.62, sz: 0.68, color: 0x9a7047 },
+      { x: 3.15, z: 1.1, lift: 0.98, sx: 0.66, sy: 0.58, sz: 0.66, color: 0xa77a4d },
+      { x: 4.55, z: 1.52, lift: 0.2, sx: 0.72, sy: 0.55, sz: 0.72, yaw: 0.15, color: 0x8e6745 },
+    ];
+    addInstances(new THREE.CylinderGeometry(0.44, 0.34, 0.34, 12, 2, true), wood, baskets);
+
+    const fruitColors = [0xb84636, 0xd5963e, 0x6f8b48, 0xa75338];
+    const fruits: PropTransform[] = [];
+    for (let stall = 0; stall < 2; stall++) {
+      const centerX = stall === 0 ? -2.65 : 2.62;
+      for (let i = 0; i < 12; i++) {
+        fruits.push({
+          x: centerX + (i % 4 - 1.5) * 0.28,
+          z: -0.18 + Math.floor(i / 4) * 0.28,
+          lift: 1.02 + ((i * 7) % 3) * 0.06,
+          sx: 0.16 + (i % 2) * 0.025,
+          sy: 0.14 + (i % 3) * 0.018,
+          sz: 0.16 + ((i + 1) % 2) * 0.025,
+          color: fruitColors[(i + stall) % fruitColors.length] as number,
+        });
+      }
+    }
+    addInstances(new THREE.IcosahedronGeometry(0.5, 1), produce, fruits);
+
+    const pennantGeo = new THREE.BufferGeometry();
+    pennantGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+      -0.22, 0, 0, 0.22, 0, 0, 0, -0.42, 0,
+    ], 3));
+    pennantGeo.computeVertexNormals();
+    const pennantMat = fabric.clone();
+    pennantMat.side = THREE.DoubleSide;
+    const pennants: PropTransform[] = [];
+    const pennantColors = [0xa84c3f, 0xd1aa58, 0x5b7780, 0x748253];
+    for (let i = 0; i < 13; i++) {
+      pennants.push({
+        x: -4.5 + i * 0.75,
+        z: 2.72,
+        lift: 3.25 - (1 - Math.abs(i - 6) / 6) * 0.16,
+        sx: 1,
+        sy: 1,
+        sz: 1,
+        color: pennantColors[i % pennantColors.length] as number,
+      });
+    }
+    addInstances(pennantGeo, pennantMat, pennants);
+
+    const lampMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffd48a,
+      emissive: 0xff9b3d,
+      emissiveIntensity: 2.1,
+      roughness: 0.34,
+    });
+    addInstances(new THREE.SphereGeometry(0.5, 8, 6), lampMaterial, [
+      { x: -5.55, z: -4.45, lift: 3.2, sx: 0.18, sy: 0.14, sz: 0.18 },
+      { x: 5.55, z: 4.45, lift: 3.2, sx: 0.18, sy: 0.14, sz: 0.18 },
+      { x: 0, z: 2.7, lift: 3.12, sx: 0.13, sy: 0.11, sz: 0.13 },
+    ]);
+    const warm = new THREE.PointLight(0xffbd72, 2.2, 9, 1.9);
+    warm.position.set(site.resolvedX, this.getHeight(site.resolvedX, site.resolvedZ + 2.7) + 3.05, site.resolvedZ + 2.7);
+    scene.add(warm);
+    return barrels.length + sacks.length + baskets.length + fruits.length + pennants.length + 3;
   }
 
   private buildMapContentKit(

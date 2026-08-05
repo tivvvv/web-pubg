@@ -105,6 +105,25 @@ export const FOOTSTEP_ASSET_IDS: Readonly<
 });
 
 const textureCache = new Map<SurfaceAssetId, THREE.Texture>();
+const surfaceEnvironmentUniforms = {
+  wetness: { value: 0 },
+  cloudiness: { value: 0.18 },
+  daylight: { value: 1 },
+};
+
+export function setSurfaceEnvironment(wetness: number, cloudiness: number, daylight: number): void {
+  surfaceEnvironmentUniforms.wetness.value = THREE.MathUtils.clamp(wetness, 0, 1);
+  surfaceEnvironmentUniforms.cloudiness.value = THREE.MathUtils.clamp(cloudiness, 0, 1);
+  surfaceEnvironmentUniforms.daylight.value = THREE.MathUtils.clamp(daylight, 0, 1);
+}
+
+export function surfaceEnvironmentState(): { wetness: number; cloudiness: number; daylight: number } {
+  return {
+    wetness: surfaceEnvironmentUniforms.wetness.value,
+    cloudiness: surfaceEnvironmentUniforms.cloudiness.value,
+    daylight: surfaceEnvironmentUniforms.daylight.value,
+  };
+}
 
 function neutralTexture(): THREE.DataTexture {
   const texture = new THREE.DataTexture(new Uint8Array([224, 224, 224, 255]), 1, 1);
@@ -156,14 +175,21 @@ export function applySurfaceAsset(
     shader.uniforms.uSurfaceAsset = { value: texture };
     shader.uniforms.uSurfaceScale = { value: scale };
     shader.uniforms.uSurfaceStrength = { value: strength };
+    shader.uniforms.uAssetWetness = surfaceEnvironmentUniforms.wetness;
+    shader.uniforms.uAssetCloudiness = surfaceEnvironmentUniforms.cloudiness;
+    shader.uniforms.uAssetDaylight = surfaceEnvironmentUniforms.daylight;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nvarying vec3 vAssetLocalPosition;\nvarying vec3 vAssetLocalNormal;',
+        '#include <common>\nvarying vec3 vAssetLocalPosition;\nvarying vec3 vAssetLocalNormal;\nvarying vec3 vAssetWorldPosition;',
       )
       .replace(
         '#include <begin_vertex>',
         '#include <begin_vertex>\n  vAssetLocalPosition = position;\n  vAssetLocalNormal = objectNormal;',
+      )
+      .replace(
+        '#include <worldpos_vertex>',
+        '#include <worldpos_vertex>\n  vAssetWorldPosition = worldPosition.xyz;',
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -172,8 +198,12 @@ export function applySurfaceAsset(
 uniform sampler2D uSurfaceAsset;
 uniform float uSurfaceScale;
 uniform float uSurfaceStrength;
+uniform float uAssetWetness;
+uniform float uAssetCloudiness;
+uniform float uAssetDaylight;
 varying vec3 vAssetLocalPosition;
-varying vec3 vAssetLocalNormal;`,
+varying vec3 vAssetLocalNormal;
+varying vec3 vAssetWorldPosition;`,
       )
       .replace(
         '#include <color_fragment>',
@@ -184,10 +214,22 @@ varying vec3 vAssetLocalNormal;`,
   float assetY = texture2D(uSurfaceAsset, vAssetLocalPosition.xz * uSurfaceScale).r;
   float assetZ = texture2D(uSurfaceAsset, vAssetLocalPosition.xy * uSurfaceScale).r;
   float assetDetail = assetX * assetWeights.x + assetY * assetWeights.y + assetZ * assetWeights.z;
-  diffuseColor.rgb *= 1.0 + (assetDetail - 0.875) * uSurfaceStrength;`,
+  diffuseColor.rgb *= 1.0 + (assetDetail - 0.875) * uSurfaceStrength;
+  float assetWetNoise = sin(vAssetWorldPosition.x * 0.63 + vAssetWorldPosition.z * 0.37)
+    * cos(vAssetWorldPosition.z * 0.51 - vAssetWorldPosition.y * 0.43) * 0.5 + 0.5;
+  float assetUpward = max(normalize(vAssetLocalNormal).y, 0.0);
+  float assetWetPatch = smoothstep(0.3, 0.78, assetWetNoise);
+  float assetWet = uAssetWetness * mix(0.42, 0.92, assetUpward) * mix(0.74, 1.0, assetWetPatch);
+  diffuseColor.rgb *= 1.0 - assetWet * mix(0.1, 0.2, uAssetCloudiness);
+  diffuseColor.rgb *= mix(0.96, 1.0, uAssetDaylight);`,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>
+  roughnessFactor = mix(roughnessFactor, max(0.28, roughnessFactor * 0.58), assetWet * 0.82);`,
       );
   };
-  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|asset:${id}:${scale}:${strength}`;
+  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|asset-weather-v2:${id}:${scale}:${strength}`;
 }
 
 export function shotAssetId(kind: WeaponId, suppressed: boolean): AudioAssetId {
