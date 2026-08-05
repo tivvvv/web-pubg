@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   doorColliderDisabled, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES, gableRoofPitch,
-  REGIONAL_BUILDING_STYLES, regionalBuildingStyle, stairRailX,
+  REGIONAL_BUILDING_STYLES, regionalBuildingStyle, stairHandrailTransform, stairRailX,
 } from '../src/buildings';
 import { REGIONS } from '../src/regions';
 
@@ -70,5 +70,21 @@ describe('建筑门交互方向', () => {
   it('靠两侧外墙的楼梯把扶手放在各自开放侧', () => {
     expect(stairRailX(2, 4, 'max')).toBe(4);
     expect(stairRailX(8, 10, 'min')).toBe(8);
+  });
+
+  it('正反方向楼梯都生成贯穿整跑的连续斜扶手', () => {
+    const forward = stairHandrailTransform(2, 8, 3, 0.32, 9);
+    const reverse = stairHandrailTransform(8, 2, 3, 0.32, 9);
+    expect(forward.centerZ).toBe(5);
+    expect(reverse.centerZ).toBe(5);
+    expect(forward.centerY).toBeCloseTo(reverse.centerY, 6);
+    expect(forward.length).toBeCloseTo(Math.hypot(6, 2.88), 6);
+    expect(reverse.length).toBeCloseTo(forward.length, 6);
+    expect(forward.pitch).toBeLessThan(0);
+    expect(reverse.pitch).toBeGreaterThan(0);
+    expect(Math.abs(forward.pitch)).toBeCloseTo(Math.abs(reverse.pitch), 6);
+    const halfRise = Math.sin(Math.abs(forward.pitch)) * forward.length / 2;
+    expect(forward.centerY - halfRise).toBeCloseTo(3 + 0.32 * 0.5 + 0.83, 6);
+    expect(forward.centerY + halfRise).toBeCloseTo(3 + 0.32 * 9.5 + 0.83, 6);
   });
 });

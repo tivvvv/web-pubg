@@ -6,19 +6,39 @@
 
 机器人队友会共享可见目标和受击来源, 并按左侧翼, 中央支援和右侧翼分工接敌。共享情报会随目标失效或超时自动清理。
 
-## 运行
+## 拉取代码后运行游戏
+
+运行环境需要 Git, npm, Node.js 20.19.x 或 Node.js 22.12 以上版本.
+
+首次下载项目时执行:
 
 ```bash
+git clone https://github.com/tivvvv/web-pubg.git
+cd web-pubg
 npm install
 npm run dev
 ```
 
-打开终端显示的本地地址。生产构建和自动化回归命令如下。
+如果本地已经有项目, 拉取最新代码后执行:
+
+```bash
+cd web-pubg
+git pull origin main
+npm install
+npm run dev
+```
+
+启动成功后, 打开终端显示的地址. 默认通常为 `http://localhost:5173/`. 修改源码时页面会自动刷新, 按 `Ctrl+C` 可以停止开发服务器.
+
+需要检查代码或运行生产版本时执行:
 
 ```bash
 npm test
 npm run build
+npm run preview
 ```
+
+`npm test` 会运行自动化回归, `npm run build` 会生成生产文件到 `dist`, `npm run preview` 会在本地预览生产构建.
 
 ## 美术与音效资产
 

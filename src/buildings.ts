@@ -183,6 +183,31 @@ export function stairRailX(x0: number, x1: number, side: 'min' | 'max'): number 
   return side === 'max' ? x1 : x0;
 }
 
+export interface StairHandrailTransform {
+  centerY: number;
+  centerZ: number;
+  length: number;
+  pitch: number;
+}
+
+/** 计算贯穿整跑楼梯的斜扶手变换, 正反方向都保持与踏步坡度一致. */
+export function stairHandrailTransform(
+  zFrom: number,
+  zTo: number,
+  floorY: number,
+  rise: number,
+  steps = STAIR_STEPS,
+): StairHandrailTransform {
+  const run = zTo - zFrom;
+  const totalRise = rise * steps;
+  return {
+    centerY: floorY + rise * ((steps + 1) / 2) + 0.83,
+    centerZ: (zFrom + zTo) / 2,
+    length: Math.hypot(run, totalRise),
+    pitch: -Math.sign(run || 1) * Math.atan2(totalRise, Math.abs(run)),
+  };
+}
+
 function mulberry32(seed: number) {
   let a = seed >>> 0;
   return () => {
@@ -553,6 +578,7 @@ export class Buildings {
   ): void {
     const run = (zTo - zFrom) / STAIR_STEPS;
     const railX = stairRailX(x0, x1, railSide);
+    const handrail = stairHandrailTransform(zFrom, zTo, f1, rise);
     for (let i = 0; i < STAIR_STEPS; i++) {
       const z0 = Math.min(zFrom + i * run, zFrom + (i + 1) * run);
       const z1 = Math.max(zFrom + i * run, zFrom + (i + 1) * run);
@@ -566,13 +592,24 @@ export class Buildings {
         'wall', x0, prevTop, riserZ - 0.035, x1, top, riserZ + 0.035,
         c, { collider: false },
       );
-      // 开放侧使用连续的阶梯形扶手, 立柱从对应踏步生根, 不再出现悬空柱和整块黑墙。
-      box('wall', railX - 0.055, top + 0.78, z0 - 0.02, railX + 0.055, top + 0.88, z1 + 0.02, RAIL_C, { collider: false });
+      // 立柱从对应踏步生根, 顶部与整跑斜扶手重叠连接。
       if (i === 0 || i === 3 || i === 6 || i === STAIR_STEPS - 1) {
         const postZ = (z0 + z1) / 2;
         box('wall', railX - 0.055, top, postZ - 0.055, railX + 0.055, top + 0.88, postZ + 0.055, RAIL_C, { collider: false });
       }
     }
+    // 单根连续斜杆取代逐级水平短杆, 消除断裂和悬空观感。
+    box(
+      'wall',
+      railX - 0.055,
+      handrail.centerY - 0.05,
+      handrail.centerZ - handrail.length / 2,
+      railX + 0.055,
+      handrail.centerY + 0.05,
+      handrail.centerZ + handrail.length / 2,
+      RAIL_C,
+      { collider: false, rotateX: handrail.pitch },
+    );
   }
 
   // 入口台阶从真实地面生根，不使用悬空薄板；axis 表示门洞沿哪条轴延伸。
