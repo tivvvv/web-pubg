@@ -110,6 +110,7 @@ import {
   DROP_MIN_SEPARATION,
   MATCH_PLAYER_COUNT,
   SQUAD_SIZE,
+  combatDamageScale,
   emptyDropRegionCounts,
   flightLineDistance,
   selectDropRegion,
@@ -129,7 +130,6 @@ import {
 } from './matchvariation';
 
 const TOTAL = MATCH_PLAYER_COUNT;
-const BOT_VS_PLAYER_DMG = 0.7; // bot 对玩家伤害系数, 保证 1v1 可赢
 const SLOT_LABELS = ['主武器1', '主武器2', '手枪', '近战'];
 
 export function accumulatePlayerDamage(
@@ -1384,7 +1384,7 @@ export class Game {
           const victim = res.char;
           hitPlayer = victim.isPlayer;
           const dmg = gun.def.damage * pelletFalloff(gun.def, res.t) * (res.head ? gun.def.headMult : 1)
-            * (!shooter.isPlayer && victim.isPlayer ? BOT_VS_PLAYER_DMG : 1);
+            * combatDamageScale(shooter.team, victim.team, victim.isPlayer);
           if (dmg > 0) {
             this.effects.impactBlood(res.point);
             const appliedDamage = this.damageChar(victim, dmg, res.head, shooter);
@@ -1735,8 +1735,7 @@ export class Game {
     if (best) {
       best.chestPos(this.tmpEnd);
       this.effects.impactBlood(this.tmpEnd);
-      let dmg = m.damage;
-      if (!attacker.isPlayer && best.isPlayer) dmg *= BOT_VS_PLAYER_DMG;
+      const dmg = m.damage * combatDamageScale(attacker.team, best.team, best.isPlayer);
       this.damageChar(best, dmg, false, attacker);
       if (attacker.isPlayer) {
         this.audio.hit(false);

@@ -4,7 +4,25 @@ export const MATCH_PLAYER_COUNT = 24;
 export const SQUAD_SIZE = 4;
 export const ENEMY_COUNT = MATCH_PLAYER_COUNT - SQUAD_SIZE;
 export const DROP_MAX_FLIGHT_DISTANCE = 168;
-export const DROP_MIN_SEPARATION = 21;
+export const DROP_MIN_SEPARATION = 24;
+export const BOT_VS_PLAYER_DAMAGE_SCALE = 0.7;
+export const BOT_VS_BOT_DAMAGE_SCALE = 0.86;
+
+export type CombatTeam = 'squad' | 'enemy';
+
+/**
+ * 玩家输出和队友火力保持原值, 只压低机器人互相清场的速度.
+ * 机器人对玩家的既有减伤规则也集中在这里, 避免远程和近战出现不同口径.
+ */
+export function combatDamageScale(
+  attackerTeam: CombatTeam,
+  victimTeam: CombatTeam,
+  victimIsPlayer: boolean,
+): number {
+  if (attackerTeam === 'enemy' && victimIsPlayer) return BOT_VS_PLAYER_DAMAGE_SCALE;
+  if (attackerTeam === 'enemy' && victimTeam === 'enemy') return BOT_VS_BOT_DAMAGE_SCALE;
+  return 1;
+}
 
 export interface DropRegionCounts {
   stonegate: number;

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BOT_VS_BOT_DAMAGE_SCALE,
+  BOT_VS_PLAYER_DAMAGE_SCALE,
+  DROP_MIN_SEPARATION,
   ENEMY_COUNT,
   DROP_MAX_FLIGHT_DISTANCE,
+  combatDamageScale,
   dropRegionWeight,
   emptyDropRegionCounts,
   flightLineDistance,
@@ -46,6 +50,16 @@ describe('对局节奏和地图最终平衡', () => {
     expect(dropRegionWeight(stonegate, 0, stonegate.dropCapacity)).toBe(0);
     expect(flightLineDistance(30, 20, 0)).toBe(20);
     expect(DROP_MAX_FLIGHT_DISTANCE).toBeGreaterThan(150);
+    expect(DROP_MIN_SEPARATION).toBeGreaterThanOrEqual(24);
+  });
+
+  it('机器人互战降速但不削弱玩家和队友输出', () => {
+    expect(combatDamageScale('enemy', 'enemy', false)).toBe(BOT_VS_BOT_DAMAGE_SCALE);
+    expect(combatDamageScale('enemy', 'squad', true)).toBe(BOT_VS_PLAYER_DAMAGE_SCALE);
+    expect(combatDamageScale('enemy', 'squad', false)).toBe(1);
+    expect(combatDamageScale('squad', 'enemy', false)).toBe(1);
+    expect(BOT_VS_BOT_DAMAGE_SCALE).toBeGreaterThan(BOT_VS_PLAYER_DAMAGE_SCALE);
+    expect(BOT_VS_BOT_DAMAGE_SCALE).toBeLessThan(1);
   });
 
   it('首圈保留搜索窗口且后期连续提速', () => {
