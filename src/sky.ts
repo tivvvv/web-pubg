@@ -51,7 +51,14 @@ void main() {
 `;
 
 // canvas 手绘蓬松云纹理(确定性种子)
-function makeCloudTexture(): THREE.CanvasTexture {
+function makeCloudTexture(): THREE.Texture {
+  // 无 DOM 的自动化巡检只需要可构造的占位纹理，浏览器仍使用完整手绘云层。
+  if (typeof document === 'undefined') {
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 210]), 1, 1);
+    tex.needsUpdate = true;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
   const cv = document.createElement('canvas');
   cv.width = 384;
   cv.height = 192;

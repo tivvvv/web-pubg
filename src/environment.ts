@@ -241,19 +241,25 @@ export class EnvironmentSystem {
     }
     const moteGeo = new THREE.BufferGeometry();
     moteGeo.setAttribute('position', new THREE.BufferAttribute(this.motePos, 3));
-    const moteCanvas = document.createElement('canvas');
-    moteCanvas.width = 32;
-    moteCanvas.height = 32;
-    const moteCtx = moteCanvas.getContext('2d');
-    if (moteCtx) {
-      const glow = moteCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
-      glow.addColorStop(0, 'rgba(255,255,255,0.9)');
-      glow.addColorStop(0.28, 'rgba(255,255,255,0.42)');
-      glow.addColorStop(1, 'rgba(255,255,255,0)');
-      moteCtx.fillStyle = glow;
-      moteCtx.fillRect(0, 0, 32, 32);
+    let moteTexture: THREE.Texture;
+    if (typeof document === 'undefined') {
+      moteTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 230]), 1, 1);
+      moteTexture.needsUpdate = true;
+    } else {
+      const moteCanvas = document.createElement('canvas');
+      moteCanvas.width = 32;
+      moteCanvas.height = 32;
+      const moteCtx = moteCanvas.getContext('2d');
+      if (moteCtx) {
+        const glow = moteCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
+        glow.addColorStop(0, 'rgba(255,255,255,0.9)');
+        glow.addColorStop(0.28, 'rgba(255,255,255,0.42)');
+        glow.addColorStop(1, 'rgba(255,255,255,0)');
+        moteCtx.fillStyle = glow;
+        moteCtx.fillRect(0, 0, 32, 32);
+      }
+      moteTexture = new THREE.CanvasTexture(moteCanvas);
     }
-    const moteTexture = new THREE.CanvasTexture(moteCanvas);
     moteTexture.colorSpace = THREE.SRGBColorSpace;
     const moteMat = new THREE.PointsMaterial({
       color: 0xffe4b5,
