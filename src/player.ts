@@ -980,6 +980,7 @@ export class PlayerController {
     if (!v) return;
     if (Math.abs(v.speed) > 3) {
       game.hud.toast('速度太快, 无法下车');
+      game.hud.flashInteraction('blocked');
       return;
     }
     this.exitVehicle(game, false);
@@ -998,6 +999,7 @@ export class PlayerController {
     }) ?? null;
     if (!exit && !forced) {
       game.hud.toast('周围没有安全下车空间', 'warning');
+      game.hud.flashInteraction('blocked');
       return;
     }
     exit ??= candidates[0] as (typeof candidates)[number];
@@ -1018,6 +1020,12 @@ export class PlayerController {
     game.hud.flashInteraction('vehicle');
     v.speed = 0;
     this.driving = null;
+    // 给下车后的再次交互留出短暂防误触窗口，并让追车镜头自然回到角色。
+    if (!forced) {
+      this.interactionLockT = Math.max(this.interactionLockT, 0.3);
+      this.interactionFocusT = Math.max(this.interactionFocusT, 0.38);
+      this.interactionFocus.set(v.pos.x, v.pos.y + 0.8, v.pos.z);
+    }
     game.audio.engineStop();
     if (!forced) game.audio.vehicleDoor();
   }
@@ -1087,9 +1095,21 @@ export class PlayerController {
     }
   }
 
-  startReload(game: Game): void {
+  startReload(game: Game, explainFailure = false): void {
     const gun = this.char.heldGun();
-    if (!gun || this.reloading || gun.mag >= magSizeOf(gun) || this.char.ammo[gun.def.ammo] <= 0) return;
+    if (!gun) {
+      if (explainFailure) game.hud.toast('当前未持有枪械');
+      return;
+    }
+    if (this.reloading) return;
+    if (gun.mag >= magSizeOf(gun)) {
+      if (explainFailure) game.hud.toast('弹匣已满');
+      return;
+    }
+    if (this.char.ammo[gun.def.ammo] <= 0) {
+      if (explainFailure) game.dryFireToast(gun.def.ammo);
+      return;
+    }
     if (game.healT > 0) game.cancelHeal('恢复被打断');
     this.reloading = true;
     this.reloadTotal = reloadDuration(gun, gun.mag <= 0);

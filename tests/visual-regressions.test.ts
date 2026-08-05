@@ -199,4 +199,13 @@ describe('画面回归保护', () => {
     expect(css).toMatch(/\.bp-panel\s*\{[^}]*max-height:\s*calc\(100vh - 32px\)/s);
     expect(css).toMatch(/\.bp-panel\s*\{[^}]*overflow-y:\s*auto/s);
   });
+
+  it('交互成功与失败都保留清晰且不同的准星反馈', () => {
+    const css = readFileSync(join(process.cwd(), 'src/style.css'), 'utf8');
+    expect(css).toMatch(/data-confirm='pickup'[^}]*#a8f0b5/s);
+    expect(css).toMatch(/data-confirm='interact'[^}]*#a8dcff/s);
+    expect(css).toMatch(/data-confirm='vehicle'[^}]*#ffc085/s);
+    expect(css).toMatch(/data-confirm='blocked'[^}]*#ff806f/s);
+    expect(css).toMatch(/@keyframes interaction-blocked/);
+  });
 });

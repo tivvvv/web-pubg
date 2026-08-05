@@ -33,6 +33,21 @@ describe('交互目标选择', () => {
     expect(chooseInteractionCandidate([current, challenger], currentTarget)).toBe(current);
   });
 
+  it('当前目标在阈值边缘获得容差但不会无限扩大交互范围', () => {
+    const target = {};
+    const edgeDistance = candidate('door', target, 2.72, 0.06);
+    const edgeAim = candidate('item', target, 2.2, 0.04);
+    const tooFar = candidate('door', target, 2.81, 0.9);
+    const tooFarOffAim = candidate('item', target, 1.2, 0.01);
+
+    expect(interactionScore(edgeDistance, false)).toBe(-Infinity);
+    expect(interactionScore(edgeDistance, true)).toBeGreaterThan(-Infinity);
+    expect(interactionScore(edgeAim, false)).toBe(-Infinity);
+    expect(interactionScore(edgeAim, true)).toBeGreaterThan(-Infinity);
+    expect(interactionScore(tooFar, true)).toBe(-Infinity);
+    expect(interactionScore(tooFarOffAim, true)).toBe(-Infinity);
+  });
+
   it('直视倒地队友时救援优先于普通拾取', () => {
     const ally = candidate('ally', {}, 1.8, 0.82, 0.24);
     const item = candidate('item', {}, 1.2, 0.84);

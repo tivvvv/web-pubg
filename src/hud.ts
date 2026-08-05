@@ -358,7 +358,7 @@ export class Hud {
     }
   }
 
-  flashInteraction(kind: 'pickup' | 'interact' | 'vehicle'): void {
+  flashInteraction(kind: 'pickup' | 'interact' | 'vehicle' | 'blocked'): void {
     this.interactionConfirmTimer = 0.24;
     this.crosshair.dataset.confirm = kind;
     this.crosshair.classList.remove('interaction-confirm');

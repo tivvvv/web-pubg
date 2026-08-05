@@ -399,7 +399,7 @@ export class Game {
       return;
     }
     switch (a) {
-      case 'reload': this.player.startReload(this); break;
+      case 'reload': this.player.startReload(this, true); break;
       case 'fireMode': {
         const gun = this.player.char.heldGun();
         if (!gun) {
@@ -1610,7 +1610,10 @@ export class Game {
       height: character.knocked ? 0.72 : 1.65,
       active: character.alive && character.group.visible && !character.airPose,
     })))) {
-      if (actor?.isPlayer) this.hud.toast('门口有人, 无法关门', 'warning');
+      if (actor?.isPlayer) {
+        this.hud.toast('门口有人, 无法关门', 'warning');
+        this.hud.flashInteraction('blocked');
+      }
       return false;
     }
     if (!this.world.buildings.setDoorOpen(dd, open, actor?.pos.x, actor?.pos.z)) return false;
@@ -2026,6 +2029,8 @@ export class Game {
       player.beginInteractionFeedback(this, {
         x: item.group.position.x, y: item.baseY + 0.38, z: item.group.position.z,
       }, 'pickup', 0.46);
+    } else {
+      this.hud.flashInteraction('blocked');
     }
     this.promptItem = null;
     this.hud.setPickupPrompt(null);

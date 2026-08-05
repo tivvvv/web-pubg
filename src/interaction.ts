@@ -97,8 +97,15 @@ export interface InteractionCandidate<T = object> {
   priority: number;
 }
 
+const STICKY_DISTANCE_MARGIN = 0.18;
+const STICKY_DOT_MARGIN = 0.08;
+
 export function interactionScore<T>(candidate: InteractionCandidate<T>, sticky: boolean): number {
-  if (candidate.distance > candidate.maxDistance || candidate.dot < candidate.minDot) return -Infinity;
+  // 当前目标允许很小的距离和准星容差，避免站在门边或物资堆中时提示逐帧闪断。
+  // 容差只参与保留，首次选中仍使用严格阈值。
+  const maxDistance = candidate.maxDistance + (sticky ? STICKY_DISTANCE_MARGIN : 0);
+  const minDot = candidate.minDot - (sticky ? STICKY_DOT_MARGIN : 0);
+  if (candidate.distance > maxDistance || candidate.dot < minDot) return -Infinity;
   const proximity = 1 - clamp(candidate.distance / candidate.maxDistance, 0, 1);
   const focus = clamp((candidate.dot - candidate.minDot) / Math.max(0.001, 1 - candidate.minDot), 0, 1);
   return candidate.priority + focus * 0.62 + proximity * 0.38 + (sticky ? 0.13 : 0);

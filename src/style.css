@@ -907,10 +907,20 @@ body {
 #crosshair.interaction-confirm[data-confirm='pickup'] .ch-line { background: #a8f0b5; }
 #crosshair.interaction-confirm[data-confirm='interact'] .ch-line { background: #a8dcff; }
 #crosshair.interaction-confirm[data-confirm='vehicle'] .ch-line { background: #ffc085; }
+#crosshair.interaction-confirm[data-confirm='blocked'] .ch-line {
+  background: #ff806f;
+  animation-name: interaction-blocked;
+}
 
 @keyframes interaction-confirm {
   0% { transform: scale(1.65); box-shadow: 0 0 8px currentColor; }
   100% { transform: scale(1); box-shadow: 0 0 2px rgba(0, 0, 0, 0.9); }
+}
+
+@keyframes interaction-blocked {
+  0%, 100% { transform: translateX(0) scale(1); }
+  28% { transform: translateX(-2px) scale(1.2); }
+  58% { transform: translateX(2px) scale(1.12); }
 }
 
 #pickup-prompt[data-kind='ally'] {
