@@ -25,6 +25,8 @@ export const SCENARIO_IDS = [
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
 export const RELEASE_SCENARIO_ROUTES = [
+  'scenario=stairs&slice=1&view=facade',
+  'scenario=stairs&slice=1&view=interior',
   'scenario=stairs&traverse=up&arch=cottage2',
   'scenario=stairs&traverse=up&arch=apartment&flight=2',
   'scenario=stairs&view=entrance&arch=cottage2',
@@ -137,6 +139,9 @@ function scenarioBuildingArch(params: URLSearchParams): ArchId {
 }
 
 function scenarioBuildingPlot(game: Game, params: URLSearchParams) {
+  if (params.get('slice') === '1') {
+    return game.world.buildings.plots[game.world.buildings.verticalSlicePlotIndex];
+  }
   const matches = game.world.buildings.plots.filter((candidate) => candidate.arch === scenarioBuildingArch(params));
   return params.get('plot') === 'last' ? matches[matches.length - 1] : matches[0];
 }
@@ -151,6 +156,14 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.buildingVisualInstances = String(game.world.buildings.visualInstanceCount);
   panel.dataset.buildingDetailInstances = String(game.world.buildings.modelDetailInstanceCount);
   panel.dataset.environmentDetailInstances = String(game.world.environmentDetailInstanceCount);
+  panel.dataset.verticalSliceWorldDetails = String(game.world.verticalSliceDetailCount);
+  panel.dataset.verticalSliceBuildingDetails = String(game.world.buildings.verticalSliceDetailCount);
+  panel.dataset.verticalSlicePlotIndex = String(game.world.buildings.verticalSlicePlotIndex);
+  const verticalSlicePlot = game.world.buildings.plots[game.world.buildings.verticalSlicePlotIndex];
+  panel.dataset.verticalSlicePlotBounds = verticalSlicePlot
+    ? [verticalSlicePlot.minX, verticalSlicePlot.minZ, verticalSlicePlot.maxX, verticalSlicePlot.maxZ]
+      .map((value) => value.toFixed(2)).join(',')
+    : '';
   panel.dataset.vehicleModelParts = game.vehicles.list.map((vehicle) => `${vehicle.kind}:${vehicle.modelPartCount}`).join(',');
   let terrainMin = Infinity;
   let terrainMax = -Infinity;
@@ -250,7 +263,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       const counts = weaponsByRegion[region] ?? (weaponsByRegion[region] = {});
       counts[item.kind] = (counts[item.kind] ?? 0) + 1;
       if (!gunHasMatchingAmmoNearby(item, activeLoot)) {
-        lootIssues.push(`${index}:${item.kind}:missing-ammo`);
+        lootIssues.push(`${index}:${item.kind}:missing-ammo:${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`);
       }
     }
     if (![x, y, z].every(Number.isFinite)) {
@@ -893,9 +906,11 @@ function setupStairs(game: Game): void {
     const cz = (plot.minZ + plot.maxZ) / 2;
     const halfX = (plot.maxX - plot.minX) / 2;
     const halfZ = (plot.maxZ - plot.minZ) / 2;
+    const showcaseOffset = params.get('slice') === '1' ? -halfX * 0.68 : 0;
     const candidates = [
-      { x: cx, z: cz - halfZ - 7.5 },
-      { x: cx, z: cz + halfZ + 7.5 },
+      // 垂直切片镜头略偏离门轴, 避免第三人称角色遮住门廊、雨棚和砖石细节。
+      { x: cx + showcaseOffset, z: cz - halfZ - 7.5 },
+      { x: cx - showcaseOffset, z: cz + halfZ + 7.5 },
       { x: cx - halfX - 7.5, z: cz },
       { x: cx + halfX + 7.5, z: cz },
     ];

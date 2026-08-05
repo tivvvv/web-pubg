@@ -15,7 +15,7 @@ import {
   type ResolvedMapContentSite,
 } from './mapcontent';
 import { regionAt, regionById, type RegionId } from './regions';
-import { applySurfaceAsset, type FootstepSurface } from './assets';
+import { applySurfaceAsset, type FootstepSurface, type SurfaceAssetId } from './assets';
 
 type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
 type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
@@ -92,6 +92,7 @@ export class World {
   readonly mapLootSpots: MapLootSpot[] = [];
   tacticalCoverCount = 0;
   environmentDetailInstanceCount = 0;
+  verticalSliceDetailCount = 0;
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -1559,28 +1560,29 @@ varying vec3 vTerrainWorld;`,
     interface BoxInstance {
       x: number; y: number; z: number;
       w: number; h: number; d: number;
-      yaw: number; color: number;
+      yaw: number; color: number; surface: SurfaceAssetId;
     }
     interface CylinderInstance {
       x: number; y: number; z: number;
       diameter: number; length: number;
-      axis: 'x' | 'y' | 'z'; color: number;
+      axis: 'x' | 'y' | 'z'; color: number; surface: SurfaceAssetId;
     }
     const boxes: BoxInstance[] = [];
     const cylinders: CylinderInstance[] = [];
     this.mapSites.length = 0;
     this.mapLootSpots.length = 0;
+    this.verticalSliceDetailCount = 0;
 
     const addBox = (
       site: ResolvedMapContentSite,
       lx: number, lz: number,
       w: number, h: number, d: number,
-      color: number, yaw = 0, block = true, lift = 0,
+      color: number, yaw = 0, block = true, lift = 0, surface: SurfaceAssetId = 'paintedMetal',
     ): void => {
       const x = site.resolvedX + lx;
       const z = site.resolvedZ + lz;
       const ground = this.getHeight(x, z);
-      boxes.push({ x, y: ground + lift + h / 2, z, w, h, d, yaw, color });
+      boxes.push({ x, y: ground + lift + h / 2, z, w, h, d, yaw, color, surface });
       if (!block) return;
       const cw = Math.abs(Math.cos(yaw)) * w + Math.abs(Math.sin(yaw)) * d;
       const cd = Math.abs(Math.sin(yaw)) * w + Math.abs(Math.cos(yaw)) * d;
@@ -1593,13 +1595,13 @@ varying vec3 vTerrainWorld;`,
       site: ResolvedMapContentSite,
       lx: number, lz: number,
       diameter: number, length: number,
-      color: number, axis: 'x' | 'y' | 'z' = 'y', block = false, lift = 0,
+      color: number, axis: 'x' | 'y' | 'z' = 'y', block = false, lift = 0, surface: SurfaceAssetId = 'metal',
     ): void => {
       const x = site.resolvedX + lx;
       const z = site.resolvedZ + lz;
       const ground = this.getHeight(x, z);
       const visibleHeight = axis === 'y' ? length : diameter;
-      cylinders.push({ x, y: ground + lift + visibleHeight / 2, z, diameter, length, axis, color });
+      cylinders.push({ x, y: ground + lift + visibleHeight / 2, z, diameter, length, axis, color, surface });
       if (block) {
         if (axis === 'y') {
           this.addCollider({
@@ -1620,62 +1622,92 @@ varying vec3 vTerrainWorld;`,
       const site = this.resolveMapContentSite(def);
       if (!site) continue;
       this.mapSites.push(site);
-      this.buildMapContentKit(site, addBox, addCylinder);
+      this.verticalSliceDetailCount += this.buildMapContentKit(site, addBox, addCylinder);
+      if (site.kind === 'market') {
+        this.addStonegatePlazaSurface(scene, site);
+        this.verticalSliceDetailCount++;
+      }
     }
 
     if (boxes.length > 0) {
       const geometry = new THREE.BoxGeometry(1, 1, 1);
-      const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.03 });
-      applySurfaceAsset(material, 'paintedMetal', 2.7, 0.64);
-      const mesh = new THREE.InstancedMesh(geometry, material, boxes.length);
       const matrix = new THREE.Matrix4();
       const quaternion = new THREE.Quaternion();
       const position = new THREE.Vector3();
       const scale = new THREE.Vector3();
       const color = new THREE.Color();
-      for (let i = 0; i < boxes.length; i++) {
-        const item = boxes[i] as BoxInstance;
-        position.set(item.x, item.y, item.z);
-        quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), item.yaw);
-        scale.set(item.w, item.h, item.d);
-        matrix.compose(position, quaternion, scale);
-        mesh.setMatrixAt(i, matrix);
-        mesh.setColorAt(i, color.setHex(item.color));
+      const specs: Partial<Record<SurfaceAssetId, { scale: number; strength: number; roughness: number; metalness: number }>> = {
+        paintedMetal: { scale: 2.7, strength: 0.64, roughness: 0.78, metalness: 0.06 },
+        stonegateBrick: { scale: 0.82, strength: 0.92, roughness: 0.93, metalness: 0 },
+        wood: { scale: 2.8, strength: 0.8, roughness: 0.9, metalness: 0 },
+        concrete: { scale: 3.1, strength: 0.72, roughness: 0.94, metalness: 0 },
+        stone: { scale: 2.2, strength: 0.8, roughness: 0.95, metalness: 0 },
+        fabric: { scale: 3.2, strength: 0.66, roughness: 0.96, metalness: 0 },
+        metal: { scale: 3.2, strength: 0.6, roughness: 0.58, metalness: 0.28 },
+        foliage: { scale: 2.5, strength: 0.6, roughness: 0.96, metalness: 0 },
+      };
+      for (const surface of [...new Set(boxes.map((item) => item.surface))]) {
+        const items = boxes.filter((item) => item.surface === surface);
+        const spec = specs[surface] ?? specs.paintedMetal as NonNullable<(typeof specs)['paintedMetal']>;
+        const material = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          roughness: spec.roughness,
+          metalness: spec.metalness,
+        });
+        applySurfaceAsset(material, surface, spec.scale, spec.strength);
+        const mesh = new THREE.InstancedMesh(geometry, material, items.length);
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i] as BoxInstance;
+          position.set(item.x, item.y, item.z);
+          quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), item.yaw);
+          scale.set(item.w, item.h, item.d);
+          matrix.compose(position, quaternion, scale);
+          mesh.setMatrixAt(i, matrix);
+          mesh.setColorAt(i, color.setHex(item.color));
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.computeBoundingSphere();
+        scene.add(mesh);
       }
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.computeBoundingSphere();
-      scene.add(mesh);
     }
 
     if (cylinders.length > 0) {
       const geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);
-      const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86, metalness: 0.08 });
-      const mesh = new THREE.InstancedMesh(geometry, material, cylinders.length);
       const matrix = new THREE.Matrix4();
       const quaternion = new THREE.Quaternion();
       const position = new THREE.Vector3();
       const scale = new THREE.Vector3();
       const color = new THREE.Color();
-      for (let i = 0; i < cylinders.length; i++) {
-        const item = cylinders[i] as CylinderInstance;
-        position.set(item.x, item.y, item.z);
-        quaternion.identity();
-        if (item.axis === 'x') quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
-        else if (item.axis === 'z') quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
-        scale.set(item.diameter, item.length, item.diameter);
-        matrix.compose(position, quaternion, scale);
-        mesh.setMatrixAt(i, matrix);
-        mesh.setColorAt(i, color.setHex(item.color));
+      for (const surface of [...new Set(cylinders.map((item) => item.surface))]) {
+        const items = cylinders.filter((item) => item.surface === surface);
+        const material = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          roughness: surface === 'wood' ? 0.9 : 0.6,
+          metalness: surface === 'wood' ? 0 : 0.24,
+        });
+        applySurfaceAsset(material, surface, surface === 'wood' ? 2.8 : 3.2, surface === 'wood' ? 0.8 : 0.62);
+        const mesh = new THREE.InstancedMesh(geometry, material, items.length);
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i] as CylinderInstance;
+          position.set(item.x, item.y, item.z);
+          quaternion.identity();
+          if (item.axis === 'x') quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+          else if (item.axis === 'z') quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+          scale.set(item.diameter, item.length, item.diameter);
+          matrix.compose(position, quaternion, scale);
+          mesh.setMatrixAt(i, matrix);
+          mesh.setColorAt(i, color.setHex(item.color));
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.computeBoundingSphere();
+        scene.add(mesh);
       }
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.computeBoundingSphere();
-      scene.add(mesh);
     }
 
     for (const site of this.mapSites) this.addMapContentLootSpots(site);
@@ -1695,21 +1727,59 @@ varying vec3 vTerrainWorld;`,
     return null;
   }
 
+  // 连续细分网格逐顶点贴合地形, 旧城石铺地不会在缓坡上悬空或形成巨型台阶.
+  private addStonegatePlazaSurface(scene: THREE.Scene, site: ResolvedMapContentSite): void {
+    const width = 13.6;
+    const depth = 11.2;
+    const geometry = new THREE.PlaneGeometry(width, depth, 17, 14);
+    geometry.rotateX(-Math.PI / 2);
+    const positions = geometry.attributes.position as THREE.BufferAttribute;
+    const colors = new Float32Array(positions.count * 3);
+    const base = new THREE.Color();
+    for (let i = 0; i < positions.count; i++) {
+      const localX = positions.getX(i);
+      const localZ = positions.getZ(i);
+      positions.setY(i, this.getHeight(site.resolvedX + localX, site.resolvedZ + localZ) + 0.035);
+      const checker = (Math.floor((localX + width / 2) / 1.7) + Math.floor((localZ + depth / 2) / 1.4)) & 1;
+      base.setHex(checker === 0 ? 0x8c8981 : 0x817f78);
+      const wear = 0.94 + (Math.sin(i * 12.9898) * 0.5 + 0.5) * 0.08;
+      colors[i * 3] = base.r * wear;
+      colors[i * 3 + 1] = base.g * wear;
+      colors[i * 3 + 2] = base.b * wear;
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      roughness: 0.96,
+      metalness: 0,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    applySurfaceAsset(material, 'stone', 1.35, 0.78);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(site.resolvedX, 0, site.resolvedZ);
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
+
   private buildMapContentKit(
     site: ResolvedMapContentSite,
     box: (
       site: ResolvedMapContentSite,
       lx: number, lz: number,
       w: number, h: number, d: number,
-      color: number, yaw?: number, block?: boolean, lift?: number,
+      color: number, yaw?: number, block?: boolean, lift?: number, surface?: SurfaceAssetId,
     ) => void,
     cylinder: (
       site: ResolvedMapContentSite,
       lx: number, lz: number,
       diameter: number, length: number,
-      color: number, axis?: 'x' | 'y' | 'z', block?: boolean, lift?: number,
+      color: number, axis?: 'x' | 'y' | 'z', block?: boolean, lift?: number, surface?: SurfaceAssetId,
     ) => void,
-  ): void {
+  ): number {
     const wood = 0x765437;
     const woodDark = 0x493728;
     const metal = 0x55636a;
@@ -1718,19 +1788,70 @@ varying vec3 vTerrainWorld;`,
     const blue = 0x486d82;
     const concrete = 0x858780;
     const kit = site.kind as MapContentKind;
+    let verticalSliceDetails = 0;
+    const detailBox = (...args: Parameters<typeof box>): void => {
+      box(...args);
+      verticalSliceDetails++;
+    };
+    const detailCylinder = (...args: Parameters<typeof cylinder>): void => {
+      cylinder(...args);
+      verticalSliceDetails++;
+    };
 
     if (kit === 'market') {
-      for (const x of [-2.6, 2.6]) {
-        box(site, x, 0, 2.2, 0.82, 1.25, wood, 0, true);
-        box(site, x, 0, 2.8, 0.16, 2.2, x < 0 ? red : canvas, 0, false, 2.15);
-        for (const z of [-0.9, 0.9]) cylinder(site, x - 1, z, 0.12, 2.25, woodDark);
+      // 连续石铺网格由场景层生成, 路肩拆成短模块逐段贴地.
+      for (const z of [-5.48, 5.48]) {
+        for (let segment = -3; segment <= 3; segment++) {
+          const x = segment * 1.86;
+          detailBox(site, x, z, 1.76, 0.16, 0.3, 0xaaa497, 0, false, 0.035, 'stone');
+          detailBox(site, x, z + (z < 0 ? 0.26 : -0.26), 1.68, 0.025, 0.18, 0x3f4748, 0, false, 0.045, 'metal');
+        }
       }
-      box(site, 0, -3.5, 5.6, 0.75, 0.55, concrete, 0, true);
-      box(site, 0, -3.5, 1.9, 0.3, 0.62, red, 0, false, 0.76);
+      for (const x of [-2.6, 2.6]) {
+        box(site, x, 0, 2.2, 0.82, 1.25, wood, 0, true, 0, 'wood');
+        box(site, x, 0, 2.8, 0.16, 2.2, x < 0 ? red : canvas, 0, false, 2.15, 'fabric');
+        for (const z of [-0.9, 0.9]) cylinder(site, x - 1, z, 0.12, 2.25, woodDark, 'y', false, 0, 'wood');
+        // 摊位台面边框、货箱和悬挂布条形成前中后三级细节.
+        detailBox(site, x, -0.52, 2.28, 0.11, 0.12, 0x4d3929, 0, false, 0.77, 'wood');
+        for (const dx of [-0.62, 0, 0.62]) {
+          detailBox(site, x + dx, 0.2, 0.46, 0.34, 0.46, dx === 0 ? 0x667c57 : 0x9b7451, 0.08 * dx, false, 0.84, dx === 0 ? 'foliage' : 'wood');
+        }
+        for (const dz of [-0.72, 0, 0.72]) {
+          detailBox(site, x - 0.98, dz, 0.08, 0.42, 0.22, dz === 0 ? 0xc7a95e : 0xa75e4b, 0, false, 1.36, 'fabric');
+        }
+      }
+      box(site, 0, -3.5, 5.6, 0.75, 0.55, concrete, 0, true, 0, 'stonegateBrick');
+      box(site, 0, -3.5, 1.9, 0.3, 0.62, red, 0, false, 0.76, 'paintedMetal');
       // 横跨摊位的旧城招牌和暖色灯箱形成街口识别轮廓。
-      for (const x of [-3.9, 3.9]) cylinder(site, x, 2.8, 0.14, 3.15, woodDark);
-      box(site, 0, 2.8, 7.7, 0.18, 0.18, woodDark, 0, false, 2.82);
-      box(site, 0, 2.77, 2.9, 0.62, 0.12, canvas, 0, false, 2.95);
+      for (const x of [-3.9, 3.9]) cylinder(site, x, 2.8, 0.14, 3.15, woodDark, 'y', false, 0, 'wood');
+      box(site, 0, 2.8, 7.7, 0.18, 0.18, woodDark, 0, false, 2.82, 'wood');
+      box(site, 0, 2.77, 2.9, 0.62, 0.12, canvas, 0, false, 2.95, 'wood');
+      // 砖门柱、层叠檐口、旧式路灯和架空线缆建立旧城入口轮廓.
+      for (const x of [-4.35, 4.35]) {
+        detailBox(site, x, 2.78, 0.58, 3.35, 0.58, 0x98705f, 0, false, 0, 'stonegateBrick');
+        detailBox(site, x, 2.78, 0.78, 0.18, 0.78, 0xb7aa96, 0, false, 3.32, 'stone');
+      }
+      detailBox(site, 0, 2.78, 8.25, 0.16, 0.28, 0x9c7562, 0, false, 3.32, 'stonegateBrick');
+      for (const [x, z] of [[-5.55, -4.45], [5.55, 4.45]] as const) {
+        detailCylinder(site, x, z, 0.14, 3.55, 0x3f484b, 'y', false, 0, 'metal');
+        detailBox(site, x, z, 0.62, 0.14, 0.28, 0x4e585a, 0, false, 3.36, 'metal');
+        detailBox(site, x, z, 0.28, 0.2, 0.22, 0xe2b66c, 0, false, 3.18, 'paintedMetal');
+      }
+      detailCylinder(site, 0, -4.45, 0.045, 11.1, 0x333839, 'x', false, 3.38, 'metal');
+      detailCylinder(site, 0, 4.45, 0.045, 11.1, 0x333839, 'x', false, 3.38, 'metal');
+      // 长凳、花池、手推车和排水井盖补齐可读的生活痕迹.
+      for (const x of [-5.15, 5.15]) {
+        detailBox(site, x, -1.55, 1.5, 0.12, 0.48, 0x66503c, 0, true, 0.55, 'wood');
+        for (const dx of [-0.58, 0.58]) detailBox(site, x + dx, -1.55, 0.1, 0.55, 0.42, 0x414849, 0, false, 0, 'metal');
+      }
+      for (const z of [-2.8, 2.1]) {
+        detailBox(site, -5.05, z, 1.2, 0.5, 1.2, 0x9a7461, 0, true, 0, 'stonegateBrick');
+        for (const dx of [-0.28, 0, 0.28]) detailBox(site, -5.05 + dx, z, 0.2, 0.48 + (dx === 0 ? 0.14 : 0), 0.2, 0x667c55, 0, false, 0.48, 'foliage');
+      }
+      detailBox(site, 4.85, -3.1, 1.65, 0.18, 0.85, 0x6a523d, -0.12, true, 0.48, 'wood');
+      detailCylinder(site, 4.25, -3.52, 0.42, 0.16, 0x343a3b, 'z', false, 0.12, 'metal');
+      detailCylinder(site, 5.45, -3.52, 0.42, 0.16, 0x343a3b, 'z', false, 0.12, 'metal');
+      detailBox(site, 0.35, 4.15, 1.2, 0.035, 0.72, 0x343b3d, 0, false, 0.06, 'metal');
     } else if (kit === 'freight') {
       box(site, -2.4, -1.6, 5.2, 2.15, 2.05, blue, 0.12, true);
       box(site, 2.5, 1.7, 5.2, 2.15, 2.05, red, -0.1, true);
@@ -1790,6 +1911,7 @@ varying vec3 vTerrainWorld;`,
       box(site, 0, -4.9, 7.5, 0.16, 0.2, blue, 0, false, 3.12);
       box(site, 0, -4.86, 2.7, 0.55, 0.1, canvas, 0, false, 3.22);
     }
+    return verticalSliceDetails;
   }
 
   private addMapContentLootSpots(site: ResolvedMapContentSite): void {

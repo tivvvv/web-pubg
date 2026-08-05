@@ -12,7 +12,8 @@ export type SurfaceAssetId =
   | 'concrete'
   | 'roof'
   | 'foliage'
-  | 'paintedMetal';
+  | 'paintedMetal'
+  | 'stonegateBrick';
 export type FootstepSurface = 'grass' | 'dirt' | 'wood' | 'stone' | 'metal' | 'water';
 export type AudioAssetId =
   | `shot-${Exclude<WeaponId, 'lmg'>}`
@@ -47,6 +48,7 @@ export const SURFACE_ASSET_URLS: Readonly<Record<SurfaceAssetId, string>> = Obje
   roof: '/assets/textures/roof-detail.png',
   foliage: '/assets/textures/foliage-detail.png',
   paintedMetal: '/assets/textures/painted-metal-detail.png',
+  stonegateBrick: '/assets/textures/stonegate-brick-detail.png',
 });
 
 export const AUDIO_ASSET_URLS: Readonly<Record<AudioAssetId, string>> = Object.freeze({

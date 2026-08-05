@@ -23,6 +23,8 @@ describe('固定回归场景入口', () => {
     expect(RELEASE_SCENARIO_ROUTES.filter((route) => route.includes('scenario=stability'))
       .every((route) => route.includes('rounds=3'))).toBe(true);
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=facade&arch=apartment&plot=last');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&slice=1&view=facade');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&slice=1&view=interior');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=interior&arch=cottage1&plot=last');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=roof&arch=cottage1');
     for (const arch of ['terrace', 'barn', 'shop', 'gym']) {

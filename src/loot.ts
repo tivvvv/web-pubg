@@ -404,8 +404,56 @@ export class LootManager {
         1,
         followsTerrain,
       );
+      // 狭窄门廊、码头平台等人工承托面可能没有足够空间通过常规随机搜索。
+      // 此时围绕已经验证可落地的枪位做确定性近距搜索，保证枪弹配套且不放宽全局碰撞规则。
+      if (!gunHasMatchingAmmoNearby(gun, this.items)) {
+        spawned += this.forceAmmoNearGun(world, gun, followsTerrain);
+      }
     }
     return spawned;
+  }
+
+  private forceAmmoNearGun(world: World, gun: LootItem, sampleTerrain: boolean): number {
+    if (!isGunKind(gun.kind)) return 0;
+    const x = gun.group.position.x;
+    const z = gun.group.position.z;
+    const y = gun.baseY - 1;
+    const sourceRegion = regionOrWilderness(x, z).id;
+    const sourcePlot = sampleTerrain ? null : world.buildings.plots.find((plot) => (
+      x > plot.minX + 1.7 && x < plot.maxX - 1.7 &&
+      z > plot.minZ + 1.7 && z < plot.maxZ - 1.7
+    ));
+    const phase = ((Math.abs(x) * 0.754877666 + Math.abs(z) * 0.569840296) % 1) * Math.PI * 2;
+    const distances = [0.42, 0.56, 0.72, 0.94, 1.2, 1.52, 1.88, 2.24];
+    for (let ring = 0; ring < distances.length; ring++) {
+      const distance = distances[ring] as number;
+      for (let step = 0; step < 16; step++) {
+        const angle = phase + step * (Math.PI * 2 / 16) + ring * 0.19635;
+        const ax = x + Math.cos(angle) * distance;
+        const az = z + Math.sin(angle) * distance;
+        if (regionOrWilderness(ax, az).id !== sourceRegion) continue;
+        if (sourcePlot && (
+          ax <= sourcePlot.minX + 1.55 || ax >= sourcePlot.maxX - 1.55 ||
+          az <= sourcePlot.minZ + 1.55 || az >= sourcePlot.maxZ - 1.55
+        )) continue;
+        const ay = sampleTerrain ? world.getHeight(ax, az) : y;
+        if (sampleTerrain && !world.pointFree(
+          ax,
+          az,
+          0.16,
+          WATER_Y + 0.25,
+          Math.max(16, ay + 1.2),
+        )) continue;
+        const support = world.groundHeight(ax, az, ay + 0.32);
+        if (Math.abs(support - ay) > 0.34 || !lootPointClear(world, ax, ay, az, 0.14)) continue;
+        if (this.items.some((item) => item.active &&
+          Math.abs(item.baseY - (ay + 1)) < 0.9 &&
+          Math.hypot(item.group.position.x - ax, item.group.position.z - az) < 0.34)) continue;
+        const ammo = this.spawn(AMMO_LOOT_KIND[WEAPONS[gun.kind].ammo], ax, ay, az);
+        if (ammo) return 1;
+      }
+    }
+    return 0;
   }
 
   private spawnRegionalEvents(world: World, events: readonly RegionEvent[]): number {
@@ -490,9 +538,9 @@ export class LootManager {
       x > plot.minX + 2 && x < plot.maxX - 2 && z > plot.minZ + 2 && z < plot.maxZ - 2
     ));
     const phase = random() * Math.PI * 2;
-    for (let attempt = 0; attempt < 28; attempt++) {
+    for (let attempt = 0; attempt < 42; attempt++) {
       const a = phase + attempt * 2.399963;
-      const d = 0.82 + ((attempt * 0.37 + random() * 0.24) % 1.12);
+      const d = 0.72 + ((attempt * 0.37 + random() * 0.24) % 1.68);
       const ax = x + Math.cos(a) * d;
       const az = z + Math.sin(a) * d;
       if (regionOrWilderness(ax, az).id !== sourceRegion) continue;
@@ -510,8 +558,8 @@ export class LootManager {
         )
         : 0;
       if (sampleTerrain && (
-        localRise > 0.5 ||
-        !world.pointFree(ax, az, 0.24, WATER_Y + 0.25, 16)
+        localRise > 0.9 ||
+        !world.pointFree(ax, az, 0.24, WATER_Y + 0.25, Math.max(16, ay + 1.2))
       )) continue;
       const support = world.groundHeight(ax, az, ay + 0.32);
       if (Math.abs(support - ay) > 0.34 || !lootPointClear(world, ax, ay, az)) continue;

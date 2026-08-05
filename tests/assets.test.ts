@@ -13,9 +13,10 @@ import type { WeaponId } from '../src/types';
 const projectFile = (url: string): string => join(process.cwd(), 'public', url);
 
 describe('美术与音效静态资产', () => {
-  it('十类表面材质均为有效轻量 PNG', () => {
+  it('十一类表面材质均为有效轻量 PNG', () => {
     expect(Object.keys(SURFACE_ASSET_URLS)).toEqual([
       'plaster', 'terrain', 'wood', 'metal', 'fabric', 'stone', 'concrete', 'roof', 'foliage', 'paintedMetal',
+      'stonegateBrick',
     ]);
     let total = 0;
     for (const url of Object.values(SURFACE_ASSET_URLS)) {

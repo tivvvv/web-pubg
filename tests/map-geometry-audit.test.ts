@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AabbCollider } from '../src/types';
 import { World } from '../src/world';
 import { doorLeafSegment } from '../src/buildings';
+import { regionAt } from '../src/regions';
 
 type Plot = {
   minX: number;
@@ -111,5 +112,16 @@ describe('地图与建筑终极几何巡检', () => {
       });
       expect(blocked, `物资点 ${spot.x.toFixed(2)},${spot.y.toFixed(2)},${spot.z.toFixed(2)} 与实体重叠`).toBe(false);
     }
+  });
+
+  it('磐石城垂直切片具备独立街区和样板楼细节预算', () => {
+    const world = createWorld();
+    expect(world.verticalSliceDetailCount).toBeGreaterThanOrEqual(50);
+    expect(world.buildings.verticalSliceDetailCount).toBeGreaterThanOrEqual(70);
+    const plot = world.buildings.plots[world.buildings.verticalSlicePlotIndex];
+    expect(plot).toBeDefined();
+    if (!plot) return;
+    expect(plot.arch === 'cottage2' || plot.arch === 'terrace').toBe(true);
+    expect(regionAt((plot.minX + plot.maxX) * 0.5, (plot.minZ + plot.maxZ) * 0.5)?.id).toBe('stonegate');
   });
 });

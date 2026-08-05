@@ -60,7 +60,7 @@ describe('掉落物空间校验', () => {
     expect(lootPointClear(world, 1.2, 0.2, 0)).toBe(true);
   });
 
-  it.each([1, 7, 41, 313, 2026, 8191, 65537, 99173])(
+  it.each([1, 7, 41, 313, 1337, 2026, 8191, 65537, 99173])(
     '种子 %s 的多层住宅至少有两把枪且每把枪都有匹配弹药',
     (seed) => {
       setRandomSeed(seed);
