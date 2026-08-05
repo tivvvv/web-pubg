@@ -7,6 +7,59 @@ export interface CameraShakeSample {
   roll: number;
 }
 
+export interface CameraMotionSample {
+  forward: number;
+  lateral: number;
+  vertical: number;
+  roll: number;
+}
+
+export interface CameraSpringSample {
+  value: number;
+  velocity: number;
+}
+
+// 起停惯性、侧移压肩和速度重心统一生成镜头目标，ADS 时主动收敛以保持瞄准稳定。
+export function cameraMotionTarget(
+  speed: number,
+  lateralInput: number,
+  acceleration: number,
+  aimProgress: number,
+  firstPersonBlend: number,
+): CameraMotionSample {
+  const speedF = clamp(speed / 6.9, 0, 1);
+  const lateral = clamp(lateralInput, -1, 1);
+  const calm = lerp(1, 0.24, clamp(aimProgress, 0, 1));
+  const viewScale = lerp(1, 0.62, clamp(firstPersonBlend, 0, 1));
+  const scale = calm * viewScale;
+  return {
+    forward: clamp(-acceleration * 0.012, -0.11, 0.11) * scale,
+    lateral: -lateral * 0.085 * scale,
+    vertical: -speedF * 0.024 * scale,
+    roll: -lateral * 0.013 * calm,
+  };
+}
+
+// 固定小步长的阻尼弹簧用于落地回弹，避免不同刷新率下出现明显不同的过冲。
+export function advanceCameraSpring(
+  value: number,
+  velocity: number,
+  target: number,
+  response: number,
+  damping: number,
+  dt: number,
+): CameraSpringSample {
+  const steps = Math.max(1, Math.ceil(Math.max(0, dt) * 120));
+  const step = Math.max(0, dt) / steps;
+  const stiffness = Math.max(0.01, response) ** 2;
+  const drag = 2 * clamp(damping, 0, 2) * Math.max(0.01, response);
+  for (let i = 0; i < steps; i++) {
+    velocity += ((target - value) * stiffness - velocity * drag) * step;
+    value += velocity * step;
+  }
+  return { value, velocity };
+}
+
 // 手动第一人称直接请求完整镜轴, 瞄具则随 ADS 进度提前平滑进入镜轴。
 export function cameraModeTarget(manualFpp: boolean, optic: boolean, aimProgress: number): number {
   if (manualFpp) return 1;

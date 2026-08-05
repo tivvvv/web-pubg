@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  advanceCameraMode, advanceShoulderBlend, cameraFovTarget, cameraModeTarget, sampleCameraShake,
+  advanceCameraMode, advanceCameraSpring, advanceShoulderBlend, cameraFovTarget, cameraModeTarget,
+  cameraMotionTarget, sampleCameraShake,
   smoothCameraDistance,
 } from '../src/camera';
 
@@ -59,5 +60,34 @@ describe('镜头过渡', () => {
     expect(sprint).toBeCloseTo(77.8);
     expect(fired).toBeCloseTo(76.2);
     expect(scoped).toBeLessThan(38);
+  });
+
+  it('起停和侧移产生受控镜头惯性且 ADS 主动收敛', () => {
+    const running = cameraMotionTarget(6.9, 1, 9, 0, 0);
+    const aiming = cameraMotionTarget(6.9, 1, 9, 1, 1);
+    expect(running.forward).toBeLessThan(0);
+    expect(running.lateral).toBeLessThan(0);
+    expect(running.vertical).toBeLessThan(0);
+    expect(Math.abs(aiming.forward)).toBeLessThan(Math.abs(running.forward));
+    expect(Math.abs(aiming.lateral)).toBeLessThan(Math.abs(running.lateral));
+    expect(Math.abs(aiming.roll)).toBeLessThan(Math.abs(running.roll));
+  });
+
+  it('落地弹簧在不同帧率下稳定收敛', () => {
+    const run = (dt: number, frames: number) => {
+      let value = 0.14;
+      let velocity = 0.42;
+      for (let i = 0; i < frames; i++) {
+        const next = advanceCameraSpring(value, velocity, 0, 17, 0.72, dt);
+        value = next.value;
+        velocity = next.velocity;
+      }
+      return { value, velocity };
+    };
+    const at60 = run(1 / 60, 60);
+    const at30 = run(1 / 30, 30);
+    expect(at60.value).toBeCloseTo(at30.value, 3);
+    expect(Math.abs(at60.value)).toBeLessThan(0.001);
+    expect(Math.abs(at60.velocity)).toBeLessThan(0.01);
   });
 });

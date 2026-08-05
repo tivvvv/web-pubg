@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { advancePoseBlend, Character, ownModelVisibility } from '../src/character';
+import { advancePoseBlend, Character, locomotionPose, ownModelVisibility } from '../src/character';
 import { emptyAttachments } from '../src/attachments';
 import { environmentLighting, environmentSurfaceDetail } from '../src/environment';
 import { RENDER_QUALITY } from '../src/rendering';
@@ -17,6 +17,21 @@ describe('画面回归保护', () => {
       expect(character.group.getObjectByName(name), name).toBeTruthy();
     }
     expect(character.group.getObjectByName('head')?.children.length).toBeGreaterThanOrEqual(8);
+    expect(character.parts.torso.geometry.type).toBe('CylinderGeometry');
+    expect(character.parts.head.geometry.type).toBe('DodecahedronGeometry');
+    expect(character.parts.elbowL).toBeTruthy();
+    expect(character.parts.kneeR).toBeTruthy();
+  });
+
+  it('步态统一驱动反相双腿, 膝盖抬升和身体重心', () => {
+    const pose = locomotionPose(Math.PI / 2, 6.9, 0, 1);
+    expect(pose.legL).toBeGreaterThan(0.7);
+    expect(pose.legR).toBeLessThan(-0.7);
+    expect(pose.kneeR).toBeGreaterThan(0.4);
+    expect(pose.armSwing).toBeLessThan(-0.4);
+    expect(pose.bob).toBeGreaterThan(0);
+    const prone = locomotionPose(Math.PI / 2, 6.9, 2, 1);
+    expect(Math.abs(prone.legL)).toBeLessThan(Math.abs(pose.legL));
   });
 
   it('第一人称趴下隐藏会穿入相机的自身模型', () => {

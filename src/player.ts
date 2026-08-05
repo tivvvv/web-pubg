@@ -20,7 +20,8 @@ import {
   smoothAimProgress, WEAPON_RECOIL,
 } from './gunplay';
 import {
-  advanceCameraMode, advanceShoulderBlend, cameraFovTarget, cameraModeTarget, sampleCameraShake,
+  advanceCameraMode, advanceCameraSpring, advanceShoulderBlend, cameraFovTarget, cameraModeTarget,
+  cameraMotionTarget, sampleCameraShake,
   smoothCameraDistance, type CameraShakeSample,
 } from './camera';
 import {
@@ -86,6 +87,7 @@ export class PlayerController {
   private camBob = 0;
   private camRoll = 0;
   private landDip = 0;
+  private landVelocity = 0;
   private shotFovKick = 0;
   private cameraModeF = 0;
   private shoulderSide: -1 | 1 = 1;
@@ -101,6 +103,11 @@ export class PlayerController {
   private interactionTarget: InteractionTarget | null = null;
   private interactionKind: InteractionKind | null = null;
   private interactionDistance = 0;
+  private cameraMotionForward = 0;
+  private cameraMotionLateral = 0;
+  private cameraMotionVertical = 0;
+  private cameraMotionRoll = 0;
+  private lastCameraSpeed = 0;
   spreadRad = 0.004;
 
   private viewDir = new THREE.Vector3();
@@ -194,7 +201,9 @@ export class PlayerController {
     this.shotBloom *= Math.exp(-recovery.bloomRecovery * (this.aiming ? 1 : 0.76) * dt);
     this.recoilRestT = Math.max(0, this.recoilRestT - dt);
     if (this.recoilRestT <= 0) this.recoilChain = Math.max(0, this.recoilChain - dt * 10);
-    this.landDip *= Math.exp(-11 * dt);
+    const landingSpring = advanceCameraSpring(this.landDip, this.landVelocity, 0, 17, 0.72, dt);
+    this.landDip = landingSpring.value;
+    this.landVelocity = landingSpring.velocity;
     this.shotFovKick *= Math.exp(-18 * dt);
 
     // ---- 空降阶段: 舱内/自由落体/开伞滑翔(全程禁射击/道具/姿态) ----
@@ -345,6 +354,7 @@ export class PlayerController {
         game.audio.jumpLand(game.world.footstepSurfaceAt(c.pos.x, c.pos.z, c.pos.y));
         const landingImpact = clamp((-fallSpeed - 2.4) / 7, 0, 1);
         this.landDip = Math.max(this.landDip, clamp(Math.abs(fallSpeed) * 0.012, 0.035, 0.14));
+        this.landVelocity += landingImpact * 0.42;
         if (landingImpact > 0.05) {
           game.effects.landingDust(this.tmpSwim.set(c.pos.x, c.pos.y + 0.03, c.pos.z), landingImpact);
         }
@@ -1218,6 +1228,24 @@ export class PlayerController {
       1 - Math.exp(-(focusActive ? 9 : 6) * dt),
     );
 
+    const ads = aimBlend(this.aimF);
+    const cameraAcceleration = c.grounded && !c.swimming && dt > 0
+      ? clamp((c.speed2d - this.lastCameraSpeed) / dt, -18, 18)
+      : 0;
+    this.lastCameraSpeed = c.speed2d;
+    const cameraMotion = cameraMotionTarget(
+      c.speed2d,
+      c.moveLean,
+      cameraAcceleration,
+      ads,
+      this.cameraModeF,
+    );
+    const motionRate = 1 - Math.exp(-dt * (this.cameraModeF > 0.8 ? 13 : 8.5));
+    this.cameraMotionForward = lerp(this.cameraMotionForward, cameraMotion.forward, motionRate);
+    this.cameraMotionLateral = lerp(this.cameraMotionLateral, cameraMotion.lateral, motionRate);
+    this.cameraMotionVertical = lerp(this.cameraMotionVertical, cameraMotion.vertical, motionRate);
+    this.cameraMotionRoll = lerp(this.cameraMotionRoll, cameraMotion.roll, motionRate);
+
     // 陆地脚步轻微起伏, 游泳随划水节奏浮动, 侧移产生小幅镜头侧倾
     let targetBob = 0;
     if (c.swimming) {
@@ -1233,7 +1261,7 @@ export class PlayerController {
     const swimRoll = c.swimming
       ? Math.sin(c.swimT * 1.8) * clamp(c.speed2d / SWIM_SPRINT_SPEED, 0, 1) * 0.012
       : 0;
-    const targetRoll = swimRoll - c.moveLean * lerp(0.009, 0.018, this.cameraModeF);
+    const targetRoll = swimRoll - c.moveLean * lerp(0.009, 0.018, this.cameraModeF) + this.cameraMotionRoll;
     this.camRoll = lerp(this.camRoll, targetRoll, Math.min(1, dt * 9));
     const verticalFeel = this.camBob - this.landDip;
 
@@ -1241,12 +1269,20 @@ export class PlayerController {
     this.fppCameraPos.set(c.pos.x, c.pos.y + c.eyeHeight() + verticalFeel, c.pos.z);
     this.pivot.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.04, c.pos.z);
     this.pivot.y += verticalFeel * 0.42;
+    const horizontalForwardX = Math.sin(this.yaw);
+    const horizontalForwardZ = Math.cos(this.yaw);
+    const horizontalRightX = -horizontalForwardZ;
+    const horizontalRightZ = horizontalForwardX;
+    for (const cameraAnchor of [this.fppCameraPos, this.pivot]) {
+      cameraAnchor.x += horizontalForwardX * this.cameraMotionForward + horizontalRightX * this.cameraMotionLateral;
+      cameraAnchor.y += this.cameraMotionVertical;
+      cameraAnchor.z += horizontalForwardZ * this.cameraMotionForward + horizontalRightZ * this.cameraMotionLateral;
+    }
     if (this.descent === 'freefall') {
       this.pivot.x -= this.hv.x * 0.07;
       this.pivot.z -= this.hv.y * 0.07;
     }
 
-    const ads = aimBlend(this.aimF);
     const indoor = game.world.inPlot(c.pos.x, c.pos.z, -1.65);
     const adsDist = gun?.def === WEAPONS.sniper ? 1.5 : 1.9;
     const baseDistance = lerp(indoor ? 2.5 : 3.4, adsDist, ads);
@@ -1284,8 +1320,11 @@ export class PlayerController {
     this.camera.position.x += this.cameraShake.x;
     this.camera.position.y += this.cameraShake.y;
     this.camera.position.z += this.cameraShake.z;
-    // 视线始终与射击方向一致, 交互聚焦只改变机位距离和镜头摆动。
+    // 射击时保持镜轴严格一致，非战斗交互时轻微看向目标，强化开门、拾取和救援反馈。
     this.lookAt.copy(this.camera.position).addScaledVector(dir, 14);
+    if (this.interactionFocusF > 0.001 && !this.aiming) {
+      this.lookAt.lerp(this.interactionFocus, this.interactionFocusF * (1 - this.cameraModeF * 0.45) * 0.2);
+    }
     this.camera.lookAt(this.lookAt);
     this.camera.rotateZ(this.camRoll + this.cameraShake.roll);
 

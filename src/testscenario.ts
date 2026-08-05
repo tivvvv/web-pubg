@@ -48,6 +48,8 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=combat&weapon=shotgun&burst=2',
   'scenario=combat&weapon=pistol&burst=4&sight=reddot&ads=1',
   'scenario=combat&weapon=rifle&hp=40&heal=medkit&autoheal=1',
+  'scenario=combat&weapon=rifle&movement=run',
+  'scenario=combat&weapon=rifle&action=pickup&hold=1',
   'scenario=effects',
   'scenario=effects&flash=1',
   'scenario=bottactics',
@@ -499,6 +501,9 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
         panel.dataset.combatFireMode = fireModeOf(gun);
         panel.dataset.combatReloading = String(controller.reloading);
         panel.dataset.combatSpread = controller.spreadRad.toFixed(5);
+        panel.dataset.combatSpeed = character.speed2d.toFixed(2);
+        panel.dataset.combatPose = character.stance;
+        panel.dataset.combatCameraMode = controller.aiming ? 'ads' : game.viewFpp ? 'fpp' : 'tpp';
         panel.dataset.combatShotRecent = String(game.nowSec - character.lastShotT < 0.5);
         panel.dataset.combatLoudShotRecent = String(game.nowSec - character.lastLoudShotT < 0.5);
       }
@@ -1165,6 +1170,13 @@ function setupCombat(game: Game): void {
   const action = params.get('action');
   if (action === 'interact' || action === 'pickup' || action === 'equip' || action === 'heal' || action === 'drink') {
     c.beginAction(action, params.get('hold') === '1' ? 3 : 0.5);
+  }
+  const movement = params.get('movement');
+  if (movement === 'walk' || movement === 'run') {
+    game.input.keys.add('KeyW');
+    if (movement === 'run') game.input.keys.add('ShiftLeft');
+  } else if (movement === 'strafe') {
+    game.input.keys.add('KeyD');
   }
   player.yaw = Math.atan2(targetX - playerX, targetZ - playerZ);
 

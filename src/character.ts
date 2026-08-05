@@ -28,6 +28,39 @@ export function advancePoseBlend(current: number, active: boolean, dt: number, e
   return clamp(current + (active ? enterRate : -exitRate) * dt, 0, 1);
 }
 
+export interface LocomotionPose {
+  legL: number;
+  legR: number;
+  kneeL: number;
+  kneeR: number;
+  armSwing: number;
+  bob: number;
+  hipYaw: number;
+}
+
+// 相位驱动的步态采样让脚步落点, 膝盖弯曲, 手臂反摆和重心起伏保持同一节奏。
+export function locomotionPose(phase: number, speed: number, stanceF: number, blend = 1): LocomotionPose {
+  const motion = clamp(speed / 6.9, 0, 1) * clamp(blend, 0, 1);
+  const crouch = Math.min(stanceF, 1);
+  const prone = Math.max(0, stanceF - 1);
+  const strideScale = clamp(blend, 0, 1) * (1 - crouch * 0.5 - prone * 0.72);
+  const stride = Math.sin(phase);
+  // Bend the knee that is travelling forward. Deriving the lift from the
+  // stride itself keeps the knee and thigh in phase at every frame rate.
+  const leftLift = Math.max(0, -stride);
+  const rightLift = Math.max(0, stride);
+  const amplitude = (0.3 + motion * 0.56) * strideScale;
+  return {
+    legL: stride * amplitude,
+    legR: -stride * amplitude,
+    kneeL: leftLift * (0.12 + motion * 0.5) * strideScale,
+    kneeR: rightLift * (0.12 + motion * 0.5) * strideScale,
+    armSwing: -stride * (0.18 + motion * 0.42) * strideScale,
+    bob: (0.5 - Math.cos(phase * 2) * 0.5) * (0.014 + motion * 0.045) * (1 - crouch * 0.72),
+    hipYaw: -stride * motion * 0.065 * (1 - prone),
+  };
+}
+
 export function shouldEnterSwimming(depth: number, standH: number, feetY: number): boolean {
   return depth > SWIM_ENTER_DEPTH && feetY < WATER_Y + 0.3 && standH < WATER_Y - 1;
 }
@@ -70,8 +103,12 @@ export interface HumanParts {
   head: THREE.Mesh;
   armL: THREE.Group;
   armR: THREE.Group;
+  elbowL: THREE.Group;
+  elbowR: THREE.Group;
   legL: THREE.Group;
   legR: THREE.Group;
+  kneeL: THREE.Group;
+  kneeR: THREE.Group;
   gun: THREE.Group;      // 手部锚点(当前持械模型挂在这里)
   held: WeaponModel | null; // 当前持械模型(含 muzzle/mag)
   muzzleFallback: THREE.Object3D; // 徒手时的枪口兜底点
@@ -79,19 +116,19 @@ export interface HumanParts {
 
 // 共享几何体(跨对局复用, 重开不泄漏)
 const GEO = {
-  head: new THREE.BoxGeometry(0.3, 0.32, 0.3),
-  torso: new THREE.BoxGeometry(0.46, 0.58, 0.28),   // 收窄肩腰
-  waist: new THREE.BoxGeometry(0.4, 0.16, 0.26),
-  upperArm: new THREE.BoxGeometry(0.13, 0.3, 0.13),
-  forearm: new THREE.BoxGeometry(0.115, 0.3, 0.115),
-  hand: new THREE.BoxGeometry(0.1, 0.12, 0.1),
-  thigh: new THREE.BoxGeometry(0.16, 0.38, 0.16),
-  shin: new THREE.BoxGeometry(0.145, 0.38, 0.145),
+  head: new THREE.DodecahedronGeometry(0.22, 0),
+  torso: new THREE.CylinderGeometry(0.205, 0.255, 0.58, 6, 2),
+  waist: new THREE.CylinderGeometry(0.205, 0.22, 0.16, 6, 1),
+  upperArm: new THREE.CapsuleGeometry(0.065, 0.17, 3, 6),
+  forearm: new THREE.CapsuleGeometry(0.0575, 0.185, 3, 6),
+  hand: new THREE.DodecahedronGeometry(0.085, 0),
+  thigh: new THREE.CapsuleGeometry(0.08, 0.22, 3, 6),
+  shin: new THREE.CapsuleGeometry(0.0725, 0.235, 3, 6),
   boot: new THREE.BoxGeometry(0.16, 0.12, 0.26),
 };
 // 细节件共享几何(面部/领口/护具/鞋底等, 一次创建全局复用)
 const GEO_D = {
-  neck: new THREE.BoxGeometry(0.14, 0.08, 0.14),
+  neck: new THREE.CylinderGeometry(0.07, 0.075, 0.1, 7),
   eye: new THREE.BoxGeometry(0.052, 0.042, 0.018),
   brow: new THREE.BoxGeometry(0.068, 0.018, 0.016),
   mouth: new THREE.BoxGeometry(0.085, 0.016, 0.014),
@@ -105,9 +142,9 @@ const GEO_D = {
   kneePad: new THREE.BoxGeometry(0.16, 0.11, 0.05),
   sole: new THREE.BoxGeometry(0.17, 0.035, 0.28),
   elbowPad: new THREE.BoxGeometry(0.13, 0.09, 0.045),
-  hair: new THREE.BoxGeometry(0.31, 0.07, 0.31),
-  ear: new THREE.BoxGeometry(0.045, 0.1, 0.075),
-  nose: new THREE.BoxGeometry(0.05, 0.065, 0.045),
+  hair: new THREE.SphereGeometry(0.225, 7, 4, 0, Math.PI * 2, 0, Math.PI * 0.48),
+  ear: new THREE.CylinderGeometry(0.04, 0.045, 0.075, 6),
+  nose: new THREE.ConeGeometry(0.038, 0.075, 5),
   pocket: new THREE.BoxGeometry(0.13, 0.13, 0.025),
   cargo: new THREE.BoxGeometry(0.035, 0.14, 0.11),
 };
@@ -155,6 +192,7 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   const torso = new THREE.Mesh(GEO.torso, shirt);
   torso.name = 'torso';
   torso.position.set(0, 1.05, 0);
+  torso.scale.z = 0.6;
   torso.castShadow = true;
   body.add(torso);
   for (const side of [-1, 1] as const) {
@@ -169,6 +207,7 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   // 腰带/裤腰色块
   const waist = new THREE.Mesh(GEO.waist, pants);
   waist.position.set(0, 0.79, 0);
+  waist.scale.z = 0.62;
   body.add(waist);
   // ---- 细节: 颈部/领口/肩垫/胸挂带/腰带扣 ----
   const neck = new THREE.Mesh(GEO_D.neck, MAT.skin);
@@ -196,38 +235,42 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   const head = new THREE.Mesh(GEO.head, MAT.skin);
   head.name = 'head';
   head.position.set(0, 1.53, 0);
+  head.scale.set(0.76, 0.8, 0.76);
   head.castShadow = true;
   // 独立眼睛、眉毛和嘴部让近景表情可读，仍保持低多边形块面风格。
   for (const side of [-1, 1] as const) {
     const eye = new THREE.Mesh(GEO_D.eye, MAT.face);
     eye.name = side < 0 ? 'eye-left' : 'eye-right';
-    eye.position.set(side * 0.072, 0.025, 0.159);
+    eye.position.set(side * 0.072, 0.025, 0.166);
     head.add(eye);
     const brow = new THREE.Mesh(GEO_D.brow, MAT.hair);
     brow.name = side < 0 ? 'brow-left' : 'brow-right';
-    brow.position.set(side * 0.072, 0.073, 0.158);
+    brow.position.set(side * 0.072, 0.073, 0.164);
     brow.rotation.z = side * -0.08;
     head.add(brow);
   }
   const mouth = new THREE.Mesh(GEO_D.mouth, MAT.lip);
   mouth.name = 'mouth';
-  mouth.position.set(0, -0.095, 0.16);
+  mouth.position.set(0, -0.095, 0.166);
   head.add(mouth);
   const hair = new THREE.Mesh(GEO_D.hair, MAT.hair);
-  hair.position.set(0, 0.165, -0.01);
+  hair.position.set(0, 0.112, -0.005);
+  hair.scale.set(0.78, 0.58, 0.78);
   head.add(hair);
   const nose = new THREE.Mesh(GEO_D.nose, MAT.skin);
-  nose.position.set(0, -0.035, 0.17);
+  nose.position.set(0, -0.035, 0.188);
+  nose.rotation.x = Math.PI / 2;
   head.add(nose);
   for (const side of [-1, 1] as const) {
     const ear = new THREE.Mesh(GEO_D.ear, MAT.skin);
     ear.position.set(0.17 * side, -0.01, 0);
+    ear.rotation.z = Math.PI / 2;
     head.add(ear);
   }
   body.add(head);
 
   // 手臂: 肩部枢轴 → 上臂 → 肘部枢轴 → 前臂 + 手(肘/手暗示)
-  const mkArm = (side: 1 | -1): THREE.Group => {
+  const mkArm = (side: 1 | -1): { root: THREE.Group; elbow: THREE.Group } => {
     const arm = new THREE.Group();
     arm.position.set(0.31 * side, 1.32, 0);
     const upper = new THREE.Mesh(GEO.upperArm, shirt);
@@ -254,18 +297,20 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     arm.add(elbow);
     arm.rotation.x = -1.15;
     arm.rotation.z = 0.25 * side * -1;
-    return arm;
+    return { root: arm, elbow };
   };
-  const armL = mkArm(-1);
+  const leftArm = mkArm(-1);
+  const armL = leftArm.root;
   armL.rotation.z = 0.25;
   inner.add(armL);
-  const armR = mkArm(1);
+  const rightArm = mkArm(1);
+  const armR = rightArm.root;
   armR.rotation.x = -1.3;
   armR.rotation.z = -0.1;
   inner.add(armR);
 
   // 腿: 髋部枢轴 → 大腿 → 膝部枢轴 → 小腿 + 靴(膝/靴暗示)
-  const mkLeg = (side: 1 | -1): THREE.Group => {
+  const mkLeg = (side: 1 | -1): { root: THREE.Group; knee: THREE.Group } => {
     const leg = new THREE.Group();
     leg.position.set(0.13 * side, 0.74, 0);
     const thigh = new THREE.Mesh(GEO.thigh, pants);
@@ -293,11 +338,13 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     sole.position.set(0, -0.075, 0.01);
     boot.add(sole);
     leg.add(knee);
-    return leg;
+    return { root: leg, knee };
   };
-  const legL = mkLeg(-1);
+  const leftLeg = mkLeg(-1);
+  const legL = leftLeg.root;
   body.add(legL);
-  const legR = mkLeg(1);
+  const rightLeg = mkLeg(1);
+  const legR = rightLeg.root;
   body.add(legR);
 
   // 手部锚点(武器模型挂载点, 模型原点=握把, 指向 +Z 前方)
@@ -308,7 +355,15 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   gun.add(muzzleFallback);
   inner.add(gun);
 
-  return { group, parts: { inner, body, torso, head, armL, armR, legL, legR, gun, held: null, muzzleFallback } };
+  return {
+    group,
+    parts: {
+      inner, body, torso, head,
+      armL, armR, elbowL: leftArm.elbow, elbowR: rightArm.elbow,
+      legL, legR, kneeL: leftLeg.knee, kneeR: rightLeg.knee,
+      gun, held: null, muzzleFallback,
+    },
+  };
 }
 
 export interface HitTestResult {
@@ -413,6 +468,8 @@ export class Character {
   private actionF = 0;
   private actionDuration = 0;
   private visualAction: CharacterAction | 'revive' | null = null;
+  private locomotionF = 0;
+  private idleT = 0;
 
   readonly group: THREE.Group;
   readonly parts: HumanParts;
@@ -690,6 +747,22 @@ export class Character {
       if (Math.abs(this.stanceF - stTarget) < 0.03) this.stanceF = stTarget;
     }
     const p = this.parts;
+    this.idleT += dt;
+    this.locomotionF = advancePoseBlend(
+      this.locomotionF,
+      moving && this.speed2d > 0.18 && this.grounded && !this.swimming,
+      dt,
+      5.8,
+      7.5,
+    );
+    const breathe = Math.sin(this.idleT * 1.75) * (1 - this.locomotionF) * 0.012;
+    p.torso.scale.set(1 + breathe * 0.3, 1 + breathe, 0.6 + breathe * 0.16);
+    p.head.position.y = 1.53 + breathe * 0.55;
+    p.head.rotation.set(-this.aimPitch * 0.16, 0, 0);
+    p.elbowL.rotation.set(-0.35, 0, 0);
+    p.elbowR.rotation.set(-0.35, 0, 0);
+    p.kneeL.rotation.set(0, 0, 0);
+    p.kneeR.rotation.set(0, 0, 0);
     this.knockF = advancePoseBlend(this.knockF, this.knocked, dt, 5.2, 3.4);
     if (this.airPose) this.visualAirPose = this.airPose;
     this.airPoseF = advancePoseBlend(this.airPoseF, this.airPose !== null, dt, 6.5, 4.5);
@@ -779,6 +852,8 @@ export class Character {
         p.legL.rotation.z = lerp(p.legL.rotation.z, 0.25 * f, k);
         p.legR.rotation.x = lerp(p.legR.rotation.x, -0.18 * f, k);
         p.legR.rotation.z = lerp(p.legR.rotation.z, -0.25 * f, k);
+        p.kneeL.rotation.x = 0.18 * f;
+        p.kneeR.rotation.x = 0.28 * f;
       } else if (this.visualAirPose === 'canopy') {
         p.inner.rotation.x = lerp(p.inner.rotation.x, 0.12 * f, k);
         p.inner.rotation.z = lerp(p.inner.rotation.z, 0, k);
@@ -793,6 +868,10 @@ export class Character {
         p.legR.rotation.x = lerp(p.legR.rotation.x, 0.18 * f, k);
         p.legR.rotation.y = lerp(p.legR.rotation.y, 0, k);
         p.legR.rotation.z = lerp(p.legR.rotation.z, 0, k);
+        p.elbowL.rotation.x = lerp(-0.35, -0.72, f);
+        p.elbowR.rotation.x = lerp(-0.35, -0.72, f);
+        p.kneeL.rotation.x = 0.38 * f;
+        p.kneeR.rotation.x = 0.5 * f;
       } else {
         // 驾驶/乘客坐姿平滑进入和离开, 避免上下车瞬间折叠.
         p.inner.rotation.x = lerp(p.inner.rotation.x, 0.05 * f, k);
@@ -806,6 +885,10 @@ export class Character {
         p.legL.rotation.z = lerp(p.legL.rotation.z, 0.08 * f, k);
         p.legR.rotation.x = lerp(p.legR.rotation.x, -1.3 * f, k);
         p.legR.rotation.z = lerp(p.legR.rotation.z, -0.08 * f, k);
+        p.elbowL.rotation.x = lerp(-0.35, -0.62, f);
+        p.elbowR.rotation.x = lerp(-0.35, -0.62, f);
+        p.kneeL.rotation.x = 1.22 * f;
+        p.kneeR.rotation.x = 1.18 * f;
       }
       return;
     }
@@ -820,6 +903,8 @@ export class Character {
       p.inner.position.z = 0;
       p.legL.rotation.x = -1.45 * tuck;
       p.legR.rotation.x = -1.25 * tuck;
+      p.kneeL.rotation.x = 1.05 * tuck;
+      p.kneeR.rotation.x = 0.9 * tuck;
       p.armL.rotation.set(-1.15 + 0.5 * tuck, 0, 0.3);
       p.armR.rotation.set(-0.5 - 0.4 * tuck, 0, -0.25); // 右臂下压撑沿
       p.armL.position.z = 0;
@@ -838,6 +923,8 @@ export class Character {
       p.armR.position.z = 0;
       p.legL.rotation.set(0.18 * f, 0, 0.08 * f);
       p.legR.rotation.set(-0.12 * f, 0, -0.08 * f);
+      p.kneeL.rotation.x = 0.22 * f;
+      p.kneeR.rotation.x = 0.32 * f;
       return;
     }
     // 游泳姿势: 水平俯身贴水面 + 交替划臂打水(swimF 平滑进出)
@@ -872,6 +959,10 @@ export class Character {
       p.armR.position.z = 0;
       p.legL.rotation.x = f * (0.08 + sR * legKick);
       p.legR.rotation.x = f * (0.08 + sL * legKick);
+      p.elbowL.rotation.x = -0.35 + Math.max(0, sL) * (0.48 + sprintF * 0.28) * f;
+      p.elbowR.rotation.x = -0.35 + Math.max(0, sR) * (0.48 + sprintF * 0.28) * f;
+      p.kneeL.rotation.x = Math.max(0, sR) * (0.22 + sprintF * 0.18) * f;
+      p.kneeR.rotation.x = Math.max(0, sL) * (0.22 + sprintF * 0.18) * f;
       return;
     }
     // 交互动作: 开门/拾取/切枪为短动作, 恢复和救援维持到读条结束。
@@ -958,10 +1049,12 @@ export class Character {
     // 走路摆动(蹲/趴时幅度衰减)
     let legSwing = 0;
     let bob = 0;
+    let gait = locomotionPose(this.walkPhase, this.speed2d, this.stanceF, this.locomotionF);
     if (moving && this.speed2d > 0.3) {
-      this.walkPhase += dt * (2.0 + this.speed2d * 1.6);
-      legSwing = Math.sin(this.walkPhase) * 0.72 * (1 - 0.6 * fC - 0.4 * fP);
-      bob = Math.abs(Math.cos(this.walkPhase)) * 0.055 * (1 - 0.8 * fC);
+      this.walkPhase += dt * (5.1 + this.speed2d * 1.05);
+      gait = locomotionPose(this.walkPhase, this.speed2d, this.stanceF, this.locomotionF);
+      legSwing = gait.legL;
+      bob = gait.bob;
       this.lastLegSwing = legSwing;
     } else {
       this.lastLegSwing *= 1 - Math.min(1, dt * 8);
@@ -970,13 +1063,23 @@ export class Character {
     const legBend = -1.05 * fC * (1 - fP);
     // 使用完整欧拉角复位，避免自由落体的侧向展开角残留到落地、站立和跑步姿态。
     p.legL.rotation.set(legSwing + legBend, 0, 0);
-    p.legR.rotation.set(-legSwing + legBend, 0, 0);
+    p.legR.rotation.set(gait.legR + legBend, 0, 0);
+    p.kneeL.rotation.x = gait.kneeL + fC * 0.5 * (1 - fP);
+    p.kneeR.rotation.x = gait.kneeR + fC * 0.5 * (1 - fP);
     // 身体下沉(蹲 -0.53 / 趴 +0.30 由旋转完成趴倒)与旋转(趴 = 面朝下平躺, 部分随瞄准俯仰)
     p.inner.position.y = bob - 0.53 * fC + 0.83 * fP;
     // 移动前倾(速度越大越前倾, 趴下不再加)
     const lean = Math.min(1, this.speed2d / 6.6) * 0.18 * (1 - fP);
     p.inner.rotation.x = 0.2 * fC + lean + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);
+    p.inner.rotation.y += gait.hipYaw * (wantId ? 0.45 : 1);
     p.inner.rotation.z = this.moveLean * 0.075 * (1 - fP);
+    if (!wantId && this.swingT <= 0 && this.actionF <= 0.001) {
+      p.armL.rotation.x = -1.15 + gait.armSwing;
+      p.armR.rotation.x = -1.3 - gait.armSwing;
+    } else if (wantId) {
+      p.elbowL.rotation.x = -0.58;
+      p.elbowR.rotation.x = -0.46;
+    }
     if (this.reload01 > 0) {
       const phase = Math.sin(clamp(this.reload01, 0, 1) * Math.PI);
       p.inner.rotation.y = -0.08 * phase;
