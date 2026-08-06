@@ -124,4 +124,12 @@ describe('地图与建筑终极几何巡检', () => {
     expect(plot.arch === 'cottage2' || plot.arch === 'terrace').toBe(true);
     expect(regionAt((plot.minX + plot.maxX) * 0.5, (plot.minZ + plot.maxZ) * 0.5)?.id).toBe('stonegate');
   });
+
+  it('自然环境具备完整地表生态, 岸线和远景层次预算', () => {
+    const world = createWorld();
+    expect(world.naturalGroundDetailCount).toBeGreaterThanOrEqual(1800);
+    expect(world.shorelineDetailCount).toBeGreaterThanOrEqual(1200);
+    expect(world.distantLandformCount).toBeGreaterThanOrEqual(12);
+    expect(world.environmentDetailInstanceCount).toBeGreaterThanOrEqual(6000);
+  });
 });

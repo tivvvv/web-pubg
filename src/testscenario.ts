@@ -158,6 +158,9 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.buildingVisualInstances = String(game.world.buildings.visualInstanceCount);
   panel.dataset.buildingDetailInstances = String(game.world.buildings.modelDetailInstanceCount);
   panel.dataset.environmentDetailInstances = String(game.world.environmentDetailInstanceCount);
+  panel.dataset.naturalGroundDetails = String(game.world.naturalGroundDetailCount);
+  panel.dataset.shorelineDetails = String(game.world.shorelineDetailCount);
+  panel.dataset.distantLandforms = String(game.world.distantLandformCount);
   panel.dataset.verticalSliceWorldDetails = String(game.world.verticalSliceDetailCount);
   panel.dataset.verticalSliceBuildingDetails = String(game.world.buildings.verticalSliceDetailCount);
   panel.dataset.verticalSlicePlotIndex = String(game.world.buildings.verticalSlicePlotIndex);

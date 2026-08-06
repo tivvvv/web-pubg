@@ -16,6 +16,10 @@ import {
 } from './mapcontent';
 import { regionAt, regionById, type RegionId } from './regions';
 import { applySurfaceAsset, type FootstepSurface, type SurfaceAssetId } from './assets';
+import {
+  makeDistantRidgeGeometry, makeFernGeometry, makeWildflowerGeometry,
+  naturalDetailBudget, shorelineSuitability, terrainSurfaceWeights,
+} from './nature';
 
 type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
 type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
@@ -92,6 +96,9 @@ export class World {
   readonly mapLootSpots: MapLootSpot[] = [];
   tacticalCoverCount = 0;
   environmentDetailInstanceCount = 0;
+  naturalGroundDetailCount = 0;
+  shorelineDetailCount = 0;
+  distantLandformCount = 0;
   verticalSliceDetailCount = 0;
   maxTerrainH = 24;
 
@@ -171,12 +178,13 @@ export class World {
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position as THREE.BufferAttribute;
     const colors = new Float32Array(pos.count * 3);
-    const cSand = new THREE.Color(0xd6c188);
-    const cSandWet = new THREE.Color(0xa5987a);
-    const cGrassA = new THREE.Color(0x558d3d);
-    const cGrassB = new THREE.Color(0x7baa50);
-    const cDry = new THREE.Color(0xa4a65d);
-    const cRock = new THREE.Color(0x8d8c86);
+    const cSand = new THREE.Color(0xd7c18a);
+    const cSandWet = new THREE.Color(0x8f8972);
+    const cGrassA = new THREE.Color(0x4f853d);
+    const cGrassB = new THREE.Color(0x7eaa52);
+    const cForest = new THREE.Color(0x3e6840);
+    const cDry = new THREE.Color(0xaaa461);
+    const cRock = new THREE.Color(0x858784);
     const tmpC = new THREE.Color();
     const grassC = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
@@ -188,20 +196,21 @@ export class World {
       const sz = (this.getHeight(x, z + CELL) - this.getHeight(x, z - CELL)) / (2 * CELL);
       const slope = Math.sqrt(sx * sx + sz * sz);
       const vary = n2.noise(x * 0.05, z * 0.05) * 0.5 + 0.5;
-      // 基底: 湿沙→干沙, 平滑过渡到草地
-      tmpC.copy(h < WATER_Y - 0.2 ? cSandWet : cSand);
       grassC.copy(cGrassA).lerp(cGrassB, vary);
-      // 大尺度补丁: 偏湿暗 / 偏干黄
       const pn = fbm(n1, x * 0.013 + 7, z * 0.013 - 3, 3);
-      if (pn < -0.12) {
-        grassC.multiplyScalar(0.82);
-        grassC.g *= 1.06;
-      } else if (pn > 0.15) {
-        grassC.lerp(cDry, smoothstep(0.15, 0.45, pn));
-      }
-      tmpC.lerp(grassC, smoothstep(WATER_Y + 0.2, WATER_Y + 1.2, h));
-      const rockF = Math.max(smoothstep(0.55, 0.95, slope), smoothstep(12, 16, h));
-      tmpC.lerp(cRock, rockF);
+      const forestBias = smoothstep(-118, -250, z) * (0.72 + vary * 0.28);
+      const dryBias = smoothstep(0.08, 0.48, pn) * (1 - forestBias * 0.75);
+      const surface = terrainSurfaceWeights(
+        h, slope, WATER_Y, Math.abs(z - riverZAt(x)), forestBias, dryBias,
+      );
+      tmpC.setRGB(
+        cSandWet.r * surface.wetSand + cSand.r * surface.sand + grassC.r * surface.meadow +
+          cForest.r * surface.forest + cDry.r * surface.dryGrass + cRock.r * surface.rock,
+        cSandWet.g * surface.wetSand + cSand.g * surface.sand + grassC.g * surface.meadow +
+          cForest.g * surface.forest + cDry.g * surface.dryGrass + cRock.g * surface.rock,
+        cSandWet.b * surface.wetSand + cSand.b * surface.sand + grassC.b * surface.meadow +
+          cForest.b * surface.forest + cDry.b * surface.dryGrass + cRock.b * surface.rock,
+      );
       // 逐顶点确定性抖动, 打散色带
       const jh = Math.sin(i * 12.9898) * 43758.5453;
       const j = 1 + (jh - Math.floor(jh) - 0.5) * 0.05;
@@ -255,7 +264,12 @@ varying vec3 vTerrainWorld;`,
   float wetNoise = sin(vTerrainWorld.x * 0.43 + vTerrainWorld.z * 0.19)
     * cos(vTerrainWorld.z * 0.37 - vTerrainWorld.x * 0.11) * 0.5 + 0.5;
   float wetPatch = smoothstep(0.36, 0.82, wetNoise);
-  diffuseColor.rgb *= 0.97 + terrainFine * 0.05;
+  float terrainMacro = sin(vTerrainWorld.x * 0.038 + sin(vTerrainWorld.z * 0.017) * 1.7)
+    * cos(vTerrainWorld.z * 0.031 - vTerrainWorld.x * 0.009) * 0.5 + 0.5;
+  float erosionGrain = smoothstep(0.84, 0.98,
+    sin(vTerrainWorld.x * 0.19 + vTerrainWorld.z * 0.07) * 0.5 + 0.5);
+  diffuseColor.rgb *= 0.955 + terrainFine * 0.055 + terrainMacro * 0.035;
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.9, 0.91, 0.86), erosionGrain * 0.09);
   diffuseColor.rgb *= 1.0 - uCloudiness * cloudMask * 0.085;
   diffuseColor.rgb *= 1.0 - uWetness * wetPatch * 0.1;`,
         )
@@ -265,7 +279,7 @@ varying vec3 vTerrainWorld;`,
   roughnessFactor = mix(roughnessFactor, 0.54, uWetness * wetPatch * 0.62);`,
         );
     };
-    terrainMat.customProgramCacheKey = () => 'terrain-surface-weather-v1';
+    terrainMat.customProgramCacheKey = () => 'terrain-biome-surface-weather-v2';
     applySurfaceAsset(terrainMat, 'terrain', 0.065, 0.72);
     const terrain = new THREE.Mesh(geo, terrainMat);
     terrain.receiveShadow = true;
@@ -315,14 +329,21 @@ varying vec3 vTerrainWorld;`,
   float rainSeed = fract(sin(dot(rainGrid, vec2(12.9898, 78.233))) * 43758.5453);
   float rainRipple = smoothstep(0.15, 0.0, abs(length(rainCell) - fract(uTime * 0.72 + rainSeed) * 0.15));
   float waterFresnel = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 3.0);
+  float riverCenter = 80.0 + 22.0 * sin(vWaterPos.x * 0.012 + 1.3);
+  float riverEdge = 1.0 - smoothstep(0.0, 5.5, abs(abs(vWaterPos.y - riverCenter) - 11.0));
+  float coastEdge = 1.0 - smoothstep(0.0, 44.0, abs(length(vWaterPos) - 270.0));
+  float shallowWater = clamp(max(riverEdge, coastEdge * 0.72), 0.0, 1.0);
+  float foamTrace = smoothstep(0.68, 0.94, waterBand * 0.5 + crossBand * 0.5) * shallowWater;
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.22, 0.53, 0.57), shallowWater * 0.16);
   gl_FragColor.rgb += vec3(0.035, 0.075, 0.085) * smoothstep(0.6, 0.98, waterBand);
   gl_FragColor.rgb += vec3(0.025, 0.055, 0.072) * smoothstep(0.7, 0.98, crossBand);
   gl_FragColor.rgb += vec3(0.065, 0.105, 0.125) * waterFresnel * 0.55;
   gl_FragColor.rgb += vec3(0.08, 0.11, 0.13) * rainRipple * uRain * 0.55;
+  gl_FragColor.rgb += vec3(0.16, 0.2, 0.19) * foamTrace * 0.32;
   #include <dithering_fragment>`,
         );
     };
-    waterMat.customProgramCacheKey = () => 'water-bob-rain-v4';
+    waterMat.customProgramCacheKey = () => 'water-depth-foam-rain-v5';
     const water = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800, 72, 72), waterMat);
     water.rotation.x = -Math.PI / 2;
     water.position.y = WATER_Y;
@@ -467,6 +488,7 @@ varying vec3 vTerrainWorld;`,
 
   private buildStatics(scene: THREE.Scene): void {
     const rng = mulberry32(424242);
+    const naturalBudget = naturalDetailBudget(navigator.hardwareConcurrency);
     const m4 = new THREE.Matrix4();
     const q0 = new THREE.Quaternion();
     const vPos = new THREE.Vector3();
@@ -476,6 +498,7 @@ varying vec3 vTerrainWorld;`,
     this.buildings.build(scene, this);
     this.prepareScenicSites();
     this.addRoadNetwork(scene);
+    this.addDistantLandforms(scene);
 
     // ---- 树木(松树 60% + 阔叶 40%, 树干/碰撞体逻辑不变; 北境密林加密) ----
     const treeCap = 470; // 全图 350 + 密林加密 120
@@ -653,6 +676,11 @@ varying vec3 vTerrainWorld;`,
     const rockMesh2 = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, rockCap);
     const rockAccentMat = new THREE.MeshStandardMaterial({ color: 0x68774f, roughness: 1, flatShading: true });
     const rockAccentMesh = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockAccentMat, rockCap);
+    const screeMesh = new THREE.InstancedMesh(
+      new THREE.DodecahedronGeometry(1, 0),
+      new THREE.MeshStandardMaterial({ color: 0x777a74, roughness: 1, flatShading: true }),
+      rockCap * naturalBudget.screePerRock,
+    );
     rockMesh.castShadow = true;
     rockMesh.receiveShadow = true;
     rockMesh2.castShadow = true;
@@ -660,6 +688,7 @@ varying vec3 vTerrainWorld;`,
     rockAccentMesh.receiveShadow = true;
     let rockCount = 0;
     let rockCount2 = 0;
+    let screeCount = 0;
     const tryRock = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.3 || h > 15) return false;
@@ -687,6 +716,20 @@ varying vec3 vTerrainWorld;`,
       q0.setFromEuler(new THREE.Euler(0, rng() * Math.PI * 2, 0));
       m4.compose(vPos, q0, vScale);
       rockAccentMesh.setMatrixAt(rockCount + rockCount2 - 1, m4);
+      // 主岩周围生成同地质色系碎石, 让大石与坡地之间形成自然尺度过渡.
+      for (let si = 0; si < naturalBudget.screePerRock; si++) {
+        const angle = rng() * Math.PI * 2;
+        const distance = s * (0.8 + rng() * 1.35);
+        const sx = x + Math.cos(angle) * distance;
+        const sz = z + Math.sin(angle) * distance;
+        const sh = this.getHeight(sx, sz);
+        const ss = 0.12 + rng() * 0.24;
+        vPos.set(sx, sh + ss * 0.2, sz);
+        vScale.set(ss * (1.1 + rng()), ss * (0.35 + rng() * 0.3), ss * (0.9 + rng() * 0.8));
+        q0.setFromEuler(new THREE.Euler(rng() * 0.4, rng() * Math.PI * 2, rng() * 0.4));
+        m4.compose(vPos, q0, vScale);
+        screeMesh.setMatrixAt(screeCount++, m4);
+      }
       this.addCollider({ kind: 'cyl', x, z, r: s * 0.92, y0: h - 1, y1: h + sy * 0.95, tag: 'rock' });
       return true;
     };
@@ -702,16 +745,21 @@ varying vec3 vTerrainWorld;`,
     rockMesh.instanceMatrix.needsUpdate = true;
     rockMesh2.instanceMatrix.needsUpdate = true;
     rockAccentMesh.count = rockCount + rockCount2;
+    screeMesh.count = screeCount;
     rockAccentMesh.instanceMatrix.needsUpdate = true;
+    screeMesh.instanceMatrix.needsUpdate = true;
     if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
     if (rockMesh2.instanceColor) rockMesh2.instanceColor.needsUpdate = true;
     rockMesh.computeBoundingSphere();
     rockMesh2.computeBoundingSphere();
     rockAccentMesh.computeBoundingSphere();
+    screeMesh.computeBoundingSphere();
     scene.add(rockMesh);
     scene.add(rockMesh2);
     scene.add(rockAccentMesh);
-    this.environmentDetailInstanceCount += rockAccentMesh.count;
+    scene.add(screeMesh);
+    this.environmentDetailInstanceCount += rockAccentMesh.count + screeMesh.count;
+    this.naturalGroundDetailCount += screeMesh.count;
 
     // ---- 灌木丛(无碰撞体: 子弹/移动均可穿过, 供隐蔽判定; 密林加密) ----
     const bushCap = 420; // 全图 300 + 密林加密 120
@@ -793,7 +841,7 @@ varying vec3 vTerrainWorld;`,
     this.environmentDetailInstanceCount += bushStemMesh.count;
 
     // ---- 草丛(纯装饰: 无碰撞体, 不挡子弹/视线) ----
-    const grassCap = navigator.hardwareConcurrency <= 4 ? 2600 : 4500;
+    const grassCap = naturalBudget.grass;
     const grassGeo = makeGrassGeo();
     const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.addSway(grassMat, 0.06, 0.0, 0.55, true, true);
@@ -855,6 +903,8 @@ varying vec3 vTerrainWorld;`,
     grassMesh.count = grassCount + forestGrass;
     grassMesh.instanceMatrix.needsUpdate = true;
     if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
+
+    this.addGroundEcology(scene);
 
     // ---- 农田作物行(南部农场, 黄绿短苗, 纯装饰) ----
     const cropGeo = makeGrassGeo();
@@ -2065,22 +2115,222 @@ varying vec3 vTerrainWorld;`,
     }
   }
 
+  private addDistantLandforms(scene: THREE.Scene): void {
+    const rng = mulberry32(60491);
+    const ridgeA = new THREE.InstancedMesh(
+      makeDistantRidgeGeometry(0.4),
+      new THREE.MeshBasicMaterial({ color: 0x89958f, fog: true }),
+      14,
+    );
+    const ridgeB = new THREE.InstancedMesh(
+      makeDistantRidgeGeometry(2.1),
+      new THREE.MeshBasicMaterial({ color: 0x9aa39a, fog: true }),
+      14,
+    );
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    let countA = 0;
+    let countB = 0;
+    for (let i = 0; i < 14; i++) {
+      const angle = i / 14 * Math.PI * 2 + (rng() - 0.5) * 0.28;
+      const radius = 472 + rng() * 78;
+      const width = 54 + rng() * 42;
+      position.set(Math.cos(angle) * radius, -7.5 - rng() * 2.5, Math.sin(angle) * radius);
+      rotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI * 2);
+      scale.set(width, 17 + rng() * 16, width * (0.72 + rng() * 0.45));
+      matrix.compose(position, rotation, scale);
+      const mesh = i % 2 === 0 ? ridgeA : ridgeB;
+      const index = i % 2 === 0 ? countA++ : countB++;
+      mesh.setMatrixAt(index, matrix);
+    }
+    ridgeA.count = countA;
+    ridgeB.count = countB;
+    ridgeA.instanceMatrix.needsUpdate = true;
+    ridgeB.instanceMatrix.needsUpdate = true;
+    ridgeA.computeBoundingSphere();
+    ridgeB.computeBoundingSphere();
+    ridgeA.renderOrder = -2;
+    ridgeB.renderOrder = -2;
+    scene.add(ridgeA, ridgeB);
+    this.distantLandformCount = countA + countB;
+    this.environmentDetailInstanceCount += this.distantLandformCount;
+  }
+
+  private addGroundEcology(scene: THREE.Scene): void {
+    const budget = naturalDetailBudget(navigator.hardwareConcurrency);
+    const rng = mulberry32(31871);
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    const tint = new THREE.Color();
+
+    const fernMaterial = new THREE.MeshLambertMaterial({
+      color: 0xffffff, vertexColors: true, side: THREE.DoubleSide,
+    });
+    this.addSway(fernMaterial, 0.045, 0, 0.5, true, true, 90, 128);
+    const ferns = new THREE.InstancedMesh(makeFernGeometry(), fernMaterial, budget.understory);
+    let fernCount = 0;
+    for (let t = 0; t < budget.understory * 12 && fernCount < budget.understory; t++) {
+      const x = (rng() * 2 - 1) * 325;
+      const z = -110 - rng() * 220;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.65 || h > 12.5 || this.slopeAt(x, z) > 0.5) continue;
+      if (this.inPlot(x, z, 1.7) || this.inScenicSite(x, z, 0.8) || this.nearRoad(x, z, 0.55)) continue;
+      const size = 0.72 + rng() * 0.82;
+      position.set(x, h + 0.01, z);
+      rotation.setFromAxisAngle(up, rng() * Math.PI * 2);
+      scale.set(size, size * (0.78 + rng() * 0.38), size);
+      matrix.compose(position, rotation, scale);
+      ferns.setMatrixAt(fernCount, matrix);
+      tint.setHex(rng() < 0.25 ? 0x76954d : 0x4d7b45).multiplyScalar(0.86 + rng() * 0.24);
+      ferns.setColorAt(fernCount++, tint);
+    }
+    ferns.count = fernCount;
+    ferns.instanceMatrix.needsUpdate = true;
+    if (ferns.instanceColor) ferns.instanceColor.needsUpdate = true;
+    ferns.computeBoundingSphere();
+    ferns.receiveShadow = true;
+    scene.add(ferns);
+
+    const flowerMaterial = new THREE.MeshLambertMaterial({
+      color: 0xffffff, vertexColors: true, side: THREE.DoubleSide,
+    });
+    this.addSway(flowerMaterial, 0.035, 0.1, 0.58, true, true, 78, 112);
+    const flowers = new THREE.InstancedMesh(makeWildflowerGeometry(), flowerMaterial, budget.flowers);
+    const flowerPalette = [0xf3d36b, 0xe9a4b2, 0xc8c9ef, 0xf0efe0, 0xe2a45b] as const;
+    let flowerCount = 0;
+    for (let t = 0; t < budget.flowers * 15 && flowerCount < budget.flowers; t++) {
+      const x = (rng() * 2 - 1) * 325;
+      const z = (rng() * 2 - 1) * 325;
+      const h = this.getHeight(x, z);
+      if (z < -145 || h < WATER_Y + 0.9 || h > 10.5 || this.slopeAt(x, z) > 0.34) continue;
+      if (this.inPlot(x, z, 1.2) || this.inScenicSite(x, z, 0.5) || this.nearRoad(x, z, 0.15)) continue;
+      const patch = Math.sin(x * 0.071 + Math.sin(z * 0.033)) * Math.cos(z * 0.064 - x * 0.021);
+      if (patch < 0.18) continue;
+      const size = 0.55 + rng() * 0.72;
+      position.set(x, h + 0.015, z);
+      rotation.setFromAxisAngle(up, rng() * Math.PI * 2);
+      scale.set(size, size, size);
+      matrix.compose(position, rotation, scale);
+      flowers.setMatrixAt(flowerCount, matrix);
+      tint.setHex(flowerPalette[Math.floor(rng() * flowerPalette.length)] as number);
+      flowers.setColorAt(flowerCount++, tint);
+    }
+    flowers.count = flowerCount;
+    flowers.instanceMatrix.needsUpdate = true;
+    if (flowers.instanceColor) flowers.instanceColor.needsUpdate = true;
+    flowers.computeBoundingSphere();
+    scene.add(flowers);
+
+    const litterCap = Math.round(budget.understory * 0.7);
+    const litterGeo = new THREE.CircleGeometry(1, 5);
+    litterGeo.rotateX(-Math.PI / 2);
+    const litter = new THREE.InstancedMesh(
+      litterGeo,
+      new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide }),
+      litterCap,
+    );
+    let litterCount = 0;
+    for (let t = 0; t < litterCap * 9 && litterCount < litterCap; t++) {
+      const x = (rng() * 2 - 1) * 325;
+      const z = -125 - rng() * 205;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.65 || h > 13 || this.slopeAt(x, z) > 0.58) continue;
+      if (this.inPlot(x, z, 1.3) || this.nearRoad(x, z, 0.25)) continue;
+      const size = 0.07 + rng() * 0.16;
+      position.set(x, h + 0.018, z);
+      rotation.setFromAxisAngle(up, rng() * Math.PI * 2);
+      scale.set(size * (1.2 + rng()), 1, size);
+      matrix.compose(position, rotation, scale);
+      litter.setMatrixAt(litterCount, matrix);
+      tint.setHex(rng() < 0.35 ? 0x796943 : rng() < 0.7 ? 0x4d5b34 : 0x936d3d);
+      litter.setColorAt(litterCount++, tint);
+    }
+    litter.count = litterCount;
+    litter.instanceMatrix.needsUpdate = true;
+    if (litter.instanceColor) litter.instanceColor.needsUpdate = true;
+    litter.computeBoundingSphere();
+    scene.add(litter);
+
+    const deadwoodCap = Math.round(budget.understory * 0.1);
+    const deadwood = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.08, 0.13, 1.5, 6),
+      new THREE.MeshStandardMaterial({ color: 0x5a432d, roughness: 1, flatShading: true }),
+      deadwoodCap,
+    );
+    let deadwoodCount = 0;
+    for (let t = 0; t < deadwoodCap * 14 && deadwoodCount < deadwoodCap; t++) {
+      const x = (rng() * 2 - 1) * 320;
+      const z = -130 - rng() * 195;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.8 || h > 12 || this.slopeAt(x, z) > 0.42) continue;
+      if (this.inPlot(x, z, 2) || this.inScenicSite(x, z, 1) || this.nearRoad(x, z, 0.8)) continue;
+      position.set(x, h + 0.12, z);
+      rotation.setFromEuler(new THREE.Euler(0, rng() * Math.PI * 2, Math.PI / 2 + (rng() - 0.5) * 0.16));
+      const length = 0.7 + rng() * 1.1;
+      scale.set(length, length, length);
+      matrix.compose(position, rotation, scale);
+      deadwood.setMatrixAt(deadwoodCount++, matrix);
+    }
+    deadwood.count = deadwoodCount;
+    deadwood.instanceMatrix.needsUpdate = true;
+    deadwood.computeBoundingSphere();
+    deadwood.castShadow = true;
+    scene.add(deadwood);
+
+    this.naturalGroundDetailCount += fernCount + flowerCount + litterCount + deadwoodCount;
+    this.environmentDetailInstanceCount += fernCount + flowerCount + litterCount + deadwoodCount;
+  }
+
   private addShoreDetails(scene: THREE.Scene): void {
     const rng = mulberry32(77119);
+    const budget = naturalDetailBudget(navigator.hardwareConcurrency);
     const stemMat = new THREE.MeshLambertMaterial({ color: 0x738b42 });
     const headMat = new THREE.MeshLambertMaterial({ color: 0x755b36 });
-    const stems = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.018, 0.026, 0.9, 4), stemMat, 520);
-    const heads = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.07, 0.25, 5), headMat, 520);
+    this.addSway(stemMat, 0.035, -0.1, 0.55, true, false, 105, 145);
+    this.addSway(headMat, 0.055, -0.1, 0.18, true, false, 105, 145);
+    const stems = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.018, 0.026, 0.9, 4), stemMat, budget.shore,
+    );
+    const heads = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.05, 0.07, 0.25, 5), headMat, budget.shore,
+    );
+    const foamCap = Math.round(budget.shore * 0.44);
+    const foamMat = new THREE.MeshBasicMaterial({
+      color: 0xd8e5d8,
+      transparent: true,
+      opacity: 0.2,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+    });
+    const foam = new THREE.InstancedMesh(new THREE.RingGeometry(0.68, 0.86, 10), foamMat, foamCap);
+    foam.renderOrder = 1;
+    const pebbleCap = Math.round(budget.shore * 0.72);
+    const pebble = new THREE.InstancedMesh(
+      new THREE.DodecahedronGeometry(1, 0),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true }),
+      pebbleCap,
+    );
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const s = new THREE.Vector3();
     const p = new THREE.Vector3();
+    const color = new THREE.Color();
     let count = 0;
-    for (let t = 0; t < 12000 && count < 520; t++) {
+    let foamCount = 0;
+    let pebbleCount = 0;
+    for (let t = 0; t < 19000 && count < budget.shore; t++) {
       const x = (rng() * 2 - 1) * 340;
       const z = (rng() * 2 - 1) * 340;
       const h = this.getHeight(x, z);
-      if (h < WATER_Y - 0.16 || h > WATER_Y + 0.36 || this.inPlot(x, z, 1.5) || this.nearRoad(x, z, 0.2)) continue;
+      const shoreF = shorelineSuitability(h, WATER_Y, this.slopeAt(x, z));
+      if (shoreF < 0.28 || rng() > shoreF || this.inPlot(x, z, 1.5) || this.nearRoad(x, z, 0.2)) continue;
       const scale = 0.75 + rng() * 0.7;
       q.setFromEuler(new THREE.Euler((rng() - 0.5) * 0.08, rng() * Math.PI * 2, (rng() - 0.5) * 0.08));
       s.set(scale, scale, scale);
@@ -2090,14 +2340,49 @@ varying vec3 vTerrainWorld;`,
       p.y = h + 0.98 * scale;
       m.compose(p, q, s);
       heads.setMatrixAt(count, m);
+      if (foamCount < foamCap && rng() < 0.46 && h < WATER_Y + 0.18) {
+        q.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+        const foamSize = 0.48 + rng() * 0.82;
+        s.set(foamSize * (1.2 + rng() * 1.2), foamSize * (0.48 + rng() * 0.5), 1);
+        p.set(x + (rng() - 0.5) * 0.4, WATER_Y + 0.018, z + (rng() - 0.5) * 0.4);
+        m.compose(p, q, s);
+        foam.setMatrixAt(foamCount++, m);
+      }
+      if (pebbleCount < pebbleCap && rng() < 0.75) {
+        const angle = rng() * Math.PI * 2;
+        const dist = 0.35 + rng() * 1.5;
+        const px = x + Math.cos(angle) * dist;
+        const pz = z + Math.sin(angle) * dist;
+        const ph = this.getHeight(px, pz);
+        const ps = 0.06 + rng() * 0.14;
+        q.setFromEuler(new THREE.Euler(rng() * 0.2, rng() * Math.PI * 2, rng() * 0.2));
+        s.set(ps * (1.2 + rng()), ps * (0.35 + rng() * 0.3), ps * (0.9 + rng() * 0.8));
+        p.set(px, ph + ps * 0.18, pz);
+        m.compose(p, q, s);
+        pebble.setMatrixAt(pebbleCount, m);
+        color.setHex(rng() < 0.5 ? 0x8d8b80 : rng() < 0.75 ? 0xaaa38d : 0x6f756e);
+        pebble.setColorAt(pebbleCount++, color);
+      }
       count++;
     }
     stems.count = count;
     heads.count = count;
+    foam.count = foamCount;
+    pebble.count = pebbleCount;
     stems.instanceMatrix.needsUpdate = true;
     heads.instanceMatrix.needsUpdate = true;
+    foam.instanceMatrix.needsUpdate = true;
+    pebble.instanceMatrix.needsUpdate = true;
+    if (pebble.instanceColor) pebble.instanceColor.needsUpdate = true;
     stems.castShadow = true;
-    scene.add(stems, heads);
+    pebble.receiveShadow = true;
+    stems.computeBoundingSphere();
+    heads.computeBoundingSphere();
+    foam.computeBoundingSphere();
+    pebble.computeBoundingSphere();
+    scene.add(stems, heads, foam, pebble);
+    this.shorelineDetailCount = count * 2 + foamCount + pebbleCount;
+    this.environmentDetailInstanceCount += this.shorelineDetailCount;
   }
 
   // 单座桥: 桥面(floor 可走) + 两端踏步 + 侧护栏 + 桥墩, ≤20 AABB

@@ -180,10 +180,13 @@ describe('画面回归保护', () => {
     expect(rainyDay.cloudiness).toBeCloseTo(0.9, 5);
     expect(clearDay.moteOpacity).toBeGreaterThan(rainyDay.moteOpacity);
     expect(clearDay.moteOpacity).toBeGreaterThan(clearNight.moteOpacity);
+    expect(rainyDay.lowMistOpacity).toBeGreaterThan(clearDay.lowMistOpacity);
+    expect(clearNight.lowMistOpacity).toBeGreaterThan(clearDay.lowMistOpacity);
     expect(environmentSurfaceDetail(2, -1, 3, 2)).toEqual({
       wetness: 0.88,
       cloudiness: 1,
       moteOpacity: 0,
+      lowMistOpacity: 0.113,
     });
   });
 

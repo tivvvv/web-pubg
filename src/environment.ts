@@ -37,6 +37,7 @@ export interface EnvironmentSurfaceDetail {
   wetness: number;
   cloudiness: number;
   moteOpacity: number;
+  lowMistOpacity: number;
 }
 
 export function environmentSurfaceDetail(
@@ -57,6 +58,11 @@ export function environmentSurfaceDetail(
       (1 - rain01) * (0.15 + day01 * 0.85) * (1 - cloud01 * 0.55) * 0.24,
       0,
       0.24,
+    ),
+    lowMistOpacity: clamp(
+      0.008 + cloud01 * 0.06 + rain01 * 0.045 + wet01 * 0.028 + (1 - day01) * 0.045,
+      0.008,
+      0.16,
     ),
   };
 }
@@ -148,6 +154,7 @@ export class EnvironmentSystem {
   private readonly airMotes: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
   private readonly motePos: Float32Array;
   private readonly moteDrift: Float32Array;
+  private readonly lowMist: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
   private readonly zenith = new THREE.Color();
   private readonly horizon = new THREE.Color();
   private readonly fogColor = new THREE.Color();
@@ -279,6 +286,57 @@ export class EnvironmentSystem {
     this.airMotes.renderOrder = 3;
     this.airMotes.visible = false;
     scene.add(this.airMotes);
+
+    const mistCount = navigator.hardwareConcurrency <= 4 ? 42 : 72;
+    const mistPositions = new Float32Array(mistCount * 3);
+    const mistRng = mulberry32(77131);
+    for (let i = 0; i < mistCount; i++) {
+      const o = i * 3;
+      const angle = mistRng() * Math.PI * 2;
+      const distance = 8 + Math.sqrt(mistRng()) * 82;
+      mistPositions[o] = Math.cos(angle) * distance;
+      mistPositions[o + 1] = 0.2 + mistRng() * 4.2;
+      mistPositions[o + 2] = Math.sin(angle) * distance;
+    }
+    const mistGeometry = new THREE.BufferGeometry();
+    mistGeometry.setAttribute('position', new THREE.BufferAttribute(mistPositions, 3));
+    let mistTexture: THREE.Texture;
+    if (typeof document === 'undefined') {
+      mistTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 80]), 1, 1);
+      mistTexture.needsUpdate = true;
+    } else {
+      const mistCanvas = document.createElement('canvas');
+      mistCanvas.width = 96;
+      mistCanvas.height = 32;
+      const mistContext = mistCanvas.getContext('2d');
+      if (mistContext) {
+        const gradient = mistContext.createRadialGradient(48, 16, 2, 48, 16, 47);
+        gradient.addColorStop(0, 'rgba(255,255,255,0.46)');
+        gradient.addColorStop(0.52, 'rgba(255,255,255,0.18)');
+        gradient.addColorStop(1, 'rgba(255,255,255,0)');
+        mistContext.fillStyle = gradient;
+        mistContext.fillRect(0, 0, 96, 32);
+      }
+      mistTexture = new THREE.CanvasTexture(mistCanvas);
+    }
+    mistTexture.colorSpace = THREE.SRGBColorSpace;
+    this.lowMist = new THREE.Points(
+      mistGeometry,
+      new THREE.PointsMaterial({
+        color: 0xc8d5d0,
+        size: 10,
+        map: mistTexture,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        alphaTest: 0.015,
+        sizeAttenuation: true,
+        fog: true,
+      }),
+    );
+    this.lowMist.frustumCulled = false;
+    this.lowMist.renderOrder = 2;
+    scene.add(this.lowMist);
     this.reset();
   }
 
@@ -331,6 +389,7 @@ export class EnvironmentSystem {
     this.applyAtmosphere(shadowAnchor);
     this.updateRain(dt, camPos);
     this.updateAirMotes(dt, camPos);
+    this.updateLowMist(camPos);
     this.syncSnapshot(this.snapshot.daylight);
   }
 
@@ -467,6 +526,19 @@ export class EnvironmentSystem {
     }
     const attr = this.airMotes.geometry.getAttribute('position') as THREE.BufferAttribute;
     attr.needsUpdate = true;
+  }
+
+  private updateLowMist(camPos: THREE.Vector3): void {
+    const surface = environmentSurfaceDetail(
+      this.current.rain,
+      this.current.wet,
+      this.current.cloud,
+      this.snapshot.daylight,
+    );
+    this.lowMist.position.set(camPos.x, 0.45, camPos.z);
+    this.lowMist.material.opacity = surface.lowMistOpacity;
+    this.lowMist.material.color.copy(this.fogColor).lerp(this.horizon, 0.28);
+    this.lowMist.visible = surface.lowMistOpacity > 0.01;
   }
 
   private updateRain(dt: number, camPos: THREE.Vector3): void {
