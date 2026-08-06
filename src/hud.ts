@@ -135,6 +135,7 @@ export class Hud {
   private toastTone: ToastTone = 'info';
   private queuedToast: { message: string; tone: ToastTone } | null = null;
   private hitTimer = 0;
+  private shotPulseTimer = 0;
   private dmgTimer = 0;
   private blastTimer = 0;
   private stunTimer = 0;
@@ -567,6 +568,14 @@ export class Hud {
     this.hitTimer = 0.25;
   }
 
+  flashShot(power: number): void {
+    this.crosshair.style.setProperty('--shot-power', Math.max(0.7, Math.min(1.4, power)).toFixed(2));
+    this.crosshair.classList.remove('shot-pulse');
+    void this.crosshair.offsetWidth;
+    this.crosshair.classList.add('shot-pulse');
+    this.shotPulseTimer = 0.14;
+  }
+
   // angle: 屏幕空间弧度(0=正前方, 顺时针对准伤害来源)
   damageFrom(angle: number): void {
     this.dmgArc.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
@@ -617,7 +626,9 @@ export class Hud {
     this.toastEl.classList.remove('show');
     delete this.toastEl.dataset.tone;
     this.interactionConfirmTimer = 0;
+    this.shotPulseTimer = 0;
     this.crosshair.classList.remove('interaction-confirm');
+    this.crosshair.classList.remove('shot-pulse');
     delete this.crosshair.dataset.confirm;
     this.setFlowCue(null);
   }
@@ -647,6 +658,10 @@ export class Hud {
   }
 
   update(dt: number): void {
+    if (this.shotPulseTimer > 0) {
+      this.shotPulseTimer -= dt;
+      if (this.shotPulseTimer <= 0) this.crosshair.classList.remove('shot-pulse');
+    }
     if (this.interactionConfirmTimer > 0) {
       this.interactionConfirmTimer -= dt;
       if (this.interactionConfirmTimer <= 0) {

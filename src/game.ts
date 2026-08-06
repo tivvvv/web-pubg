@@ -116,6 +116,7 @@ import {
   selectDropRegion,
 } from './matchbalance';
 import { fireModeOf, scopeModeOf, toggleFireMode } from './gunplay';
+import { weaponPresentation } from './combatpresentation';
 import { GameRenderer } from './rendering';
 import { random } from './random';
 import { parseBoundedTestInteger } from './stability';
@@ -1349,10 +1350,11 @@ export class Game {
     gun.mag--;
     shooter.lastShotT = this.now;
     const suppressed = isSuppressed(gun);
+    const presentation = weaponPresentation(gun.def.id, suppressed);
     if (!suppressed) shooter.lastLoudShotT = this.now;
     shooter.muzzleWorld(this.tmpMuzzle);
-    this.effects.muzzleFlash(this.tmpMuzzle, MUZZLE_SCALE[gun.def.id] * (suppressed ? 0.22 : 1));
-    this.effects.casingEject(this.tmpMuzzle, gun.def.id);
+    this.effects.weaponFire(this.tmpMuzzle, gun.def.id, suppressed, MUZZLE_SCALE[gun.def.id]);
+    if (shooter.isPlayer) this.hud.flashShot(presentation.tracerWidth);
     const pellets = gun.def.pellets ?? 1;
     const maxDist = weaponMaxRange(gun.def);
     // 霰弹保留最低弹丸锥角，但玩家 ADS、姿态和移动仍会真实影响散布。
@@ -1375,11 +1377,15 @@ export class Game {
       if (vHit && (!res.hit || vHit.t < res.t) && !(res.char && res.char === vHit.v.driver && res.t < vHit.t + 0.6)) {
         travelT = vHit.t;
         this.tmpEnd.copy(origin).addScaledVector(this.tmpA, vHit.t);
-        if (pellets === 1) this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
+        if (pellets === 1) this.effects.tracer(
+          this.tmpMuzzle, this.tmpEnd, presentation.tracerColor, presentation.tracerWidth,
+        );
         this.effects.impactSpark(this.tmpEnd);
         this.vehicles.damage(vHit.v, gun.def.damage * pelletFalloff(gun.def, vHit.t));
       } else if (res.hit) {
-        if (pellets === 1) this.effects.tracer(this.tmpMuzzle, res.point, 0xffd27a);
+        if (pellets === 1) this.effects.tracer(
+          this.tmpMuzzle, res.point, presentation.tracerColor, presentation.tracerWidth,
+        );
         if (res.char) {
           const victim = res.char;
           hitPlayer = victim.isPlayer;
@@ -1418,7 +1424,7 @@ export class Game {
         if (res.point.y < WATER_Y) this.effects.splash(res.point);
       } else if (pellets === 1) {
         this.tmpEnd.copy(origin).addScaledVector(this.tmpA, maxDist);
-        this.effects.tracer(this.tmpMuzzle, this.tmpEnd, 0xffd27a);
+        this.effects.tracer(this.tmpMuzzle, this.tmpEnd, presentation.tracerColor, presentation.tracerWidth);
       }
       // 未命中玩家但弹道从身边掠过时播放一次方向性呼啸，增强对来火方向和危险距离的感知。
       const playerTarget = !shooter.isPlayer ? this.player?.char : null;

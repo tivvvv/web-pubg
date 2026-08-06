@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import type { SurfaceKind, WeaponId } from './types';
 import { clamp } from './utils';
+import { weaponPresentation } from './combatpresentation';
 
 export const VFX_QUALITY = Object.freeze({
   tracerPool: 48,
@@ -134,6 +135,7 @@ interface Tracer {
   streak: number;
   elapsed: number;
   duration: number;
+  width: number;
 }
 
 interface MuzzleFlash {
@@ -258,6 +260,7 @@ export class Effects {
         streak: 0,
         elapsed: 0,
         duration: 0,
+        width: 1,
       });
     }
 
@@ -481,7 +484,7 @@ export class Effects {
     this.hideAllImpactMarks();
   }
 
-  tracer(from: THREE.Vector3, to: THREE.Vector3, color: number): void {
+  tracer(from: THREE.Vector3, to: THREE.Vector3, color: number, width = 1): void {
     const tracer = this.tracers[this.tracerIndex] as Tracer;
     this.tracerIndex = (this.tracerIndex + 1) % this.tracers.length;
     tracer.from.copy(from);
@@ -492,13 +495,14 @@ export class Effects {
     tracer.streak = tracerStreakLength(tracer.distance);
     tracer.elapsed = 0;
     tracer.duration = tracerVisualDuration(tracer.distance);
+    tracer.width = clamp(width, 0.45, 1.6);
     tracer.mesh.material.color.setHex(color);
     tracer.mesh.material.opacity = 1;
     tracer.mesh.visible = true;
     this.syncTracer(tracer, 0.04);
   }
 
-  muzzleFlash(position: THREE.Vector3, scale = 1): void {
+  muzzleFlash(position: THREE.Vector3, scale = 1, color = 0xffb04a, lightScale = 1): void {
     const flash = this.muzzleFlashes[this.muzzleIndex] as MuzzleFlash;
     this.muzzleIndex = (this.muzzleIndex + 1) % this.muzzleFlashes.length;
     flash.life = flash.maxLife;
@@ -509,13 +513,36 @@ export class Effects {
     flash.halo.scale.setScalar((0.82 + Math.random() * 0.25) * scale);
     flash.core.material.rotation = Math.random() * Math.PI * 2;
     flash.halo.material.rotation = Math.random() * Math.PI * 2;
+    flash.core.material.color.setHex(color);
+    flash.halo.material.color.setHex(color);
     flash.core.material.opacity = 1;
     flash.halo.material.opacity = 0.66;
     flash.core.visible = true;
     flash.halo.visible = true;
     this.muzzleLight.position.copy(position);
-    this.muzzleLight.intensity = 34 * Math.min(1.4, scale);
+    this.muzzleLight.color.setHex(color);
+    this.muzzleLight.intensity = 34 * Math.min(1.4, scale) * clamp(lightScale, 0, 1.6);
     this.muzzleLight.distance = 11 + scale * 4;
+  }
+
+  weaponFire(position: THREE.Vector3, weaponId: WeaponId, suppressed: boolean, modelScale = 1): void {
+    const profile = weaponPresentation(weaponId, suppressed);
+    this.muzzleFlash(
+      position,
+      modelScale * profile.muzzleScale,
+      profile.muzzleColor,
+      profile.muzzleLight,
+    );
+    this.casingEject(position, weaponId);
+    this.spawnPuff(
+      position,
+      suppressed ? 0x9ca0a0 : 0x7f7770,
+      0.1 + profile.smokeScale * 0.08,
+      0.18 + profile.smokeScale * 0.12,
+      0.2 + profile.smokeScale * 0.18,
+      suppressed ? 0.2 : 0.13,
+      suppressed ? 0.06 : 0.035,
+    );
   }
 
   burst(point: THREE.Vector3, count: number, red: number, green: number, blue: number, speed: number): void {
@@ -877,7 +904,7 @@ export class Effects {
     this.tmpEnd.copy(tracer.from).addScaledVector(tracer.direction, headDistance);
     tracer.mesh.position.copy(this.tmpPoint);
     tracer.mesh.lookAt(this.tmpEnd);
-    tracer.mesh.scale.set(1, 1, visualLength);
+    tracer.mesh.scale.set(tracer.width, tracer.width, visualLength);
     const fadeIn = clamp(progress / 0.12, 0, 1);
     const fadeOut = clamp((1 - progress) / 0.24, 0, 1);
     tracer.mesh.material.opacity = Math.min(fadeIn, fadeOut) * 0.96;

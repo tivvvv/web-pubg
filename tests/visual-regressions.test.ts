@@ -252,4 +252,15 @@ describe('画面回归保护', () => {
     expect(css).toMatch(/data-confirm='blocked'[^}]*#ff806f/s);
     expect(css).toMatch(/@keyframes interaction-blocked/);
   });
+
+  it('命中标记和开火准星使用结构化图形反馈而不是文本符号', () => {
+    const html = readFileSync(join(process.cwd(), 'index.html'), 'utf8');
+    const css = readFileSync(join(process.cwd(), 'src/style.css'), 'utf8');
+    expect(html).toMatch(/id="hitmarker"[^>]*>[\s\S]*hit-nw[\s\S]*hit-ne[\s\S]*hit-sw[\s\S]*hit-se/);
+    expect(html).not.toContain('<div id="hitmarker">✕</div>');
+    expect(css).toMatch(/#crosshair\.shot-pulse \.ch-line/);
+    expect(css).toMatch(/@keyframes reticle-shot/);
+    expect(css).toMatch(/--ui-panel:/);
+    expect(css).toMatch(/#pickup-prompt\s*\{[^}]*--prompt-accent:/s);
+  });
 });

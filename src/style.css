@@ -1,4 +1,18 @@
 /* 绝地突围 HUD 样式: 深色军事风 */
+:root {
+  --ui-ink: #eef2e3;
+  --ui-muted: #aab5a3;
+  --ui-gold: #e4bd59;
+  --ui-green: #79d996;
+  --ui-blue: #91cfee;
+  --ui-danger: #ef6654;
+  --ui-panel: rgba(9, 14, 11, 0.76);
+  --ui-panel-strong: rgba(11, 16, 12, 0.9);
+  --ui-border: rgba(172, 193, 152, 0.34);
+  --ui-shadow: 0 10px 32px rgba(0, 0, 0, 0.34);
+  --ui-corner: 5px;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -44,14 +58,16 @@ body {
   display: flex;
   gap: 18px;
   align-items: center;
-  background: rgba(10, 14, 10, 0.62);
-  border: 1px solid rgba(150, 170, 130, 0.35);
-  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(18, 24, 18, 0.78), var(--ui-panel));
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-corner);
   padding: 7px 18px;
   color: #e8ecd8;
   font-size: 15px;
   letter-spacing: 1px;
   white-space: nowrap;
+  box-shadow: var(--ui-shadow), inset 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(7px);
 }
 
 #flow-cue {
@@ -506,6 +522,7 @@ body {
 /* 准星 */
 #crosshair {
   --gap: 10px;
+  --shot-power: 1;
   position: absolute;
   left: 50%;
   top: 50%;
@@ -517,6 +534,7 @@ body {
   position: absolute;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+  transition: background 0.08s, box-shadow 0.08s;
 }
 
 .ch-t,
@@ -562,14 +580,32 @@ body {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%) scale(0.8);
-  font-size: 30px;
-  font-weight: 900;
-  color: #fff;
-  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  width: 38px;
+  height: 38px;
+  transform: translate(-50%, -50%) scale(0.78);
+  color: #f4f7ed;
   opacity: 0;
   pointer-events: none;
 }
+
+.hit-line {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11px;
+  height: 2px;
+  margin-left: -1px;
+  margin-top: -1px;
+  border-radius: 2px;
+  background: currentColor;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.95), 0 0 7px currentColor;
+  transform-origin: 1px 1px;
+}
+
+.hit-nw { transform: rotate(225deg) translateX(8px); }
+.hit-ne { transform: rotate(315deg) translateX(8px); }
+.hit-sw { transform: rotate(135deg) translateX(8px); }
+.hit-se { transform: rotate(45deg) translateX(8px); }
 
 #hitmarker.show {
   animation: hitpop 0.25s ease-out;
@@ -581,18 +617,37 @@ body {
 
 #hitmarker.kill {
   color: #ff4d3d;
-  font-size: 38px;
 }
 
 @keyframes hitpop {
   0% {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1.25);
+    transform: translate(-50%, -50%) scale(1.18) rotate(-3deg);
   }
+  35% { opacity: 1; transform: translate(-50%, -50%) scale(0.94) rotate(0); }
   100% {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(0.85);
+    transform: translate(-50%, -50%) scale(0.82);
   }
+}
+
+#crosshair.shot-pulse .ch-line {
+  animation: reticle-shot 0.14s cubic-bezier(0.18, 0.75, 0.25, 1);
+}
+
+#crosshair.shot-pulse .ch-dot {
+  animation: reticle-core 0.14s ease-out;
+}
+
+@keyframes reticle-shot {
+  0% { filter: brightness(1.8); box-shadow: 0 0 7px rgba(255, 194, 92, 0.92); }
+  42% { transform: scale(calc(1 + var(--shot-power) * 0.24)); background: #ffd27a; }
+  100% { transform: scale(1); }
+}
+
+@keyframes reticle-core {
+  0% { transform: scale(2.2); background: #fff2c1; box-shadow: 0 0 8px #ffb84e; }
+  100% { transform: scale(1); }
 }
 
 /* 受击方向弧 */
@@ -1598,6 +1653,127 @@ body {
 @keyframes sq-knock-pulse {
   0%, 100% { background: rgba(10, 12, 10, 0.5); }
   50% { background: rgba(120, 50, 10, 0.65); }
+}
+
+/* ---------- UI 与交互视觉最终统一 ---------- */
+#environment-status,
+#location-status,
+#flow-cue,
+#squad-order,
+#vehicle-panel,
+.feed-entry {
+  box-shadow: var(--ui-shadow), inset 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(7px) saturate(1.08);
+}
+
+#bottom-left,
+#bottom-right {
+  padding: 9px 11px;
+  background: linear-gradient(135deg, rgba(12, 18, 13, 0.82), rgba(7, 11, 8, 0.58));
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-corner);
+  box-shadow: var(--ui-shadow), inset 0 1px rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(7px) saturate(1.08);
+}
+
+#bottom-left { left: 14px; bottom: 14px; border-left: 3px solid var(--ui-green); }
+#bottom-right { right: 14px; bottom: 14px; border-right: 3px solid var(--ui-gold); }
+
+#hp-bar,
+.armor-slot,
+.slot {
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035), 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+#hp-fill,
+.armor-fill,
+#drink-buff-fill,
+#vehicle-hp-fill,
+#heal-fill {
+  position: relative;
+  overflow: hidden;
+}
+
+#hp-fill::after,
+.armor-fill::after,
+#drink-buff-fill::after,
+#vehicle-hp-fill::after,
+#heal-fill::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 48%, rgba(0, 0, 0, 0.13));
+  content: '';
+}
+
+.slot.active {
+  box-shadow: inset 0 -2px rgba(232, 200, 96, 0.28), 0 0 12px rgba(228, 189, 89, 0.14);
+}
+
+#weapon-name { color: var(--ui-ink); letter-spacing: 0.35px; }
+#fire-mode { padding: 1px 5px; border: 1px solid rgba(190, 205, 170, 0.25); border-radius: 3px; }
+#ammo-mag { font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+
+#pickup-prompt {
+  --prompt-accent: var(--ui-gold);
+  min-width: 190px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--prompt-accent) 8%, transparent), transparent 34%),
+    var(--ui-panel-strong);
+  border-color: color-mix(in srgb, var(--prompt-accent) 68%, transparent);
+  border-left: 3px solid var(--prompt-accent);
+  color: color-mix(in srgb, var(--prompt-accent) 72%, white);
+  box-shadow: var(--ui-shadow), 0 0 18px color-mix(in srgb, var(--prompt-accent) 10%, transparent);
+}
+
+#pickup-prompt[data-kind='ally'] { --prompt-accent: var(--ui-green); }
+#pickup-prompt[data-kind='door'] { --prompt-accent: var(--ui-blue); }
+#pickup-prompt[data-kind='vehicle'] { --prompt-accent: #efa56c; }
+#pickup-prompt[data-kind='airdrop'],
+#pickup-prompt[data-kind='deathcrate'] { --prompt-accent: #e8c15d; }
+
+.kbd {
+  min-width: 23px;
+  padding: 1px 6px 2px;
+  border: 1px solid color-mix(in srgb, var(--prompt-accent) 68%, white 12%);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: #fff8df;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.32);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+#pickup-prompt.show .kbd { animation: key-ready 0.9s ease-in-out infinite alternate; }
+
+@keyframes key-ready {
+  from { filter: brightness(0.92); transform: translateY(0); }
+  to { filter: brightness(1.18); transform: translateY(-1px); }
+}
+
+.panel,
+.bp-panel {
+  background:
+    linear-gradient(145deg, rgba(27, 34, 24, 0.94), rgba(10, 15, 11, 0.96)),
+    var(--ui-panel-strong);
+  border-color: var(--ui-border);
+  box-shadow: 0 22px 80px rgba(0, 0, 0, 0.64), inset 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.btn:focus-visible,
+.bp-btn:focus-visible {
+  outline: 2px solid #fff0b2;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pickup-prompt.show .kbd,
+  #environment-status[data-weather='storm'] #env-icon,
+  #flow-cue[data-tone='danger'],
+  #health-vignette.critical,
+  .sq-row.knocked {
+    animation: none;
+  }
 }
 /* 启动失败兜底: 保持深色背景并给出明确恢复提示. */
 .boot-error {

@@ -8,6 +8,7 @@ import {
   type AudioAssetId,
   type FootstepSurface,
 } from './assets';
+import { shotAcousticMix, WEAPON_PRESENTATION } from './combatpresentation';
 
 export type AmbienceBiome = 'open' | 'forest' | 'coast';
 export type AcousticSpace = 'indoor' | 'open' | 'forest';
@@ -299,14 +300,14 @@ export class AudioSys {
     if (!this.ctx) return;
     const distanceAtt = clamp(1.35 / (1 + dist * 0.028), 0.015, 1);
     const att = distanceAtt * (suppressed ? 0.24 : 1);
-    const sampleGain: Record<WeaponId, number> = {
-      pistol: 0.54, rifle: 0.64, akm: 0.69, lmg: 0.72, smg: 0.46, dmr: 0.72, sniper: 0.82, shotgun: 0.78,
-    };
-    const assetVolume = distanceAtt * (suppressed ? 0.24 : sampleGain[kind]);
-    if (this.playAsset(shotAssetId(kind, suppressed), assetVolume, pan, 0.96 + Math.random() * 0.08)) {
-      if (!suppressed) {
-        const tailGain = space === 'indoor' ? 0.3 : space === 'forest' ? 0.16 : 0.22;
-        this.playAsset(`shot-tail-${space}`, distanceAtt * tailGain, pan, 0.96 + Math.random() * 0.08);
+    const mix = shotAcousticMix(kind, dist, suppressed, space, Math.random() * 2 - 1);
+    const presentation = WEAPON_PRESENTATION[kind];
+    if (mix.mechanismGain > 0.001) {
+      this.noiseBurst(mix.mechanismGain, pan, presentation.mechanismFrequency, 2.2, 0.032);
+    }
+    if (this.playAsset(shotAssetId(kind, suppressed), mix.bodyGain, pan, mix.playbackRate)) {
+      if (mix.tailGain > 0) {
+        this.playAsset(`shot-tail-${space}`, mix.tailGain, pan, 0.97 + Math.random() * 0.06);
       }
       return;
     }
