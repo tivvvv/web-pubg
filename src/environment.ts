@@ -14,6 +14,11 @@ export interface EnvironmentSnapshot {
   rainIntensity: number;
   exposure: number;
   daylight: number;
+  saturation: number;
+  contrast: number;
+  wetness: number;
+  cloudiness: number;
+  warmth: number;
 }
 
 interface WeatherProfile {
@@ -38,6 +43,19 @@ export interface EnvironmentSurfaceDetail {
   cloudiness: number;
   moteOpacity: number;
   lowMistOpacity: number;
+}
+
+export interface EnvironmentVisualProfile {
+  lighting: EnvironmentLighting;
+  surface: EnvironmentSurfaceDetail;
+  sunIntensity: number;
+  shadowRadius: number;
+  fogNear: number;
+  fogFar: number;
+  rainOpacity: number;
+  saturation: number;
+  contrast: number;
+  warmth: number;
 }
 
 export function environmentSurfaceDetail(
@@ -75,8 +93,8 @@ export function environmentLighting(
 ): EnvironmentLighting {
   const rainFill = rain * (0.12 + daylight * 0.14) + storm * 0.05;
   return {
-    // 白天亮度维持原水平，夜间增加冷色环境补光，避免地形和角色压成纯黑剪影。
-    hemiIntensity: 0.85 + daylight * 0.29 * light + rainFill,
+    // 白天亮度维持原水平，夜间和背光面增加环境补光，避免角色与建筑压成纯黑剪影。
+    hemiIntensity: 0.96 + daylight * 0.18 * light + rainFill,
     moonIntensity: 0.58 * light,
     exposure: clamp(
       1.12 - daylight * 0.04 + (1 - light) * 0.05 + rain * 0.08 + storm * 0.03
@@ -84,6 +102,47 @@ export function environmentLighting(
       1.08,
       1.35,
     ),
+  };
+}
+
+// 材质, 主光, 环境光, 雾和后处理共用的唯一视觉配置入口。
+export function environmentVisualProfile(input: {
+  daylight: number;
+  sunHeight: number;
+  twilight: number;
+  light: number;
+  cloud: number;
+  rain: number;
+  wet: number;
+  storm: number;
+  fogNear: number;
+  fogFar: number;
+}): EnvironmentVisualProfile {
+  const daylight = clamp(input.daylight, 0, 1);
+  const sunHeight = clamp(input.sunHeight, -1, 1);
+  const twilight = clamp(input.twilight, 0, 1);
+  const light = clamp(input.light, 0, 1);
+  const cloud = clamp(input.cloud, 0, 1);
+  const rain = clamp(input.rain, 0, 1);
+  const wet = clamp(input.wet, 0, 1);
+  const storm = clamp(input.storm, 0, 1);
+  const surface = environmentSurfaceDetail(rain, wet, cloud, daylight);
+  const lighting = environmentLighting(daylight, light, rain, storm);
+  // 暮色偏暖, 深夜和厚云偏冷。该值直接供全部表面材质和水面使用。
+  const warmth = clamp(0.46 + twilight * 0.42 + Math.max(0, sunHeight) * 0.08 - cloud * 0.18, 0.2, 0.92);
+  const weatherSoftness = cloud * 1.25 + rain * 0.7;
+  return {
+    lighting,
+    surface,
+    // 厚云将光能从硬直射转移到上方的环境补光，雨天不会再出现亮天空配纯黑阴影。
+    sunIntensity: (0.16 + daylight * 2.38) * light * (1 - cloud * 0.24),
+    shadowRadius: clamp(1.8 + weatherSoftness, 1.8, 3.7),
+    fogNear: Math.max(24, input.fogNear),
+    fogFar: Math.max(input.fogNear + 90, input.fogFar),
+    rainOpacity: clamp(rain * (0.54 + daylight * 0.1), 0, 0.64),
+    saturation: clamp(1.06 - cloud * 0.035 - rain * 0.018 + twilight * 0.012, 0.99, 1.07),
+    contrast: clamp(1.035 - cloud * 0.014 - rain * 0.008 + (1 - daylight) * 0.012, 1.01, 1.05),
+    warmth,
   };
 }
 
@@ -139,6 +198,7 @@ export class EnvironmentSystem {
   readonly snapshot: EnvironmentSnapshot = {
     timeText: '12:00', phaseLabel: '正午', weather: 'clear', weatherLabel: '晴朗',
     rainIntensity: 0, exposure: 1.08, daylight: 1,
+    saturation: 1.06, contrast: 1.035, wetness: 0, cloudiness: 0.18, warmth: 0.54,
   };
 
   private readonly sky: Sky;
@@ -430,6 +490,18 @@ export class EnvironmentSystem {
     this.sunDir.set(horizontal * 0.86, sunY, Math.sin(solar * 0.58 + 0.7) * 0.42).normalize();
     const daylight = smoothstep(-0.15, 0.22, sunY);
     const twilight = (1 - smoothstep(0.03, 0.68, Math.abs(sunY))) * smoothstep(-0.2, 0.04, sunY);
+    const visual = environmentVisualProfile({
+      daylight,
+      sunHeight: sunY,
+      twilight,
+      light: this.current.light,
+      cloud: this.current.cloud,
+      rain: this.current.rain,
+      wet: this.current.wet,
+      storm: this.current.storm,
+      fogNear: this.current.fogNear,
+      fogFar: this.current.fogFar,
+    });
 
     this.zenith.copy(this.nightZenith).lerp(this.dayZenith, daylight).lerp(this.dawnZenith, twilight * 0.55);
     this.horizon.copy(this.nightHorizon).lerp(this.dayHorizon, daylight).lerp(this.dawnHorizon, twilight * 0.82);
@@ -439,8 +511,8 @@ export class EnvironmentSystem {
 
     this.fogColor.copy(this.horizon).lerp(this.cloudFog, this.current.cloud * 0.34);
     this.fog.color.copy(this.fogColor);
-    this.fog.near = this.current.fogNear;
-    this.fog.far = this.current.fogFar;
+    this.fog.near = visual.fogNear;
+    this.fog.far = visual.fogFar;
 
     const moon = sunY < -0.08;
     this.lightDir.copy(this.sunDir);
@@ -455,16 +527,15 @@ export class EnvironmentSystem {
     );
     this.sun.target.position.set(anchor.x, 0, anchor.z);
     this.sun.target.updateMatrixWorld();
-    const lighting = environmentLighting(
-      daylight, this.current.light, this.current.rain, this.current.storm,
-    );
+    const lighting = visual.lighting;
     if (moon) {
       this.sun.color.setHex(0x9ab8e6);
       this.sun.intensity = lighting.moonIntensity + this.flash * 2.6;
     } else {
       this.sun.color.copy(this.warmSun).lerp(this.daySun, smoothstep(0.04, 0.58, sunY));
-      this.sun.intensity = (0.16 + daylight * 2.38) * this.current.light + this.flash * 2.8;
+      this.sun.intensity = visual.sunIntensity + this.flash * 2.8;
     }
+    this.sun.shadow.radius = visual.shadowRadius;
     this.hemi.color.copy(this.nightHemi).lerp(this.dayHemi, daylight);
     this.hemi.groundColor.copy(this.nightGround).lerp(this.dayGround, daylight);
     this.hemi.intensity = lighting.hemiIntensity + this.flash * 1.7;
@@ -476,13 +547,8 @@ export class EnvironmentSystem {
       groundDay * (0.94 + daylight * 0.06),
     );
     this.terrainMat.roughness = 0.96 - this.current.wet * 0.16;
-    const surface = environmentSurfaceDetail(
-      this.current.rain,
-      this.current.wet,
-      this.current.cloud,
-      daylight,
-    );
-    setSurfaceEnvironment(surface.wetness, surface.cloudiness, daylight);
+    const surface = visual.surface;
+    setSurfaceEnvironment(surface.wetness, surface.cloudiness, daylight, this.current.rain, visual.warmth);
     const surfaceUniforms = this.terrainMat.userData.surfaceUniforms as {
       wetness: { value: number };
       cloudiness: { value: number };
@@ -500,6 +566,11 @@ export class EnvironmentSystem {
 
     this.snapshot.daylight = daylight;
     this.snapshot.exposure = lighting.exposure;
+    this.snapshot.saturation = visual.saturation;
+    this.snapshot.contrast = visual.contrast;
+    this.snapshot.wetness = surface.wetness;
+    this.snapshot.cloudiness = surface.cloudiness;
+    this.snapshot.warmth = visual.warmth;
   }
 
   private updateAirMotes(dt: number, camPos: THREE.Vector3): void {
@@ -544,7 +615,19 @@ export class EnvironmentSystem {
   private updateRain(dt: number, camPos: THREE.Vector3): void {
     const amount = this.current.rain;
     this.rain.visible = amount > 0.025;
-    this.rain.material.opacity = clamp(amount * 0.64, 0, 0.68);
+    const visual = environmentVisualProfile({
+      daylight: this.snapshot.daylight,
+      sunHeight: 0,
+      twilight: 0,
+      light: this.current.light,
+      cloud: this.current.cloud,
+      rain: amount,
+      wet: this.current.wet,
+      storm: this.current.storm,
+      fogNear: this.current.fogNear,
+      fogFar: this.current.fogFar,
+    });
+    this.rain.material.opacity = visual.rainOpacity;
     this.rain.material.color.setHex(this.snapshot.daylight > 0.3 ? 0xbad7e5 : 0x7b9bbb);
     this.rain.position.copy(camPos);
     if (!this.rain.visible) return;

@@ -36,6 +36,7 @@ export class GameRenderer {
   private readonly publishTestStats = new URLSearchParams(window.location.search).has('test');
   private sampleTime = 0;
   private sampleFrames = 0;
+  private lastVisualFilter = '';
 
   constructor(container: HTMLElement) {
     const renderer = new THREE.WebGLRenderer({
@@ -78,6 +79,11 @@ export class GameRenderer {
     world.updateVisuals(dt, camera.position, advanceEnvironment);
     const environment = world.environmentState;
     this.renderer.toneMappingExposure = environment.exposure;
+    const visualFilter = `saturate(${environment.saturation.toFixed(3)}) contrast(${environment.contrast.toFixed(3)})`;
+    if (visualFilter !== this.lastVisualFilter) {
+      this.domElement.style.filter = visualFilter;
+      this.lastVisualFilter = visualFilter;
+    }
     this.renderer.render(scene, camera);
     this.updateStats(dt);
     return environment;

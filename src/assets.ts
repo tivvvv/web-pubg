@@ -109,19 +109,39 @@ const surfaceEnvironmentUniforms = {
   wetness: { value: 0 },
   cloudiness: { value: 0.18 },
   daylight: { value: 1 },
+  rain: { value: 0 },
+  warmth: { value: 0.54 },
 };
 
-export function setSurfaceEnvironment(wetness: number, cloudiness: number, daylight: number): void {
+export interface SurfaceEnvironmentState {
+  wetness: number;
+  cloudiness: number;
+  daylight: number;
+  rain: number;
+  warmth: number;
+}
+
+export function setSurfaceEnvironment(
+  wetness: number,
+  cloudiness: number,
+  daylight: number,
+  rain = 0,
+  warmth = 0.54,
+): void {
   surfaceEnvironmentUniforms.wetness.value = THREE.MathUtils.clamp(wetness, 0, 1);
   surfaceEnvironmentUniforms.cloudiness.value = THREE.MathUtils.clamp(cloudiness, 0, 1);
   surfaceEnvironmentUniforms.daylight.value = THREE.MathUtils.clamp(daylight, 0, 1);
+  surfaceEnvironmentUniforms.rain.value = THREE.MathUtils.clamp(rain, 0, 1);
+  surfaceEnvironmentUniforms.warmth.value = THREE.MathUtils.clamp(warmth, 0, 1);
 }
 
-export function surfaceEnvironmentState(): { wetness: number; cloudiness: number; daylight: number } {
+export function surfaceEnvironmentState(): SurfaceEnvironmentState {
   return {
     wetness: surfaceEnvironmentUniforms.wetness.value,
     cloudiness: surfaceEnvironmentUniforms.cloudiness.value,
     daylight: surfaceEnvironmentUniforms.daylight.value,
+    rain: surfaceEnvironmentUniforms.rain.value,
+    warmth: surfaceEnvironmentUniforms.warmth.value,
   };
 }
 
@@ -178,6 +198,8 @@ export function applySurfaceAsset(
     shader.uniforms.uAssetWetness = surfaceEnvironmentUniforms.wetness;
     shader.uniforms.uAssetCloudiness = surfaceEnvironmentUniforms.cloudiness;
     shader.uniforms.uAssetDaylight = surfaceEnvironmentUniforms.daylight;
+    shader.uniforms.uAssetRain = surfaceEnvironmentUniforms.rain;
+    shader.uniforms.uAssetWarmth = surfaceEnvironmentUniforms.warmth;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -201,6 +223,8 @@ uniform float uSurfaceStrength;
 uniform float uAssetWetness;
 uniform float uAssetCloudiness;
 uniform float uAssetDaylight;
+uniform float uAssetRain;
+uniform float uAssetWarmth;
 varying vec3 vAssetLocalPosition;
 varying vec3 vAssetLocalNormal;
 varying vec3 vAssetWorldPosition;`,
@@ -221,7 +245,12 @@ varying vec3 vAssetWorldPosition;`,
   float assetWetPatch = smoothstep(0.3, 0.78, assetWetNoise);
   float assetWet = uAssetWetness * mix(0.42, 0.92, assetUpward) * mix(0.74, 1.0, assetWetPatch);
   diffuseColor.rgb *= 1.0 - assetWet * mix(0.1, 0.2, uAssetCloudiness);
-  diffuseColor.rgb *= mix(0.96, 1.0, uAssetDaylight);`,
+  diffuseColor.rgb *= mix(0.96, 1.0, uAssetDaylight);
+  vec3 assetCool = vec3(0.965, 0.985, 1.035);
+  vec3 assetWarm = vec3(1.035, 1.005, 0.955);
+  vec3 assetTemperature = mix(assetCool, assetWarm, uAssetWarmth);
+  diffuseColor.rgb *= mix(vec3(1.0), assetTemperature, 0.11 + (1.0 - uAssetDaylight) * 0.035);
+  diffuseColor.rgb = mix(diffuseColor.rgb, dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)) * vec3(1.0), uAssetRain * 0.025);`,
       )
       .replace(
         '#include <roughnessmap_fragment>',
@@ -229,7 +258,7 @@ varying vec3 vAssetWorldPosition;`,
   roughnessFactor = mix(roughnessFactor, max(0.28, roughnessFactor * 0.58), assetWet * 0.82);`,
       );
   };
-  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|asset-weather-v2:${id}:${scale}:${strength}`;
+  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|asset-climate-v3:${id}:${scale}:${strength}`;
 }
 
 export function shotAssetId(kind: WeaponId, suppressed: boolean): AudioAssetId {

@@ -31,10 +31,14 @@ describe('美术与音效静态资产', () => {
   });
 
   it('建筑和道具材质共享天气湿润参数并限制在有效范围', () => {
-    setSurfaceEnvironment(0.82, 0.9, 0.56);
-    expect(surfaceEnvironmentState()).toEqual({ wetness: 0.82, cloudiness: 0.9, daylight: 0.56 });
-    setSurfaceEnvironment(2, -1, 4);
-    expect(surfaceEnvironmentState()).toEqual({ wetness: 1, cloudiness: 0, daylight: 1 });
+    setSurfaceEnvironment(0.82, 0.9, 0.56, 0.76, 0.42);
+    expect(surfaceEnvironmentState()).toEqual({
+      wetness: 0.82, cloudiness: 0.9, daylight: 0.56, rain: 0.76, warmth: 0.42,
+    });
+    setSurfaceEnvironment(2, -1, 4, 3, -2);
+    expect(surfaceEnvironmentState()).toEqual({
+      wetness: 1, cloudiness: 0, daylight: 1, rain: 1, warmth: 0,
+    });
     setSurfaceEnvironment(0, 0.18, 1);
   });
 

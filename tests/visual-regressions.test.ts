@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { advancePoseBlend, Character, locomotionPose, ownModelVisibility } from '../src/character';
 import { emptyAttachments } from '../src/attachments';
-import { environmentLighting, environmentSurfaceDetail } from '../src/environment';
+import { environmentLighting, environmentSurfaceDetail, environmentVisualProfile } from '../src/environment';
 import { RENDER_QUALITY } from '../src/rendering';
 import { WEAPONS } from '../src/weapons';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
@@ -188,6 +188,32 @@ describe('画面回归保护', () => {
       moteOpacity: 0,
       lowMistOpacity: 0.113,
     });
+  });
+
+  it('材质灯光天气使用同一视觉配置并保证雨天可读性', () => {
+    const clear = environmentVisualProfile({
+      daylight: 1, sunHeight: 0.9, twilight: 0, light: 1, cloud: 0.18,
+      rain: 0, wet: 0, storm: 0, fogNear: 185, fogFar: 690,
+    });
+    const rain = environmentVisualProfile({
+      daylight: 0.72, sunHeight: 0.35, twilight: 0.1, light: 0.86, cloud: 0.9,
+      rain: 0.76, wet: 0.82, storm: 0.16, fogNear: 110, fogFar: 485,
+    });
+    const dusk = environmentVisualProfile({
+      daylight: 0.45, sunHeight: 0.04, twilight: 1, light: 0.8, cloud: 0.2,
+      rain: 0, wet: 0, storm: 0, fogNear: 150, fogFar: 600,
+    });
+
+    expect(rain.surface.wetness).toBeCloseTo(0.82, 5);
+    expect(rain.lighting.exposure).toBeGreaterThan(clear.lighting.exposure);
+    expect(rain.sunIntensity).toBeLessThan(clear.sunIntensity);
+    expect(rain.shadowRadius).toBeGreaterThan(clear.shadowRadius);
+    expect(rain.rainOpacity).toBeGreaterThan(0.4);
+    expect(rain.rainOpacity).toBeLessThanOrEqual(0.64);
+    expect(rain.fogFar).toBeGreaterThan(rain.fogNear + 80);
+    expect(rain.saturation).toBeGreaterThanOrEqual(0.99);
+    expect(rain.contrast).toBeGreaterThanOrEqual(1.01);
+    expect(dusk.warmth).toBeGreaterThan(clear.warmth);
   });
 
   it('性能优化不能降低核心渲染质量基线', () => {
