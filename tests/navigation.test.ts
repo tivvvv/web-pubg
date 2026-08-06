@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import {
   findBridgeExit, findEmergencyNavPoint, findLocalEscape, findShoreExitPoint, findSwimBank,
-  findVehicleRiverWaypoint,
+  findVehicleRiverWaypoint, MobilityProgressWatch,
 } from '../src/botnav';
 import {
   GROUND_SNAP_DISTANCE, shouldEnterSwimming, shouldExitSwimming, shouldSnapToGround, SWIM_ENTER_DEPTH,
@@ -83,6 +83,24 @@ describe('游泳上岸点搜索', () => {
 });
 
 describe('长途转移恢复', () => {
+  it('跨战术状态的原地往复会依次触发改道和合法点校正', () => {
+    const watch = new MobilityProgressWatch();
+    expect(watch.update(0.75, 0, 0, true)).toBe('none');
+    const recoveries = [];
+    for (let i = 0; i < 9; i++) recoveries.push(watch.update(0.75, i % 2 ? 0.12 : 0, 0, true));
+    expect(recoveries).toContain('reroute');
+    expect(recoveries).toContain('relocate');
+    expect(recoveries.indexOf('reroute')).toBeLessThan(recoveries.indexOf('relocate'));
+  });
+
+  it('产生有效净位移或失去导航意图时会清除停滞状态', () => {
+    const watch = new MobilityProgressWatch();
+    for (let i = 0; i < 5; i++) expect(watch.update(0.75, 0, 0, true)).toBe('none');
+    expect(watch.update(0.75, 1, 0, true)).toBe('none');
+    expect(watch.update(0.75, 1, 0, false)).toBe('none');
+    for (let i = 0; i < 5; i++) expect(watch.update(0.75, 1, 0, true)).toBe('none');
+  });
+
   it('楼板边缘在身体净空不足时参与碰撞, 站上楼板或完整位于下方时放行', () => {
     expect(characterOverlapsColliderHeight(3.86, 4.7, 4.9)).toBe(true);
     expect(characterOverlapsColliderHeight(4.9, 4.7, 4.9)).toBe(false);

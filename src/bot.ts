@@ -15,7 +15,7 @@ import { probeVault, startVault, updateVaultMotion } from './vault';
 import type { Game } from './game';
 import {
   AgentNavigator, findBridgeExit, findCoverPoint, findEmergencyNavPoint, findLocalEscape, findShoreExitPoint,
-  findSwimBank, findVehicleRiverWaypoint,
+  findSwimBank, findVehicleRiverWaypoint, MobilityProgressWatch,
 } from './botnav';
 import {
   chooseCombatMode, chooseStrategicMode, preferredCombatRange, selectCombatGunSlot,
@@ -91,6 +91,7 @@ export class BotController {
   private healCd = 0; // bot 恢复品使用冷却(即时结算, 冷却模拟读条间隔)
   private engageCrouch = false; // 本次交战是否蹲下对枪(索敌成功时 15% 掷定)
   private navigator = new AgentNavigator();
+  private mobilityWatch = new MobilityProgressWatch();
   private tacticPoint = new THREE.Vector2();
   private tacticT = 0;
   private tacticMode: BotCombatMode = 'advance';
@@ -368,6 +369,7 @@ export class BotController {
 
     // 被门/窗挡路 >1s: 开枪或挥刀破门
     this.updateDoorBreak(dt, game);
+    this.updateMobilityRecovery(dt, game);
 
     // 拾取: 弹药/恢复品/投掷物直接拿; 武器/护具/背包按需按 F 逻辑拿(bot 自动)
     const item = game.loot.nearest(c.pos.x, c.pos.y, c.pos.z, 1.9);
@@ -385,6 +387,75 @@ export class BotController {
       }
       if (item === this.lootTarget && !item.active) this.lootTarget = null;
     }
+  }
+
+  private updateMobilityRecovery(dt: number, game: Game): void {
+    const c = this.char;
+    const active = this.navigationIntent && c.grounded && !c.swimming && !c.vault && !this.driving;
+    const recovery = this.mobilityWatch.update(dt, c.pos.x, c.pos.z, active);
+    if (recovery === 'none') return;
+
+    const vehicleGoal = this.vehicleTarget?.pos;
+    const goalX = vehicleGoal?.x ?? (this.state === 'engage' ? this.tacticPoint.x : this.moveTarget.x);
+    const goalZ = vehicleGoal?.z ?? (this.state === 'engage' ? this.tacticPoint.y : this.moveTarget.z);
+    const allowDrop = c.pos.y - game.world.getHeight(c.pos.x, c.pos.z) > 1.6;
+
+    if (this.vehicleTarget) {
+      this.releaseVehicleTarget();
+      this.vehicleCooldown = 6;
+    }
+    this.routeSide *= -1;
+    this.rotationAttempt = (this.rotationAttempt + 1) % 8;
+    this.combatStuckT = 0;
+    this.combatNoProgressT = 0;
+    this.strategicStuckT = 0;
+    this.strategicProgressT = 0;
+
+    if (recovery === 'reroute' && findLocalEscape(
+      this.tacticPoint,
+      c.pos.x,
+      c.pos.z,
+      c.pos.y,
+      goalX,
+      goalZ,
+      game.world,
+      allowDrop,
+    )) {
+      this.moveTarget.set(this.tacticPoint.x, 0, this.tacticPoint.y);
+      this.hasMoveTarget = true;
+      if (this.state === 'engage') {
+        this.tacticMode = 'search';
+        this.tacticT = 1.6;
+      } else {
+        this.repathT = 1.25;
+      }
+      this.navigator.reset(c);
+      return;
+    }
+
+    if (recovery === 'relocate' && findEmergencyNavPoint(
+      this.tacticPoint,
+      c.pos.x,
+      c.pos.z,
+      c.pos.y,
+      goalX,
+      goalZ,
+      game.world,
+      allowDrop,
+    )) {
+      c.pos.x = this.tacticPoint.x;
+      c.pos.z = this.tacticPoint.y;
+      c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y + 0.4);
+      c.groundH = c.pos.y;
+      c.grounded = true;
+      c.vy = 0;
+      c.speed2d = 0;
+      c.setStance('stand');
+      this.moveTarget.set(goalX, 0, goalZ);
+      this.hasMoveTarget = true;
+      this.mobilityWatch.reset(c.pos.x, c.pos.z);
+    }
+    this.navigator.reset(c);
   }
 
   // 游泳中: 朝目标岸(渡河)或最近岸(地形上坡方向)游, 不打斗

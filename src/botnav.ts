@@ -291,6 +291,70 @@ export interface NavResult {
   moved: number;
 }
 
+export type MobilityRecovery = 'none' | 'reroute' | 'relocate';
+
+/**
+ * 跨战术状态统计净位移, 防止角色逐帧有速度但在两个方向间反复横跳。
+ * AgentNavigator 负责单条路径, 这里负责战斗/转移/上车之间切换后的整体推进。
+ */
+export class MobilityProgressWatch {
+  private anchorX = 0;
+  private anchorZ = 0;
+  private sampleT = 0;
+  private stagnantT = 0;
+  private initialized = false;
+  private rerouted = false;
+
+  reset(x: number, z: number): void {
+    this.anchorX = x;
+    this.anchorZ = z;
+    this.sampleT = 0;
+    this.stagnantT = 0;
+    this.initialized = true;
+    this.rerouted = false;
+  }
+
+  update(dt: number, x: number, z: number, active: boolean): MobilityRecovery {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) {
+      this.initialized = false;
+      this.sampleT = 0;
+      this.stagnantT = 0;
+      this.rerouted = false;
+      return 'none';
+    }
+    if (!active) {
+      this.reset(x, z);
+      return 'none';
+    }
+    if (!this.initialized) this.reset(x, z);
+    this.sampleT += Math.max(0, dt);
+    if (this.sampleT < 0.75) return 'none';
+
+    const elapsed = this.sampleT;
+    this.sampleT = 0;
+    const progress = Math.hypot(x - this.anchorX, z - this.anchorZ);
+    // 锚点只在真正离开原区域后推进。若每次采样都更新锚点, 小范围绕圈会被误判为持续前进。
+    if (progress >= 0.8) {
+      this.anchorX = x;
+      this.anchorZ = z;
+      this.stagnantT = Math.max(0, this.stagnantT - elapsed * 2);
+      if (this.stagnantT <= 0.5) this.rerouted = false;
+      return 'none';
+    }
+
+    this.stagnantT += elapsed;
+    if (this.stagnantT >= 6.75) {
+      this.reset(x, z);
+      return 'relocate';
+    }
+    if (this.stagnantT >= 4.5 && !this.rerouted) {
+      this.rerouted = true;
+      return 'reroute';
+    }
+    return 'none';
+  }
+}
+
 function segmentFree(
   world: World,
   x0: number,
