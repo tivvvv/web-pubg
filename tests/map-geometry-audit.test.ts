@@ -132,4 +132,14 @@ describe('地图与建筑终极几何巡检', () => {
     expect(world.distantLandformCount).toBeGreaterThanOrEqual(12);
     expect(world.environmentDetailInstanceCount).toBeGreaterThanOrEqual(6000);
   });
+
+  it('地图和建筑生成结果均登记到可审计资产目录', () => {
+    const world = createWorld();
+    expect(world.assetUsage.uniqueCount).toBeGreaterThanOrEqual(15);
+    expect(world.assetUsage.totalInstances).toBeGreaterThanOrEqual(5000);
+    expect(world.assetUsage.count('map.infrastructure.bridge')).toBe(2);
+    expect(world.assetUsage.count('map.landmark.region-site')).toBe(6);
+    expect(world.buildings.assetUsage.uniqueCount).toBeGreaterThanOrEqual(20);
+    expect(world.buildings.assetUsage.totalInstances).toBeGreaterThan(world.buildings.plots.length * 6);
+  });
 });

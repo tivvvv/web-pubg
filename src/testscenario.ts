@@ -14,6 +14,7 @@ import type { AttachmentId, GunState } from './types';
 import { fireModeOf } from './gunplay';
 import type { HealId } from './heals';
 import { auditReleaseState } from './releaseaudit';
+import { ASSET_CATALOG_VERSION } from './assetcatalog';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
@@ -154,6 +155,11 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.scenario = id;
   panel.dataset.tacticalCoverCount = String(game.world.tacticalCoverCount);
   panel.dataset.mapSiteCount = String(game.world.mapSites.length);
+  panel.dataset.assetCatalogVersion = ASSET_CATALOG_VERSION;
+  panel.dataset.mapAssetKinds = String(game.world.assetUsage.uniqueCount);
+  panel.dataset.mapAssetInstances = String(game.world.assetUsage.totalInstances);
+  panel.dataset.buildingAssetKinds = String(game.world.buildings.assetUsage.uniqueCount);
+  panel.dataset.buildingAssetInstances = String(game.world.buildings.assetUsage.totalInstances);
   panel.dataset.mapLootSpotCount = String(game.world.mapLootSpots.length);
   panel.dataset.buildingVisualInstances = String(game.world.buildings.visualInstanceCount);
   panel.dataset.buildingDetailInstances = String(game.world.buildings.modelDetailInstanceCount);

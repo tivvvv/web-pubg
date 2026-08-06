@@ -16,6 +16,7 @@ import {
 } from './mapcontent';
 import { regionAt, regionById, type RegionId } from './regions';
 import { applySurfaceAsset, type FootstepSurface, type SurfaceAssetId } from './assets';
+import { AssetUsageRegistry, SURFACE_MATERIAL_PRESETS } from './assetcatalog';
 import {
   makeDistantRidgeGeometry, makeFernGeometry, makeWildflowerGeometry,
   naturalDetailBudget, shorelineSuitability, terrainSurfaceWeights,
@@ -94,6 +95,7 @@ export class World {
   readonly tacticalRoutes = TACTICAL_ROUTES;
   readonly mapSites: ResolvedMapContentSite[] = [];
   readonly mapLootSpots: MapLootSpot[] = [];
+  readonly assetUsage = new AssetUsageRegistry();
   tacticalCoverCount = 0;
   environmentDetailInstanceCount = 0;
   naturalGroundDetailCount = 0;
@@ -487,6 +489,7 @@ varying vec3 vTerrainWorld;`,
   }
 
   private buildStatics(scene: THREE.Scene): void {
+    this.assetUsage.clear();
     const rng = mulberry32(424242);
     const naturalBudget = naturalDetailBudget(navigator.hardwareConcurrency);
     const m4 = new THREE.Matrix4();
@@ -498,6 +501,7 @@ varying vec3 vTerrainWorld;`,
     this.buildings.build(scene, this);
     this.prepareScenicSites();
     this.addRoadNetwork(scene);
+    this.assetUsage.add('map.infrastructure.road', ROAD_PATHS.reduce((total, path) => total + Math.max(0, path.length - 1), 0));
     this.addDistantLandforms(scene);
 
     // ---- 树木(松树 60% + 阔叶 40%, 树干/碰撞体逻辑不变; 北境密林加密) ----
@@ -662,6 +666,8 @@ varying vec3 vTerrainWorld;`,
     scene.add(branchMesh);
     scene.add(rootMesh);
     this.environmentDetailInstanceCount += rootMesh.count + pineCount;
+    this.assetUsage.add('map.nature.tree.pine', pineCount);
+    this.assetUsage.add('map.nature.tree.broadleaf', broadCount);
 
     // ---- 岩石(西部山地加密; 两种棱角变体, 平直着色) ----
     const rockCap = 200; // 全图 120 + 山地加密 80
@@ -760,6 +766,7 @@ varying vec3 vTerrainWorld;`,
     scene.add(screeMesh);
     this.environmentDetailInstanceCount += rockAccentMesh.count + screeMesh.count;
     this.naturalGroundDetailCount += screeMesh.count;
+    this.assetUsage.add('map.nature.rock', rockCount + rockCount2);
 
     // ---- 灌木丛(无碰撞体: 子弹/移动均可穿过, 供隐蔽判定; 密林加密) ----
     const bushCap = 420; // 全图 300 + 密林加密 120
@@ -839,6 +846,7 @@ varying vec3 vTerrainWorld;`,
     bushStemMesh.instanceMatrix.needsUpdate = true;
     bushStemMesh.computeBoundingSphere();
     this.environmentDetailInstanceCount += bushStemMesh.count;
+    this.assetUsage.add('map.nature.bush', bushCount);
 
     // ---- 草丛(纯装饰: 无碰撞体, 不挡子弹/视线) ----
     const grassCap = naturalBudget.grass;
@@ -903,6 +911,7 @@ varying vec3 vTerrainWorld;`,
     grassMesh.count = grassCount + forestGrass;
     grassMesh.instanceMatrix.needsUpdate = true;
     if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
+    this.assetUsage.add('map.nature.grass', grassMesh.count);
 
     this.addGroundEcology(scene);
 
@@ -938,6 +947,7 @@ varying vec3 vTerrainWorld;`,
     if (cropMesh.instanceColor) cropMesh.instanceColor.needsUpdate = true;
     cropMesh.computeBoundingSphere();
     scene.add(cropMesh);
+    this.assetUsage.add('map.nature.crop', cropCount);
 
     // ---- 干草捆(农场掩体, 圆柱碰撞) + 捆扎带 ----
     const baleMesh = new THREE.InstancedMesh(
@@ -983,6 +993,7 @@ varying vec3 vTerrainWorld;`,
     strapMesh.instanceMatrix.needsUpdate = true;
     scene.add(baleMesh);
     scene.add(strapMesh);
+    this.assetUsage.add('map.tactical.farm', baleCount);
 
     // ---- 渔村小船(搁浅, 装饰+圆碰撞; 船体+翘头+舱包+座椅+桅杆) ----
     const boatMesh = new THREE.InstancedMesh(
@@ -1041,6 +1052,7 @@ varying vec3 vTerrainWorld;`,
     boatMesh.instanceMatrix.needsUpdate = true;
     if (boatMesh.instanceColor) boatMesh.instanceColor.needsUpdate = true;
     scene.add(boatMesh);
+    this.assetUsage.add('map.tactical.harbor', boatCount);
 
     // ---- 地标与场景道具(观景台/风车/山地遗迹/码头/围栏/电杆/沿岸芦苇) ----
     this.addScenicLandmarks(scene);
@@ -1049,10 +1061,20 @@ varying vec3 vTerrainWorld;`,
     this.addTacticalRouteLanes(scene);
     this.addFinalMapContent(scene);
     this.addShoreDetails(scene);
+    this.assetUsage.add('map.nature.shore', this.shorelineDetailCount);
+    for (const site of this.scenicSites) {
+      if (site.kind === 'lookout') this.assetUsage.add('map.landmark.lookout');
+      else if (site.kind === 'windmill') this.assetUsage.add('map.landmark.windmill');
+      else if (site.kind === 'ruins') this.assetUsage.add('map.landmark.ruins');
+      else this.assetUsage.add('map.landmark.dock');
+    }
+    this.assetUsage.add('map.landmark.region-site', this.mapSites.length);
+    this.assetUsage.add('map.tactical.cover', this.tacticalCoverCount);
 
     // ---- 双桥(木板面+护栏+桥墩, 可走平台) ----
     this.addBridge(scene, -50);
     this.addBridge(scene, 170);
+    this.assetUsage.add('map.infrastructure.bridge', 2);
   }
 
   private prepareScenicSites(): void {
@@ -1686,19 +1708,9 @@ varying vec3 vTerrainWorld;`,
       const position = new THREE.Vector3();
       const scale = new THREE.Vector3();
       const color = new THREE.Color();
-      const specs: Partial<Record<SurfaceAssetId, { scale: number; strength: number; roughness: number; metalness: number }>> = {
-        paintedMetal: { scale: 2.7, strength: 0.64, roughness: 0.78, metalness: 0.06 },
-        stonegateBrick: { scale: 0.82, strength: 0.92, roughness: 0.93, metalness: 0 },
-        wood: { scale: 2.8, strength: 0.8, roughness: 0.9, metalness: 0 },
-        concrete: { scale: 3.1, strength: 0.72, roughness: 0.94, metalness: 0 },
-        stone: { scale: 2.2, strength: 0.8, roughness: 0.95, metalness: 0 },
-        fabric: { scale: 3.2, strength: 0.66, roughness: 0.96, metalness: 0 },
-        metal: { scale: 3.2, strength: 0.6, roughness: 0.58, metalness: 0.28 },
-        foliage: { scale: 2.5, strength: 0.6, roughness: 0.96, metalness: 0 },
-      };
       for (const surface of [...new Set(boxes.map((item) => item.surface))]) {
         const items = boxes.filter((item) => item.surface === surface);
-        const spec = specs[surface] ?? specs.paintedMetal as NonNullable<(typeof specs)['paintedMetal']>;
+        const spec = SURFACE_MATERIAL_PRESETS[surface];
         const material = new THREE.MeshStandardMaterial({
           color: 0xffffff,
           roughness: spec.roughness,
@@ -1733,12 +1745,13 @@ varying vec3 vTerrainWorld;`,
       const color = new THREE.Color();
       for (const surface of [...new Set(cylinders.map((item) => item.surface))]) {
         const items = cylinders.filter((item) => item.surface === surface);
+        const spec = SURFACE_MATERIAL_PRESETS[surface];
         const material = new THREE.MeshStandardMaterial({
           color: 0xffffff,
-          roughness: surface === 'wood' ? 0.9 : 0.6,
-          metalness: surface === 'wood' ? 0 : 0.24,
+          roughness: spec.roughness,
+          metalness: spec.metalness,
         });
-        applySurfaceAsset(material, surface, surface === 'wood' ? 2.8 : 3.2, surface === 'wood' ? 0.8 : 0.62);
+        applySurfaceAsset(material, surface, spec.scale, spec.strength);
         const mesh = new THREE.InstancedMesh(geometry, material, items.length);
         for (let i = 0; i < items.length; i++) {
           const item = items[i] as CylinderInstance;

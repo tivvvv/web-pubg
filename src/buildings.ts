@@ -7,6 +7,7 @@ import type { AabbCollider, DestructibleLike } from './types';
 import { riverZAt, type World } from './world';
 import { random } from './random';
 import { applySurfaceAsset, type SurfaceAssetId } from './assets';
+import { AssetUsageRegistry, buildingAssetPack, SURFACE_MATERIAL_PRESETS } from './assetcatalog';
 import { regionAt, type RegionId } from './regions';
 
 const UP_X = new THREE.Vector3(1, 0, 0);
@@ -359,6 +360,7 @@ export class Buildings {
   plots: HousePlot[] = [];
   lootSpots: LootSpot[] = [];
   destructibles: Destructible[] = [];
+  readonly assetUsage = new AssetUsageRegistry();
   root: THREE.Group | null = null;
   visualInstanceCount = 0;
   modelDetailInstanceCount = 0;
@@ -497,6 +499,7 @@ export class Buildings {
 
   // ── 场景构建 ────────────────────────────────────────────────────────────
   build(scene: THREE.Scene, world: World): void {
+    this.assetUsage.clear();
     interface Inst {
       tag: 'wall' | 'floor' | 'roof';
       x0: number; y0: number; z0: number; x1: number; y1: number; z1: number;
@@ -550,6 +553,9 @@ export class Buildings {
       const cz = (plot.minZ + plot.maxZ) * 0.5;
       const region = regionAt(cx, cz)?.id;
       const regionalStyle = region && region !== 'wilderness' ? regionalBuildingStyle(region) : null;
+      for (const assetId of buildingAssetPack(plot.arch, region && region !== 'wilderness' ? region : null)) {
+        this.assetUsage.add(assetId);
+      }
       const featuredSlice = idx === this.verticalSlicePlotIndex;
       const palette: Palette = {
         wall: featuredSlice
@@ -603,23 +609,10 @@ export class Buildings {
     // 按表面资产合并实例。旧城砖、木作和布艺保留各自纹理，同时维持固定数量绘制调用。
     const geo = new THREE.BoxGeometry(1, 1, 1);
     this.root = new THREE.Group();
-    const surfaceSpecs: Record<SurfaceAssetId, { scale: number; strength: number; roughness: number; metalness: number }> = {
-      plaster: { scale: 2.5, strength: 0.82, roughness: 0.9, metalness: 0 },
-      terrain: { scale: 0.08, strength: 0.7, roughness: 0.96, metalness: 0 },
-      wood: { scale: 2.9, strength: 0.82, roughness: 0.88, metalness: 0 },
-      metal: { scale: 3.4, strength: 0.62, roughness: 0.6, metalness: 0.24 },
-      fabric: { scale: 3.2, strength: 0.68, roughness: 0.96, metalness: 0 },
-      stone: { scale: 2.3, strength: 0.8, roughness: 0.94, metalness: 0 },
-      concrete: { scale: 3.1, strength: 0.72, roughness: 0.94, metalness: 0 },
-      roof: { scale: 2.15, strength: 0.88, roughness: 0.84, metalness: 0 },
-      foliage: { scale: 2.5, strength: 0.6, roughness: 0.95, metalness: 0 },
-      paintedMetal: { scale: 2.7, strength: 0.64, roughness: 0.72, metalness: 0.08 },
-      stonegateBrick: { scale: 0.82, strength: 0.92, roughness: 0.93, metalness: 0 },
-    } as const;
     for (const surface of [...new Set(insts.map((item) => item.surface))]) {
       const items = insts.filter((item) => item.surface === surface);
       if (items.length === 0) continue;
-      const spec = surfaceSpecs[surface];
+      const spec = SURFACE_MATERIAL_PRESETS[surface];
       const mat = new THREE.MeshStandardMaterial({
         color: 0xffffff,
         roughness: spec.roughness,
