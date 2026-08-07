@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  makeBroadleafCrownGeometry, makeDistantRidgeGeometry, makeFernGeometry, makePineCanopyGeometry,
-  makeWildflowerGeometry,
+  makeBroadleafCrownGeometry, makeColumnarPineCanopyGeometry, makeDistantRidgeGeometry,
+  makeFernGeometry, makePineCanopyGeometry, makeWildflowerGeometry, makeWindshapedCrownGeometry,
   naturalDetailBudget, shorelineSuitability, terrainSurfaceWeights,
 } from '../src/nature';
 import { WATER_Y } from '../src/world';
@@ -30,6 +30,7 @@ describe('地形与自然环境重制', () => {
     const compact = naturalDetailBudget(4);
     const full = naturalDetailBudget(10);
     expect(compact.grass).toBeLessThan(full.grass);
+    expect(compact.grass).toBeGreaterThanOrEqual(12000);
     expect(compact.understory).toBeGreaterThan(0);
     expect(compact.flowers).toBeGreaterThan(0);
     expect(compact.shore).toBeGreaterThan(0);
@@ -39,7 +40,8 @@ describe('地形与自然环境重制', () => {
   it('自然物程序几何具有可渲染顶点与法线', () => {
     for (const geometry of [
       makeFernGeometry(), makeWildflowerGeometry(), makePineCanopyGeometry(),
-      makeBroadleafCrownGeometry(), makeDistantRidgeGeometry(1.2),
+      makeColumnarPineCanopyGeometry(), makeBroadleafCrownGeometry(),
+      makeWindshapedCrownGeometry(), makeDistantRidgeGeometry(1.2),
     ]) {
       expect(geometry.getAttribute('position').count).toBeGreaterThan(12);
       expect(geometry.getAttribute('normal').count).toBe(geometry.getAttribute('position').count);
@@ -47,7 +49,13 @@ describe('地形与自然环境重制', () => {
   });
 
   it('树冠资产具有多层次轮廓而不是单一几何体', () => {
-    expect(makePineCanopyGeometry().getAttribute('position').count).toBeGreaterThanOrEqual(200);
-    expect(makeBroadleafCrownGeometry().getAttribute('position').count).toBeGreaterThanOrEqual(150);
+    const pine = makePineCanopyGeometry();
+    const columnar = makeColumnarPineCanopyGeometry();
+    expect(pine.getAttribute('position').count).toBeGreaterThanOrEqual(6400);
+    expect(columnar.getAttribute('position').count).toBeGreaterThanOrEqual(5700);
+    expect(pine.getAttribute('color').count).toBe(pine.getAttribute('position').count);
+    expect(columnar.getAttribute('color').count).toBe(columnar.getAttribute('position').count);
+    expect(makeBroadleafCrownGeometry().getAttribute('position').count).toBeGreaterThanOrEqual(1900);
+    expect(makeWindshapedCrownGeometry().getAttribute('position').count).toBeGreaterThanOrEqual(1600);
   });
 });

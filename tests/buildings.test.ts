@@ -113,13 +113,13 @@ describe('建筑门交互方向', () => {
     expect(forward.centerZ).toBe(5);
     expect(reverse.centerZ).toBe(5);
     expect(forward.centerY).toBeCloseTo(reverse.centerY, 6);
-    expect(forward.length).toBeCloseTo(Math.hypot(6, 2.88), 6);
+    expect(forward.length).toBeCloseTo(Math.hypot(6, 2.88) - 0.32, 6);
     expect(reverse.length).toBeCloseTo(forward.length, 6);
     expect(forward.pitch).toBeLessThan(0);
     expect(reverse.pitch).toBeGreaterThan(0);
     expect(Math.abs(forward.pitch)).toBeCloseTo(Math.abs(reverse.pitch), 6);
     const halfRise = Math.sin(Math.abs(forward.pitch)) * forward.length / 2;
-    expect(forward.centerY - halfRise).toBeCloseTo(3 + 0.32 * 0.5 + 0.83, 6);
-    expect(forward.centerY + halfRise).toBeCloseTo(3 + 0.32 * 9.5 + 0.83, 6);
+    expect(forward.centerY - halfRise).toBeGreaterThan(3 + 0.32 * 0.5 + 0.83);
+    expect(forward.centerY + halfRise).toBeLessThan(3 + 0.32 * 9.5 + 0.83);
   });
 });

@@ -56,13 +56,22 @@ export class AudioSys {
     && new URLSearchParams(window.location.search).has('test');
   muted = false;
 
+  constructor() {
+    try {
+      this.muted = window.localStorage.getItem('web-pubg-muted') === '1';
+    } catch {
+      this.muted = false;
+    }
+    this.publishMutedState();
+  }
+
   // 必须在用户手势中调用
   unlock(): void {
     if (!this.ctx) {
       const AC = window.AudioContext;
       this.ctx = new AC();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.55;
+      this.master.gain.value = this.muted ? 0 : 0.55;
       this.limiter = this.ctx.createDynamicsCompressor();
       this.limiter.threshold.value = -12;
       this.limiter.knee.value = 8;
@@ -81,11 +90,25 @@ export class AudioSys {
   }
 
   toggleMute(): boolean {
-    this.muted = !this.muted;
+    return this.setMuted(!this.muted);
+  }
+
+  setMuted(muted: boolean): boolean {
+    this.muted = muted;
     if (this.master && this.ctx) {
       this.master.gain.setTargetAtTime(this.muted ? 0 : 0.55, this.ctx.currentTime, 0.02);
     }
+    try {
+      window.localStorage.setItem('web-pubg-muted', this.muted ? '1' : '0');
+    } catch {
+      // 隐私模式或禁用存储时仍保持本次会话状态.
+    }
+    this.publishMutedState();
     return this.muted;
+  }
+
+  private publishMutedState(): void {
+    if (typeof document !== 'undefined') document.body.dataset.audioMuted = String(this.muted);
   }
 
   private out(pan: number): AudioNode | null {

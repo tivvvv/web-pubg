@@ -225,6 +225,42 @@ body {
   white-space: nowrap;
 }
 
+#sound-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 3px 6px 3px 8px;
+  color: #dfe8dd;
+  background: rgba(255, 255, 255, 0.04);
+  border: 0;
+  border-left: 1px solid rgba(190, 215, 205, 0.34);
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 0.15s, background 0.15s, opacity 0.15s;
+}
+
+#sound-toggle:hover,
+#sound-toggle:focus-visible {
+  color: #fff4c8;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
+#sound-toggle[data-muted='true'] {
+  color: #9aa6a0;
+  opacity: 0.76;
+}
+
+#sound-toggle-icon {
+  width: 15px;
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+}
+
 #environment-status[data-weather='rain'] #env-icon,
 #environment-status[data-weather='fog'] #env-icon {
   color: #b8d8e8;

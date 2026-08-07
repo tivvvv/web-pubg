@@ -13,7 +13,7 @@ import { SURFACE_ASSET_URLS } from '../src/assets';
 
 describe('地图与建筑资产目录', () => {
   it('目录版本和全部资产定义通过完整性校验', () => {
-    expect(ASSET_CATALOG_VERSION).toBe('map-building-v1');
+    expect(ASSET_CATALOG_VERSION).toBe('map-building-v2');
     expect(Object.keys(ASSET_CATALOG).length).toBeGreaterThanOrEqual(35);
     expect(validateAssetCatalog()).toEqual([]);
   });
@@ -42,6 +42,7 @@ describe('地图与建筑资产目录', () => {
       expect(pack).toContain('building.module.floor');
       expect(pack).toContain('building.module.roof');
       expect(pack).toContain('building.module.opening');
+      expect(pack).toContain('building.module.european-facade');
       expect(pack.includes('building.module.stairs')).toBe(
         archetype === 'cottage2' || archetype === 'terrace' || archetype === 'apartment',
       );

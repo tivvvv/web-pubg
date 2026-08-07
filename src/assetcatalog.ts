@@ -34,7 +34,7 @@ export interface SurfaceMaterialPreset {
   readonly metalness: number;
 }
 
-export const ASSET_CATALOG_VERSION = 'map-building-v1';
+export const ASSET_CATALOG_VERSION = 'map-building-v2';
 
 // 地图与建筑共用一份材质规格。生成器只选择资产语义，不再各自维护魔法参数。
 export const SURFACE_MATERIAL_PRESETS: Readonly<Record<SurfaceAssetId, SurfaceMaterialPreset>> = Object.freeze({
@@ -52,13 +52,13 @@ export const SURFACE_MATERIAL_PRESETS: Readonly<Record<SurfaceAssetId, SurfaceMa
 });
 
 export const ASSET_CATALOG = {
-  'building.archetype.cottage1': { category: 'building-archetype', surface: 'plaster', detailTier: 1, collision: 'solid', description: '单层民居原型' },
-  'building.archetype.cottage2': { category: 'building-archetype', surface: 'plaster', detailTier: 1, collision: 'solid', description: '双层民居原型' },
-  'building.archetype.terrace': { category: 'building-archetype', surface: 'plaster', detailTier: 1, collision: 'solid', description: '露台住宅原型' },
-  'building.archetype.apartment': { category: 'building-archetype', surface: 'concrete', detailTier: 1, collision: 'solid', description: '多层楼房原型' },
-  'building.archetype.barn': { category: 'building-archetype', surface: 'wood', detailTier: 1, collision: 'solid', description: '农场谷仓原型' },
-  'building.archetype.shop': { category: 'building-archetype', surface: 'paintedMetal', detailTier: 1, collision: 'solid', description: '街边商店原型' },
-  'building.archetype.gym': { category: 'building-archetype', surface: 'concrete', detailTier: 1, collision: 'solid', description: '竞技馆原型' },
+  'building.archetype.cottage1': { category: 'building-archetype', surface: 'plaster', detailTier: 1, collision: 'solid', description: '欧式单层乡村住宅原型' },
+  'building.archetype.cottage2': { category: 'building-archetype', surface: 'plaster', detailTier: 1, collision: 'solid', description: '欧式双层城郊住宅原型' },
+  'building.archetype.terrace': { category: 'building-archetype', surface: 'plaster', detailTier: 1, collision: 'solid', description: '欧式露台住宅原型' },
+  'building.archetype.apartment': { category: 'building-archetype', surface: 'stone', detailTier: 1, collision: 'solid', description: '欧式城区多层公寓原型' },
+  'building.archetype.barn': { category: 'building-archetype', surface: 'wood', detailTier: 1, collision: 'solid', description: '欧式半木构农场谷仓原型' },
+  'building.archetype.shop': { category: 'building-archetype', surface: 'plaster', detailTier: 1, collision: 'solid', description: '欧式街角商店原型' },
+  'building.archetype.gym': { category: 'building-archetype', surface: 'stone', detailTier: 1, collision: 'solid', description: '欧式古典竞技馆原型' },
   'building.module.wall': { category: 'building-module', surface: 'plaster', detailTier: 1, collision: 'solid', description: '承重墙与隔墙模块' },
   'building.module.floor': { category: 'building-module', surface: 'concrete', detailTier: 1, collision: 'platform', description: '地板和楼板模块' },
   'building.module.roof': { category: 'building-module', surface: 'roof', detailTier: 1, collision: 'solid', description: '平顶与坡顶模块' },
@@ -66,6 +66,7 @@ export const ASSET_CATALOG = {
   'building.module.stairs': { category: 'building-module', surface: 'wood', detailTier: 1, collision: 'platform', description: '楼梯和扶手模块' },
   'building.module.interior': { category: 'building-module', surface: 'wood', detailTier: 2, collision: 'solid', description: '室内家具与战术陈设模块' },
   'building.module.exterior': { category: 'building-module', surface: 'metal', detailTier: 3, collision: 'none', description: '排水管空调和立面五金模块' },
+  'building.module.european-facade': { category: 'building-module', surface: 'stone', detailTier: 3, collision: 'none', description: '檐口壁柱角石窗楣露台和山花组件' },
   'building.region.stonegate': { category: 'building-region-kit', surface: 'stonegateBrick', detailTier: 2, collision: 'none', description: '磐石城旧城砖石立面套件' },
   'building.region.ironring': { category: 'building-region-kit', surface: 'paintedMetal', detailTier: 2, collision: 'none', description: '铁环竞技场工业立面套件' },
   'building.region.sunfield': { category: 'building-region-kit', surface: 'wood', detailTier: 2, collision: 'none', description: '丰禾农场木作立面套件' },
@@ -75,9 +76,11 @@ export const ASSET_CATALOG = {
   'map.infrastructure.road': { category: 'map-infrastructure', surface: 'terrain', detailTier: 1, collision: 'platform', description: '道路网络模块' },
   'map.infrastructure.bridge': { category: 'map-infrastructure', surface: 'wood', detailTier: 1, collision: 'platform', description: '模块化桥梁套件' },
   'map.infrastructure.utility': { category: 'map-infrastructure', surface: 'wood', detailTier: 2, collision: 'solid', description: '电杆路牌和围栏套件' },
+  'map.infrastructure.street-furniture': { category: 'map-infrastructure', surface: 'paintedMetal', detailTier: 2, collision: 'none', description: '路灯路牌长椅和生活杂物套件' },
   'map.nature.tree.pine': { category: 'map-nature', surface: 'foliage', detailTier: 1, collision: 'solid', description: '多层松树资产' },
   'map.nature.tree.broadleaf': { category: 'map-nature', surface: 'foliage', detailTier: 1, collision: 'solid', description: '阔叶树资产' },
   'map.nature.rock': { category: 'map-nature', surface: 'stone', detailTier: 1, collision: 'solid', description: '岩石与碎石簇资产' },
+  'map.nature.deadwood': { category: 'map-nature', surface: 'wood', detailTier: 2, collision: 'solid', description: '树桩倒木和岸边漂木资产' },
   'map.nature.bush': { category: 'map-nature', surface: 'foliage', detailTier: 2, collision: 'none', description: '灌木簇资产' },
   'map.nature.grass': { category: 'map-nature', surface: 'foliage', detailTier: 3, collision: 'none', description: '草丛和林下植被资产' },
   'map.nature.crop': { category: 'map-nature', surface: 'foliage', detailTier: 3, collision: 'none', description: '农田作物行资产' },
@@ -89,7 +92,10 @@ export const ASSET_CATALOG = {
   'map.landmark.windmill': { category: 'map-landmark', surface: 'paintedMetal', detailTier: 1, collision: 'solid', description: '农场风车地标' },
   'map.landmark.ruins': { category: 'map-landmark', surface: 'stone', detailTier: 1, collision: 'solid', description: '山地遗迹地标' },
   'map.landmark.dock': { category: 'map-landmark', surface: 'wood', detailTier: 1, collision: 'solid', description: '渔港码头地标' },
+  'map.landmark.church': { category: 'map-landmark', surface: 'stonegateBrick', detailTier: 1, collision: 'solid', description: '可进入教堂和钟楼地标' },
+  'map.landmark.plaza': { category: 'map-landmark', surface: 'stone', detailTier: 2, collision: 'solid', description: '石铺广场和中心景观套件' },
   'map.landmark.region-site': { category: 'map-landmark', surface: 'paintedMetal', detailTier: 2, collision: 'solid', description: '区域玩法内容套件' },
+  'map.landmark.regional-detail': { category: 'map-landmark', surface: 'paintedMetal', detailTier: 2, collision: 'none', description: '森林农场渔港城区和教堂区域细节套件' },
 } as const satisfies Record<string, AssetDefinition>;
 
 export type AssetId = keyof typeof ASSET_CATALOG;
@@ -125,6 +131,7 @@ export function buildingAssetPack(
     'building.module.opening',
     'building.module.interior',
     'building.module.exterior',
+    'building.module.european-facade',
   ];
   if (archetype === 'cottage2' || archetype === 'terrace' || archetype === 'apartment') {
     pack.push('building.module.stairs');

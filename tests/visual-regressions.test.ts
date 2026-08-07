@@ -274,11 +274,25 @@ describe('画面回归保护', () => {
       antialias: true,
       maxPixelRatio: 1.5,
       shadows: true,
+      shadowRefreshHz: 20,
       baseExposure: 1.1,
       saturation: 1.08,
       contrast: 1.02,
     });
     expect(SUN_SHADOW_MAP_SIZE).toBe(2048);
+    expect(RENDER_QUALITY.shadowRefreshHz).toBeGreaterThanOrEqual(20);
+  });
+
+  it('渲染上下文丢失和单帧异常均有恢复保护', () => {
+    const rendering = readFileSync(join(process.cwd(), 'src/rendering.ts'), 'utf8');
+    const game = readFileSync(join(process.cwd(), 'src/game.ts'), 'utf8');
+    const main = readFileSync(join(process.cwd(), 'src/main.ts'), 'utf8');
+    expect(rendering).toContain("addEventListener('webglcontextlost'");
+    expect(rendering).toContain("addEventListener('webglcontextrestored'");
+    expect(rendering).toContain('event.preventDefault()');
+    expect(game).toContain('frameSafely');
+    expect(game).toContain('consecutiveFrameErrors');
+    expect(main).toContain("addEventListener('unhandledrejection'");
   });
 
   it('近距离队友名牌不会贴入镜头或异常放大', () => {
@@ -315,5 +329,14 @@ describe('画面回归保护', () => {
     expect(css).toMatch(/@keyframes reticle-shot/);
     expect(css).toMatch(/--ui-panel:/);
     expect(css).toMatch(/#pickup-prompt\s*\{[^}]*--prompt-accent:/s);
+  });
+
+  it('天气栏提供可点击且具备无障碍状态的全局声音开关', () => {
+    const html = readFileSync(join(process.cwd(), 'index.html'), 'utf8');
+    const css = readFileSync(join(process.cwd(), 'src/style.css'), 'utf8');
+    expect(html).toMatch(/id="sound-toggle"[^>]*aria-pressed="false"/);
+    expect(html).toContain('id="sound-toggle-icon"');
+    expect(css).toMatch(/#sound-toggle\s*\{[^}]*pointer-events:\s*auto/s);
+    expect(css).toMatch(/#sound-toggle\[data-muted='true'\]/);
   });
 });

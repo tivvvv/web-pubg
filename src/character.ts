@@ -637,7 +637,7 @@ export class Character {
   setFirstPerson(fpp: boolean): void {
     this.firstPerson = fpp;
     this.syncOwnModelVisibility();
-    this.parts.gun.position.set(fpp ? 0.14 : 0.19, fpp ? 1.38 : 1.26, 0.34);
+    this.parts.gun.position.set(fpp ? 0.16 : 0.19, fpp ? 1.28 : 1.26, fpp ? 0.54 : 0.34);
   }
 
   private syncOwnModelVisibility(): void {
@@ -834,9 +834,9 @@ export class Character {
     // 枪姿态: ADS 俯仰 + 换弹下压; 弹匣中段脱落/回装
     const reloadDip = this.reload01 > 0 ? Math.sin(Math.min(1, this.reload01) * Math.PI) * 0.55 : 0;
     p.gun.position.set(
-      this.firstPerson ? 0.14 : 0.19,
-      (this.firstPerson ? 1.38 : 1.26) - this.gunKick * 0.12,
-      0.34 - this.gunKick,
+      this.firstPerson ? 0.16 : 0.19,
+      (this.firstPerson ? 1.28 : 1.26) - this.gunKick * 0.12,
+      (this.firstPerson ? 0.54 : 0.34) - this.gunKick,
     );
     p.gun.rotation.set(-this.aimPitch + reloadDip - this.gunKick * 0.55, 0, 0);
     if (p.held?.mag) {

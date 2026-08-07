@@ -84,6 +84,9 @@ export class Hud {
   private envTime = el('env-time');
   private envLabel = el('env-label');
   private matchRule = el('match-rule');
+  private soundToggle = el<HTMLButtonElement>('sound-toggle');
+  private soundToggleIcon = el('sound-toggle-icon');
+  private soundToggleLabel = el('sound-toggle-label');
   private locationStatus = el('location-status');
   private locationName = el('location-name');
   private locationTier = el('location-tier');
@@ -168,17 +171,31 @@ export class Hud {
   onResume: () => void = () => undefined;
   onUseHeal: (id: HealId) => void = () => undefined;
   onCloseBackpack: () => void = () => undefined;
+  onToggleSound: () => void = () => undefined;
 
   constructor() {
     el<HTMLButtonElement>('btn-start').addEventListener('click', () => this.onStart());
     el<HTMLButtonElement>('btn-again').addEventListener('click', () => this.onRestart());
     el<HTMLButtonElement>('btn-again-win').addEventListener('click', () => this.onRestart());
     el<HTMLButtonElement>('btn-resume').addEventListener('click', () => this.onResume());
+    this.soundToggle.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onToggleSound();
+    });
     this.backpack.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       if (t.id === 'bp-close') this.onCloseBackpack();
       else if (t.id.startsWith('bp-use-')) this.onUseHeal(t.id.slice(7) as HealId);
     });
+  }
+
+  setSoundMuted(muted: boolean): void {
+    this.soundToggle.dataset.muted = String(muted);
+    this.soundToggle.setAttribute('aria-pressed', String(muted));
+    this.soundToggleIcon.textContent = muted ? '🔇' : '🔊';
+    this.soundToggleLabel.textContent = muted ? '静音' : '声音';
+    this.soundToggle.title = muted ? '开启游戏声音 (M)' : '关闭游戏声音 (M)';
   }
 
   showScreen(name: 'start' | 'death' | 'win' | 'pause' | null): void {

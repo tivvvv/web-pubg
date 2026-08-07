@@ -4,6 +4,19 @@ import { parseRandomSeed, setRandomSeed } from './random';
 
 const bootStartedAt = performance.now();
 
+function runtimeIssue(value: unknown): string {
+  if (value instanceof Error) return `${value.name}: ${value.message}`;
+  return typeof value === 'string' ? value : String(value);
+}
+
+// 记录未捕获异常和 Promise 拒绝, 让发布验收可以捕获此前表现为突然停帧的隐性故障。
+window.addEventListener('error', (event) => {
+  document.body.dataset.runtimeIssue = `uncaught:${runtimeIssue(event.error ?? event.message)}`.slice(0, 240);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  document.body.dataset.runtimeIssue = `rejection:${runtimeIssue(event.reason)}`.slice(0, 240);
+});
+
 async function bootstrap(): Promise<void> {
   const testMode = new URLSearchParams(window.location.search).get('test') === '1';
   setRandomSeed(parseRandomSeed(window.location.search, testMode ? 1337 : null));
@@ -19,6 +32,7 @@ async function bootstrap(): Promise<void> {
 
 void bootstrap().catch((error: unknown) => {
   console.error(error);
+  document.body.dataset.runtimeIssue = `boot:${runtimeIssue(error)}`.slice(0, 240);
   document.body.classList.add('app-ready');
   const message = document.createElement('div');
   message.className = 'boot-error';

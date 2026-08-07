@@ -18,8 +18,8 @@ import { regionAt, regionById, type RegionId } from './regions';
 import { applySurfaceAsset, type FootstepSurface, type SurfaceAssetId } from './assets';
 import { AssetUsageRegistry, SURFACE_MATERIAL_PRESETS } from './assetcatalog';
 import {
-  makeBroadleafCrownGeometry, makeDistantRidgeGeometry, makeFernGeometry, makePineCanopyGeometry,
-  makeWildflowerGeometry,
+  makeBroadleafCrownGeometry, makeColumnarPineCanopyGeometry, makeDistantRidgeGeometry,
+  makeFernGeometry, makePineCanopyGeometry, makeWildflowerGeometry, makeWindshapedCrownGeometry,
   naturalDetailBudget, shorelineSuitability, terrainSurfaceWeights,
 } from './nature';
 
@@ -57,7 +57,8 @@ export interface Platform {
   minX: number; minZ: number; maxX: number; maxZ: number; top: number;
 }
 
-export type ScenicKind = 'lookout' | 'windmill' | 'ruins' | 'dock';
+export type ScenicKind = 'lookout' | 'windmill' | 'ruins' | 'dock' | 'church';
+export type TreeVisualKind = 'pine' | 'columnar' | 'broadleaf' | 'windshaped';
 
 export interface ScenicSite {
   kind: ScenicKind;
@@ -92,6 +93,8 @@ export class World {
   readonly platforms: Platform[] = []; // 楼梯踏步等"可站立但无碰撞体"平台
   readonly buildings = new Buildings();
   readonly bushes: { x: number; z: number; r: number }[] = []; // 灌木足迹(隐蔽判定)
+  readonly naturalRocks: { x: number; z: number; r: number }[] = []; // 自然岩石足迹(穿模审计)
+  readonly treeVisualSamples: { kind: TreeVisualKind; x: number; z: number }[] = []; // 实机视觉巡检锚点
   readonly environment: EnvironmentSystem;
   readonly tacticalRoutes = TACTICAL_ROUTES;
   readonly mapSites: ResolvedMapContentSite[] = [];
@@ -100,9 +103,22 @@ export class World {
   tacticalCoverCount = 0;
   environmentDetailInstanceCount = 0;
   naturalGroundDetailCount = 0;
+  groundMicroDetailCount = 0;
+  naturalStoryPropCount = 0;
+  humanDetailPropCount = 0;
+  regionalIdentityDetailCount = 0;
   shorelineDetailCount = 0;
   distantLandformCount = 0;
   verticalSliceDetailCount = 0;
+  treeCount = 0;
+  treeVariantCount = 0;
+  tacticalRockCount = 0;
+  halfBushCount = 0;
+  grassPatchCount = 0;
+  churchDetailCount = 0;
+  plazaDetailCount = 0;
+  fountainDetailCount = 0;
+  religiousCrossCount = 0;
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -505,58 +521,67 @@ varying vec3 vTerrainWorld;`,
     this.assetUsage.add('map.infrastructure.road', ROAD_PATHS.reduce((total, path) => total + Math.max(0, path.length - 1), 0));
     this.addDistantLandforms(scene);
 
-    // ---- 树木(松树 60% + 阔叶 40%, 树干/碰撞体逻辑不变; 北境密林加密) ----
-    const treeCap = 470; // 全图 350 + 密林加密 120
+    // ---- 树木(四种树冠轮廓, 北境密林加密, 草原保留疏林层次) ----
+    const treeCap = 600;
     const upY = new THREE.Vector3(0, 1, 0);
     const trunkMat = new THREE.MeshLambertMaterial({
       color: 0xffffff, vertexColors: true,
-      emissive: 0x24160d, emissiveIntensity: 0.18,
+      emissive: 0x70472b, emissiveIntensity: 0.5,
     });
     applySurfaceAsset(trunkMat, 'wood', 3.6, 0.58);
     const trunkMesh = new THREE.InstancedMesh(
-      new THREE.CylinderGeometry(0.2, 0.34, 3.4, 6),
+      new THREE.CylinderGeometry(0.2, 0.34, 3.4, 10, 2),
       trunkMat,
       treeCap * 2, // 两段收分树干
     );
     const canopyMat = new THREE.MeshLambertMaterial({
-      color: 0xffffff, flatShading: true, vertexColors: true,
-      emissive: 0x2d6b31, emissiveIntensity: 0.58,
+      color: 0xffffff, flatShading: false, vertexColors: true,
+      emissive: 0x173d20, emissiveIntensity: 0.22,
     });
     const broadMat = new THREE.MeshLambertMaterial({
-      color: 0xffffff, flatShading: true, vertexColors: true,
-      emissive: 0x3a7130, emissiveIntensity: 0.52,
+      color: 0xffffff, flatShading: false, vertexColors: true,
+      emissive: 0x23491f, emissiveIntensity: 0.24,
     });
     applySurfaceAsset(canopyMat, 'foliage', 4.8, 0.52);
     applySurfaceAsset(broadMat, 'foliage', 4.2, 0.56);
     const canopyMesh = new THREE.InstancedMesh(makePineCanopyGeometry(), canopyMat, treeCap);
+    const columnarMesh = new THREE.InstancedMesh(makeColumnarPineCanopyGeometry(), canopyMat, treeCap);
     const broadMesh = new THREE.InstancedMesh(makeBroadleafCrownGeometry(), broadMat, treeCap);
+    const windMesh = new THREE.InstancedMesh(makeWindshapedCrownGeometry(), broadMat, treeCap);
     // 枝丫残桩(小斜枝)
     const branchMesh = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(0.09, 0.85, 0.09),
-      new THREE.MeshLambertMaterial({ color: 0x5e4026 }),
+      new THREE.CylinderGeometry(0.04, 0.085, 0.88, 7),
+      new THREE.MeshLambertMaterial({ color: 0x765136, emissive: 0x4a301e, emissiveIntensity: 0.42 }),
       treeCap * 3,
     );
+    const rootGeometry = new THREE.CapsuleGeometry(0.062, 0.74, 2, 7);
+    rootGeometry.rotateX(Math.PI * 0.5);
     const rootMesh = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(0.2, 0.18, 1.15),
-      new THREE.MeshLambertMaterial({ color: 0x5a3c24 }),
+      rootGeometry,
+      new THREE.MeshLambertMaterial({ color: 0x65452d, emissive: 0x382416, emissiveIntensity: 0.3 }),
       treeCap * 3,
     );
     this.addSway(canopyMat, 0.09, -2.0, 2.5);
     this.addSway(broadMat, 0.09, -1.5, 2.0);
-    trunkMesh.castShadow = true;
+    // 树干位于闭合树冠内部时不投射阴影, 避免阴影贴图穿到树冠正面形成黑色矩形.
+    trunkMesh.castShadow = false;
     canopyMesh.castShadow = true;
+    columnarMesh.castShadow = true;
     broadMesh.castShadow = true;
-    branchMesh.castShadow = true;
+    windMesh.castShadow = true;
+    branchMesh.castShadow = false;
     rootMesh.castShadow = true;
     rootMesh.receiveShadow = true;
     const placedPts: number[] = [];
     const canopyC = new THREE.Color();
     let pineCount = 0;
+    let columnarCount = 0;
     let broadCount = 0;
+    let windCount = 0;
     let treeCount = 0;
     const tryTree = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.8 || h > 13 || this.slopeAt(x, z) > 0.6) return false;
+      if (h < WATER_Y + 0.8 || h > 15.5 || this.slopeAt(x, z) > 0.66) return false;
       if (this.inPlot(x, z, 2.5) || this.inScenicSite(x, z, 2) || this.nearRoad(x, z, 2.5)) return false;
       for (let i = 0; i < placedPts.length; i += 2) {
         const dx = x - (placedPts[i] as number);
@@ -566,29 +591,40 @@ varying vec3 vTerrainWorld;`,
       placedPts.push(x, z);
       const s = 0.8 + rng() * 0.55;
       q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
-      if (rng() < 0.6) {
-        // 松树: 双段树干 + 双层锥冠
-        vPos.set(x, h + 1.7 * s, z);
-        vScale.set(s, s, s);
+      const treeKind = rng();
+      let visualKind: TreeVisualKind;
+      if (treeKind < 0.58) {
+        // 松树: 双段树干 + 多团闭合枝叶
+        vPos.set(x, h + 1.4 * s, z);
+        vScale.set(s, s * 0.82, s);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2, m4);
-        canopyC.setRGB(0.46 + rng() * 0.08, 0.31 + rng() * 0.06, 0.18 + rng() * 0.04);
+        canopyC.setRGB(0.58 + rng() * 0.08, 0.39 + rng() * 0.06, 0.23 + rng() * 0.04);
         trunkMesh.setColorAt(treeCount * 2, canopyC);
         // 上段细干(伸入树冠)
-        vPos.set(x, h + 3.9 * s, z);
-        vScale.set(s * 0.58, s * 0.62, s * 0.58);
+        vPos.set(x, h + 2.72 * s, z);
+        vScale.set(s * 0.58, s * 0.34, s * 0.58);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2 + 1, m4);
         trunkMesh.setColorAt(treeCount * 2 + 1, canopyC);
         // 单个松冠几何内部已经包含四层枝盘，缩短整体高度并露出真实树干比例。
+        const columnar = treeKind >= 0.38;
+        visualKind = columnar ? 'columnar' : 'pine';
         vPos.set(x, h, z);
-        vScale.set(s * 1.78, s * 7.35, s * 1.78);
+        vScale.set(
+          s * (columnar ? 1.92 : 2.02),
+          s * (columnar ? 7.45 : 6.75),
+          s * (columnar ? 1.92 : 2.02),
+        );
         m4.compose(vPos, q0, vScale);
-        canopyMesh.setMatrixAt(pineCount, m4);
-        const pineTone = 0.9 + rng() * 0.22;
-        canopyC.setRGB(0.42 * pineTone, 0.78 * pineTone, 0.36 * pineTone);
-        canopyMesh.setColorAt(pineCount, canopyC);
-        pineCount++;
+        const pineMesh = columnar ? columnarMesh : canopyMesh;
+        const pineIndex = columnar ? columnarCount : pineCount;
+        pineMesh.setMatrixAt(pineIndex, m4);
+        const pineTone = 0.88 + rng() * 0.17;
+        canopyC.setHex(columnar ? 0x225d40 : 0x34763a).multiplyScalar(pineTone);
+        pineMesh.setColorAt(pineIndex, canopyC);
+        if (columnar) columnarCount++;
+        else pineCount++;
       } else {
         // 阔叶: 双段树干 + 合并式五团块面树冠
         const st = s * 0.75;
@@ -596,23 +632,29 @@ varying vec3 vTerrainWorld;`,
         vScale.set(s, st, s);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2, m4);
-        canopyC.setRGB(0.43 + rng() * 0.08, 0.3 + rng() * 0.05, 0.18 + rng() * 0.04);
+        canopyC.setRGB(0.55 + rng() * 0.08, 0.37 + rng() * 0.05, 0.22 + rng() * 0.04);
         trunkMesh.setColorAt(treeCount * 2, canopyC);
         vPos.set(x, h + 3.9 * st, z);
         vScale.set(s * 0.6, st * 0.55, s * 0.6);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2 + 1, m4);
         trunkMesh.setColorAt(treeCount * 2 + 1, canopyC);
-        const cs = s * 1.15;
+        const windshaped = treeKind >= 0.86;
+        visualKind = windshaped ? 'windshaped' : 'broadleaf';
+        const cs = s * (windshaped ? 1.05 : 1.15);
         const broadTone = 0.9 + rng() * 0.2;
-        canopyC.setRGB(0.52 * broadTone, 0.88 * broadTone, 0.4 * broadTone);
+        canopyC.setHex(windshaped ? 0x708535 : 0x467d3b).multiplyScalar(broadTone);
         vPos.set(x, h + 3.4 * st + 0.78 * cs, z);
         vScale.set(cs, cs, cs);
         m4.compose(vPos, q0, vScale);
-        broadMesh.setMatrixAt(broadCount, m4);
-        broadMesh.setColorAt(broadCount, canopyC);
-        broadCount++;
+        const leafMesh = windshaped ? windMesh : broadMesh;
+        const leafIndex = windshaped ? windCount : broadCount;
+        leafMesh.setMatrixAt(leafIndex, m4);
+        leafMesh.setColorAt(leafIndex, canopyC);
+        if (windshaped) windCount++;
+        else broadCount++;
       }
+      this.treeVisualSamples.push({ kind: visualKind, x, z });
       // 三组中下段枝干连接树干和树冠，近景不会只剩一根直柱。
       for (let bi = 0; bi < 3; bi++) {
         const ba = rng() * Math.PI * 2;
@@ -636,41 +678,53 @@ varying vec3 vTerrainWorld;`,
       return true;
     };
     // 先撒密林加密树(z<-150 带状), 再全图散布
-    for (let t = 0; t < 1600 && treeCount < 130; t++) {
+    for (let t = 0; t < 2200 && treeCount < 170; t++) {
       tryTree((rng() * 2 - 1) * 320, -160 - rng() * 170);
     }
-    for (let t = 0; t < 4000 && treeCount < treeCap; t++) {
+    for (let t = 0; t < 6200 && treeCount < treeCap; t++) {
       tryTree((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
     trunkMesh.count = treeCount * 2;
     canopyMesh.count = pineCount;
+    columnarMesh.count = columnarCount;
     broadMesh.count = broadCount;
+    windMesh.count = windCount;
     branchMesh.count = treeCount * 3;
     rootMesh.count = treeCount * 3;
     trunkMesh.instanceMatrix.needsUpdate = true;
     canopyMesh.instanceMatrix.needsUpdate = true;
+    columnarMesh.instanceMatrix.needsUpdate = true;
     broadMesh.instanceMatrix.needsUpdate = true;
+    windMesh.instanceMatrix.needsUpdate = true;
     branchMesh.instanceMatrix.needsUpdate = true;
     rootMesh.instanceMatrix.needsUpdate = true;
     if (trunkMesh.instanceColor) trunkMesh.instanceColor.needsUpdate = true;
     if (canopyMesh.instanceColor) canopyMesh.instanceColor.needsUpdate = true;
+    if (columnarMesh.instanceColor) columnarMesh.instanceColor.needsUpdate = true;
     if (broadMesh.instanceColor) broadMesh.instanceColor.needsUpdate = true;
+    if (windMesh.instanceColor) windMesh.instanceColor.needsUpdate = true;
     trunkMesh.computeBoundingSphere();
     canopyMesh.computeBoundingSphere();
+    columnarMesh.computeBoundingSphere();
     broadMesh.computeBoundingSphere();
+    windMesh.computeBoundingSphere();
     branchMesh.computeBoundingSphere();
     rootMesh.computeBoundingSphere();
     scene.add(trunkMesh);
     scene.add(canopyMesh);
+    scene.add(columnarMesh);
     scene.add(broadMesh);
+    scene.add(windMesh);
     scene.add(branchMesh);
     scene.add(rootMesh);
-    this.environmentDetailInstanceCount += rootMesh.count + branchMesh.count + pineCount + broadCount;
-    this.assetUsage.add('map.nature.tree.pine', pineCount);
-    this.assetUsage.add('map.nature.tree.broadleaf', broadCount);
+    this.treeCount = treeCount;
+    this.treeVariantCount = [pineCount, columnarCount, broadCount, windCount].filter((count) => count > 0).length;
+    this.environmentDetailInstanceCount += rootMesh.count + branchMesh.count + treeCount;
+    this.assetUsage.add('map.nature.tree.pine', pineCount + columnarCount);
+    this.assetUsage.add('map.nature.tree.broadleaf', broadCount + windCount);
 
-    // ---- 岩石(西部山地加密; 两种棱角变体, 平直着色) ----
-    const rockCap = 200; // 全图 120 + 山地加密 80
+    // ---- 岩石(西部山地加密 + 全图稳定生成半身以上战术巨石) ----
+    const rockCap = 300;
     const rockMat = new THREE.MeshStandardMaterial({
       color: 0x8f8f8b,
       roughness: 0.97,
@@ -695,12 +749,24 @@ varying vec3 vTerrainWorld;`,
     let rockCount = 0;
     let rockCount2 = 0;
     let screeCount = 0;
-    const tryRock = (x: number, z: number): boolean => {
+    let tacticalRockCount = 0;
+    const tacticalRockPts: number[] = [];
+    const tryRock = (x: number, z: number, tactical = false): boolean => {
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.3 || h > 15) return false;
-      if (this.inPlot(x, z, 2.5) || this.inScenicSite(x, z, 1.5) || this.nearRoad(x, z, 0.8)) return false;
-      const s = 0.7 + rng() * 1.7;
-      const sy = s * (0.55 + rng() * 0.4);
+      const s = tactical ? 1.75 + rng() * 0.95 : 0.7 + rng() * 1.7;
+      const clearance = tactical ? 3.4 : 2.5;
+      if (this.inPlot(x, z, clearance) || this.inScenicSite(x, z, tactical ? 2.4 : 1.5) ||
+        this.nearRoad(x, z, tactical ? 2.4 : 0.8)) return false;
+      if (!this.pointFree(x, z, Math.max(0.72, s), WATER_Y + 0.25, 16)) return false;
+      if (tactical) {
+        for (let i = 0; i < tacticalRockPts.length; i += 2) {
+          const dx = x - (tacticalRockPts[i] as number);
+          const dz = z - (tacticalRockPts[i + 1] as number);
+          if (dx * dx + dz * dz < 64) return false;
+        }
+      }
+      const sy = tactical ? 1.35 + rng() * 0.65 : s * (0.55 + rng() * 0.4);
       vPos.set(x, h + sy * 0.25, z);
       vScale.set(s * (0.8 + rng() * 0.5), sy, s * (0.8 + rng() * 0.5));
       q0.setFromEuler(new THREE.Euler(rng() * 0.4, rng() * Math.PI * 2, rng() * 0.4));
@@ -737,13 +803,22 @@ varying vec3 vTerrainWorld;`,
         screeMesh.setMatrixAt(screeCount++, m4);
       }
       this.addCollider({ kind: 'cyl', x, z, r: s * 0.92, y0: h - 1, y1: h + sy * 0.95, tag: 'rock' });
+      this.naturalRocks.push({ x, z, r: s * 0.92 });
+      if (tactical) {
+        tacticalRockPts.push(x, z);
+        tacticalRockCount++;
+      }
       return true;
     };
     // 山地加密岩
-    for (let t = 0; t < 900 && rockCount + rockCount2 < 80; t++) {
+    for (let t = 0; t < 1100 && rockCount + rockCount2 < 90; t++) {
       tryRock(-220 + (rng() * 2 - 1) * 120, 20 + (rng() * 2 - 1) * 120);
     }
-    for (let t = 0; t < 2000 && rockCount + rockCount2 < rockCap; t++) {
+    // 开阔区保底布置可挡住上半身的巨石, 兼顾交火推进和载具绕行空间.
+    for (let t = 0; t < 5000 && tacticalRockCount < 72 && rockCount + rockCount2 < rockCap; t++) {
+      tryRock((rng() * 2 - 1) * 325, (rng() * 2 - 1) * 325, true);
+    }
+    for (let t = 0; t < 3600 && rockCount + rockCount2 < rockCap; t++) {
       tryRock((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
     rockMesh.count = rockCount;
@@ -766,14 +841,15 @@ varying vec3 vTerrainWorld;`,
     scene.add(screeMesh);
     this.environmentDetailInstanceCount += rockAccentMesh.count + screeMesh.count;
     this.naturalGroundDetailCount += screeMesh.count;
+    this.tacticalRockCount = tacticalRockCount;
     this.assetUsage.add('map.nature.rock', rockCount + rockCount2);
 
     // ---- 灌木丛(无碰撞体: 子弹/移动均可穿过, 供隐蔽判定; 密林加密) ----
-    const bushCap = 420; // 全图 300 + 密林加密 120
+    const bushCap = 680;
     const bushGeo = new THREE.IcosahedronGeometry(1, 1);
     const BUSH_COLORS = [0x2f5c2a, 0x3f7a33, 0x5c6e2e, 0x8a9438];
     const bushMeshes: THREE.InstancedMesh[] = [];
-    for (let layer = 0; layer < 3; layer++) {
+    for (let layer = 0; layer < 4; layer++) {
       const bm = new THREE.MeshLambertMaterial({ color: 0xffffff });
       this.addSway(bm, 0.07, -1.0, 1.2, true, false, 180, 200);
       const mesh = new THREE.InstancedMesh(bushGeo, bm, bushCap);
@@ -785,7 +861,7 @@ varying vec3 vTerrainWorld;`,
     const bushStemMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.035, 0.055, 0.9, 5),
       new THREE.MeshLambertMaterial({ color: 0x51432a }),
-      bushCap * 2,
+      bushCap * 3,
     );
     bushStemMesh.castShadow = true;
     scene.add(bushStemMesh);
@@ -793,22 +869,23 @@ varying vec3 vTerrainWorld;`,
     let bushCount = 0;
     const tryBush = (x: number, z: number): boolean => {
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.5 || h > 13 || this.slopeAt(x, z) > 0.5) return false;
+      if (h < WATER_Y + 0.5 || h > 15.8 || this.slopeAt(x, z) > 0.58) return false;
       if (this.inPlot(x, z, 2.5) || this.inScenicSite(x, z, 1.2) || this.nearRoad(x, z, 1.2)) return false;
+      const s = 0.72 + rng() * 0.5; // 半身遮蔽高度, 保持无碰撞可穿行
+      if (!this.pointFree(x, z, s, WATER_Y + 0.25, 16)) return false;
       for (let i = 0; i < bushPts.length; i += 2) {
         const dx = x - (bushPts[i] as number);
         const dz = z - (bushPts[i + 1] as number);
-        if (dx * dx + dz * dz < 6.2) return false;
+        if (dx * dx + dz * dz < 8.2) return false;
       }
       bushPts.push(x, z);
-      const s = 0.6 + rng() * 0.45; // 幅宽 1.2~2.0, 高 0.9~1.4
       const colorIdx = Math.floor(rng() * BUSH_COLORS.length);
       const q2 = new THREE.Quaternion().setFromAxisAngle(upY, rng() * Math.PI * 2);
-      for (let layer = 0; layer < 3; layer++) {
-        const ls = s * (layer === 0 ? 1 : layer === 1 ? 0.72 : 0.52);
-        const lx = x + (layer === 1 ? 0.32 * s : layer === 2 ? -0.26 * s : 0);
-        const lz = z + (layer === 1 ? 0.2 * s : layer === 2 ? -0.18 * s : 0);
-        const ly = h + (layer === 0 ? 0.45 : layer === 1 ? 0.62 : 0.78) * s;
+      for (let layer = 0; layer < 4; layer++) {
+        const ls = s * (layer === 0 ? 1 : layer === 1 ? 0.76 : layer === 2 ? 0.62 : 0.48);
+        const lx = x + (layer === 1 ? 0.38 * s : layer === 2 ? -0.34 * s : layer === 3 ? 0.04 * s : 0);
+        const lz = z + (layer === 1 ? 0.22 * s : layer === 2 ? -0.2 * s : layer === 3 ? -0.4 * s : 0);
+        const ly = h + (layer === 0 ? 0.48 : layer === 1 ? 0.6 : layer === 2 ? 0.72 : 0.84) * s;
         vPos.set(lx, ly, lz);
         vScale.set(ls, ls * 0.75, ls);
         m4.compose(vPos, q2, vScale);
@@ -817,20 +894,20 @@ varying vec3 vTerrainWorld;`,
         canopyC.setHex(BUSH_COLORS[colorIdx] as number).multiplyScalar(0.85 + rng() * 0.3);
         mesh.setColorAt(bushCount, canopyC);
       }
-      for (let stem = 0; stem < 2; stem++) {
+      for (let stem = 0; stem < 3; stem++) {
         const sa = rng() * Math.PI * 2;
         q0.setFromEuler(new THREE.Euler(stem === 0 ? 0.14 : -0.18, sa, 0));
         vPos.set(x + Math.sin(sa) * 0.12 * s, h + 0.38 * s, z + Math.cos(sa) * 0.12 * s);
         vScale.set(s, s, s);
         m4.compose(vPos, q0, vScale);
-        bushStemMesh.setMatrixAt(bushCount * 2 + stem, m4);
+        bushStemMesh.setMatrixAt(bushCount * 3 + stem, m4);
       }
       this.bushes.push({ x, z, r: s * 1.5 });
       bushCount++;
       return true;
     };
     // 密林加密灌木(z<-150)
-    for (let t = 0; t < 1200 && bushCount < 130; t++) {
+    for (let t = 0; t < 1800 && bushCount < 180; t++) {
       tryBush((rng() * 2 - 1) * 320, -160 - rng() * 170);
     }
     for (let t = 0; t < bushCap * 8 && bushCount < bushCap; t++) {
@@ -842,10 +919,12 @@ varying vec3 vTerrainWorld;`,
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       mesh.computeBoundingSphere();
     }
-    bushStemMesh.count = bushCount * 2;
+    bushStemMesh.count = bushCount * 3;
     bushStemMesh.instanceMatrix.needsUpdate = true;
     bushStemMesh.computeBoundingSphere();
-    this.environmentDetailInstanceCount += bushStemMesh.count;
+    this.halfBushCount = bushCount;
+    this.environmentDetailInstanceCount += bushStemMesh.count + bushCount * bushMeshes.length;
+    this.naturalGroundDetailCount += bushCount * bushMeshes.length;
     this.assetUsage.add('map.nature.bush', bushCount);
 
     // ---- 草丛(纯装饰: 无碰撞体, 不挡子弹/视线) ----
@@ -853,26 +932,28 @@ varying vec3 vTerrainWorld;`,
     const grassGeo = makeGrassGeo();
     const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.addSway(grassMat, 0.06, 0.0, 0.55, true, true);
-    const grassMesh = new THREE.InstancedMesh(grassGeo, grassMat, grassCap + 800);
+    const forestGrassCap = 1600;
+    const grassMesh = new THREE.InstancedMesh(grassGeo, grassMat, grassCap + forestGrassCap);
     grassMesh.receiveShadow = true;
     const cG1 = new THREE.Color(0x5e9440); // 与地形草地同管线(sRGB→线性)
     const cG2 = new THREE.Color(0xa8ad5e);
     let grassCount = 0;
     for (let t = 0; t < grassCap * 4 && grassCount < grassCap; t++) {
-      // 按簇散布: 每簇 5-9 丛, 视觉成团而不是均匀稀点
+      // 按簇散布: 每簇 8-14 丛, 形成连续草坪和自然疏密边缘.
       const cx = (rng() * 2 - 1) * 330;
       const cz = (rng() * 2 - 1) * 330;
       const ch = this.getHeight(cx, cz);
-      if (ch < WATER_Y + 0.4 || ch > 12 || this.slopeAt(cx, cz) > 0.55) continue;
+      if (ch < WATER_Y + 0.4 || ch > 16.2 || this.slopeAt(cx, cz) > 0.64) continue;
       if (this.inPlot(cx, cz, 1.5) || this.inScenicSite(cx, cz, 0.4) || this.nearRoad(cx, cz, 0.25)) continue;
-      const n = 5 + Math.floor(rng() * 5);
+      const n = 8 + Math.floor(rng() * 7);
       for (let k = 0; k < n && grassCount < grassCap; k++) {
-        const x = cx + (rng() * 2 - 1) * 2.6;
-        const z = cz + (rng() * 2 - 1) * 2.6;
+        const x = cx + (rng() * 2 - 1) * 3.4;
+        const z = cz + (rng() * 2 - 1) * 3.4;
         const h = this.getHeight(x, z);
-        if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.55) continue;
+        if (h < WATER_Y + 0.4 || h > 16.2 || this.slopeAt(x, z) > 0.64) continue;
         if (this.inPlot(x, z, 1.5) || this.inScenicSite(x, z, 0.4) || this.nearRoad(x, z, 0.25)) continue;
-        const s = 0.9 + rng() * 0.6;
+        const tallPatch = rng() > 0.78;
+        const s = tallPatch ? 0.92 + rng() * 0.38 : 0.52 + rng() * 0.42;
         vPos.set(x, h - 0.02, z);
         vScale.set(s, s, s);
         q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
@@ -892,13 +973,13 @@ varying vec3 vTerrainWorld;`,
 
     // 密林下植被加密草(z<-150 带状, 下植被感)
     let forestGrass = 0;
-    for (let t = 0; t < 5000 && forestGrass < 800; t++) {
+    for (let t = 0; t < 9000 && forestGrass < forestGrassCap; t++) {
       const x = (rng() * 2 - 1) * 320;
       const z = -160 - rng() * 170;
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.55) continue;
+      if (h < WATER_Y + 0.4 || h > 16.2 || this.slopeAt(x, z) > 0.64) continue;
       if (this.inPlot(x, z, 1.5) || this.inScenicSite(x, z, 0.4) || this.nearRoad(x, z, 0.25)) continue;
-      const s = 0.9 + rng() * 0.6;
+      const s = 0.68 + rng() * 0.5;
       vPos.set(x, h - 0.02, z);
       vScale.set(s, s, s);
       q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
@@ -911,9 +992,13 @@ varying vec3 vTerrainWorld;`,
     grassMesh.count = grassCount + forestGrass;
     grassMesh.instanceMatrix.needsUpdate = true;
     if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
+    this.grassPatchCount = grassMesh.count;
+    this.naturalGroundDetailCount += grassMesh.count;
+    this.environmentDetailInstanceCount += grassMesh.count;
     this.assetUsage.add('map.nature.grass', grassMesh.count);
 
     this.addGroundEcology(scene);
+    this.addNaturalStoryProps(scene);
 
     // ---- 农田作物行(南部农场, 黄绿短苗, 纯装饰) ----
     const cropGeo = makeGrassGeo();
@@ -970,6 +1055,8 @@ varying vec3 vTerrainWorld;`,
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.4 || h > 12 || this.slopeAt(x, z) > 0.5) continue;
       if (this.inPlot(x, z, 1.5)) continue;
+      if (!this.pointFree(x, z, 1.12, WATER_Y + 0.25, 16)) continue;
+      if (this.bushes.some((bush) => Math.hypot(x - bush.x, z - bush.z) < bush.r + 1.12)) continue;
       const ba = rng() * Math.PI;
       vPos.set(x, h + 1.02, z);
       vScale.set(1, 1, 1);
@@ -1054,9 +1141,10 @@ varying vec3 vTerrainWorld;`,
     scene.add(boatMesh);
     this.assetUsage.add('map.tactical.harbor', boatCount);
 
-    // ---- 地标与场景道具(观景台/风车/山地遗迹/码头/围栏/电杆/沿岸芦苇) ----
+    // ---- 地标与场景道具(观景台/风车/山地遗迹/码头/教堂广场/围栏/电杆/沿岸芦苇) ----
     this.addScenicLandmarks(scene);
     this.addEnvironmentProps(scene);
+    this.addRegionalIdentityProps(scene);
     this.addRegionalTacticalProps(scene);
     this.addTacticalRouteLanes(scene);
     this.addFinalMapContent(scene);
@@ -1066,7 +1154,11 @@ varying vec3 vTerrainWorld;`,
       if (site.kind === 'lookout') this.assetUsage.add('map.landmark.lookout');
       else if (site.kind === 'windmill') this.assetUsage.add('map.landmark.windmill');
       else if (site.kind === 'ruins') this.assetUsage.add('map.landmark.ruins');
-      else this.assetUsage.add('map.landmark.dock');
+      else if (site.kind === 'dock') this.assetUsage.add('map.landmark.dock');
+      else {
+        this.assetUsage.add('map.landmark.church');
+        this.assetUsage.add('map.landmark.plaza');
+      }
     }
     this.assetUsage.add('map.landmark.region-site', this.mapSites.length);
     this.assetUsage.add('map.tactical.cover', this.tacticalCoverCount);
@@ -1083,21 +1175,24 @@ varying vec3 vTerrainWorld;`,
       { kind: 'windmill', x: -108, z: 205, r: 10 },
       { kind: 'ruins', x: -242, z: 28, r: 13 },
       { kind: 'dock', x: 222, z: -232, r: 8, shore: true },
+      { kind: 'church', x: 4, z: 28, r: 25 },
     ];
     this.scenicSites.length = 0;
     for (const spec of specs) {
       let found: ScenicSite | null = null;
-      for (let i = 0; i < 180; i++) {
+      for (let i = 0; i < (spec.kind === 'church' ? 420 : 180); i++) {
         const dist = i === 0 ? 0 : 2.8 * Math.sqrt(i);
         const a = i * 2.399963;
         const x = spec.x + Math.cos(a) * dist;
         const z = spec.z + Math.sin(a) * dist;
         const h = this.getHeight(x, z);
+        if (spec.kind === 'church' && regionAt(x, z)?.id !== 'stonegate') continue;
         const heightOk = spec.shore
           ? h > WATER_Y - 0.05 && h < WATER_Y + 1.35
           : h > WATER_Y + 0.8 && h < (spec.kind === 'ruins' ? 18 : 13.5);
         if (!heightOk || this.inPlot(x, z, spec.r + 1.5)) continue;
-        if (!spec.shore && this.slopeAt(x, z) > (spec.kind === 'ruins' ? 0.72 : 0.48)) continue;
+        const slopeLimit = spec.kind === 'ruins' ? 0.72 : spec.kind === 'church' ? 0.34 : 0.48;
+        if (!spec.shore && this.slopeAt(x, z) > slopeLimit) continue;
         if (this.scenicSites.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + spec.r + 8)) continue;
         found = { kind: spec.kind, x, z, r: spec.r };
         break;
@@ -1196,7 +1291,8 @@ varying vec3 vTerrainWorld;`,
       if (site.kind === 'lookout') this.addLookout(scene, site);
       else if (site.kind === 'windmill') this.addWindmill(scene, site);
       else if (site.kind === 'ruins') this.addRuins(scene, site);
-      else this.addDock(scene, site);
+      else if (site.kind === 'dock') this.addDock(scene, site);
+      else this.addChurchPlaza(scene, site);
     }
   }
 
@@ -1387,6 +1483,372 @@ varying vec3 vTerrainWorld;`,
     }
   }
 
+  private churchFloorTop(site: ScenicSite): number {
+    const centerZ = site.z - 5;
+    let highest = -Infinity;
+    for (let ix = 0; ix <= 6; ix++) {
+      for (let iz = 0; iz <= 9; iz++) {
+        const x = site.x - 6.4 + ix / 6 * 12.8;
+        const z = centerZ - 9.5 + iz / 9 * 19;
+        highest = Math.max(highest, this.getHeight(x, z));
+      }
+    }
+    return highest + 0.22;
+  }
+
+  private churchPlazaTop(site: ScenicSite): number {
+    const centerZ = site.z + 14;
+    return Math.max(
+      this.getHeight(site.x, centerZ),
+      this.getHeight(site.x - 13.5, centerZ - 9), this.getHeight(site.x + 13.5, centerZ - 9),
+      this.getHeight(site.x - 13.5, centerZ + 9), this.getHeight(site.x + 13.5, centerZ + 9),
+    ) + 0.12;
+  }
+
+  // 可进入的教堂和石铺广场共用一个地标安全区. 教堂提供室内近战路线, 广场提供开阔视线和环形掩体.
+  private addChurchPlaza(scene: THREE.Scene, site: ScenicSite): void {
+    const floorTop = this.churchFloorTop(site);
+    const plazaTop = this.churchPlazaTop(site);
+    const centerZ = site.z - 5;
+    const foundationGround = Math.min(
+      this.getHeight(site.x - 6.4, centerZ - 9.5),
+      this.getHeight(site.x + 6.4, centerZ - 9.5),
+      this.getHeight(site.x - 6.4, centerZ + 9.5),
+      this.getHeight(site.x + 6.4, centerZ + 9.5),
+    ) - 0.18;
+    const plaster = new THREE.MeshStandardMaterial({ color: 0xd4c9ad, roughness: 0.92 });
+    const stone = new THREE.MeshStandardMaterial({ color: 0x85827a, roughness: 0.97, flatShading: true });
+    const trim = new THREE.MeshStandardMaterial({ color: 0x685f53, roughness: 0.95 });
+    const wood = new THREE.MeshStandardMaterial({ color: 0x5c3d27, roughness: 0.9 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x71463d, roughness: 0.86 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x272a27, roughness: 0.82 });
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0x6aa1a8, emissive: 0x315d66, emissiveIntensity: 0.72,
+      transparent: true, opacity: 0.72, roughness: 0.18, metalness: 0.08,
+    });
+    applySurfaceAsset(plaster, 'stonegateBrick', 1.6, 0.72);
+    applySurfaceAsset(stone, 'stone', 2.1, 0.82);
+    applySurfaceAsset(wood, 'wood', 3.1, 0.72);
+    applySurfaceAsset(roofMat, 'roof', 2.3, 0.84);
+    const church = new THREE.Group();
+    let churchParts = 0;
+    const box = (
+      w: number, h: number, d: number,
+      x: number, y: number, z: number,
+      material: THREE.Material,
+      collide = false,
+      tag: 'wall' | 'floor' | 'roof' = 'wall',
+    ): THREE.Mesh => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      church.add(mesh);
+      churchParts++;
+      if (collide) {
+        this.addCollider({
+          kind: 'aabb', minX: x - w / 2, minY: y - h / 2, minZ: z - d / 2,
+          maxX: x + w / 2, maxY: y + h / 2, maxZ: z + d / 2, tag,
+        });
+      }
+      return mesh;
+    };
+
+    const foundationHeight = floorTop - foundationGround;
+    box(13.2, foundationHeight, 19.4, site.x, foundationGround + foundationHeight / 2, centerZ, stone, true, 'floor');
+    this.platforms.push({
+      minX: site.x - 6.6, minZ: centerZ - 9.7,
+      maxX: site.x + 6.6, maxZ: centerZ + 9.7, top: floorTop,
+    });
+
+    // 后墙与正立面. 南侧中央保留 2.4m 宽入口, 钟楼悬于入口上方.
+    box(12.6, 5.4, 0.42, site.x, floorTop + 2.7, centerZ - 9.2, plaster, true);
+    box(5.05, 5.4, 0.42, site.x - 3.78, floorTop + 2.7, centerZ + 9.2, plaster, true);
+    box(5.05, 5.4, 0.42, site.x + 3.78, floorTop + 2.7, centerZ + 9.2, plaster, true);
+    box(2.5, 1.45, 0.42, site.x, floorTop + 4.68, centerZ + 9.2, plaster, true);
+    // 两侧墙由矮墙, 高窗带和承重柱组成, 窗洞真实透光但无法直接翻越.
+    for (const side of [-1, 1]) {
+      const x = site.x + side * 6.1;
+      box(0.42, 1.18, 18.4, x, floorTop + 0.59, centerZ, plaster, true);
+      box(0.42, 1.55, 18.4, x, floorTop + 4.63, centerZ, plaster, true);
+      for (const zOffset of [-9.2, -5.8, -2.3, 1.2, 4.7, 8.2]) {
+        box(0.48, 3.45, 0.48, x, floorTop + 2.9, centerZ + zOffset, trim, true);
+      }
+      for (const zOffset of [-7.5, -4.05, -0.55, 2.95, 6.45]) {
+        box(0.08, 2.25, 2.42, x - side * 0.23, floorTop + 2.52, centerZ + zOffset, glass);
+        box(0.11, 2.36, 0.1, x - side * 0.28, floorTop + 2.52, centerZ + zOffset, trim);
+      }
+    }
+
+    // 双坡屋顶保留高挑中殿轮廓. 屋脊下方用薄碰撞层封闭射线和落点.
+    for (const side of [-1, 1]) {
+      const panel = box(7.25, 0.34, 19.5, site.x + side * 2.92, floorTop + 6.35, centerZ, roofMat);
+      panel.rotation.z = side * -0.55;
+    }
+    box(12.5, 0.22, 18.8, site.x, floorTop + 5.48, centerZ, roofMat, true, 'roof');
+    box(0.24, 0.28, 19.6, site.x, floorTop + 8.05, centerZ, trim);
+
+    // 钟楼, 百叶钟窗, 四坡尖顶和十字架构成远距离可识别剪影.
+    box(3.9, 4.3, 3.9, site.x, floorTop + 7.58, centerZ + 7.7, plaster, true);
+    for (const [dx, dz, w, d] of [[0, 1.98, 1.25, 0.08], [0, -1.98, 1.25, 0.08], [1.98, 0, 0.08, 1.25], [-1.98, 0, 0.08, 1.25]] as const) {
+      box(w, 1.45, d, site.x + dx, floorTop + 8.1, centerZ + 7.7 + dz, dark);
+    }
+    const towerRoof = new THREE.Mesh(new THREE.ConeGeometry(3.0, 3.3, 4), roofMat);
+    towerRoof.position.set(site.x, floorTop + 11.38, centerZ + 7.7);
+    towerRoof.rotation.y = Math.PI / 4;
+    towerRoof.castShadow = true;
+    church.add(towerRoof);
+    churchParts++;
+    box(0.3, 3.0, 0.3, site.x, floorTop + 14.0, centerZ + 7.7, trim);
+    box(1.9, 0.3, 0.3, site.x, floorTop + 14.45, centerZ + 7.7, trim);
+    this.religiousCrossCount = 1;
+
+    // 入口石阶按实际地面逐级衔接地基, 避免悬空和无法进入.
+    const entranceGround = plazaTop;
+    const stepCount = 3;
+    for (let i = 0; i < stepCount; i++) {
+      const top = entranceGround + (floorTop - entranceGround) * ((i + 1) / stepCount);
+      const z = centerZ + 11.0 - i * 0.72;
+      const stepHeight = Math.max(0.18, top - entranceGround + 0.04);
+      box(3.5 + i * 0.25, stepHeight, 0.82, site.x, top - stepHeight / 2, z, stone);
+      this.platforms.push({
+        minX: site.x - (3.5 + i * 0.25) / 2, minZ: z - 0.41,
+        maxX: site.x + (3.5 + i * 0.25) / 2, maxZ: z + 0.41, top,
+      });
+    }
+
+    // 室内长椅留出 2m 中央通道, 椅背形成低矮战术掩体.
+    for (const zOffset of [-6.8, -4.3, -1.8, 0.7, 3.2]) {
+      for (const side of [-1, 1]) {
+        const x = site.x + side * 3.05;
+        box(3.8, 0.48, 0.68, x, floorTop + 0.38, centerZ + zOffset, wood, true);
+        box(3.8, 0.72, 0.14, x, floorTop + 0.76, centerZ + zOffset - 0.28, wood);
+      }
+    }
+    box(4.6, 0.92, 1.25, site.x, floorTop + 0.46, centerZ - 7.8, stone, true);
+    box(2.8, 2.4, 0.18, site.x, floorTop + 2.2, centerZ - 8.94, glass);
+    const warmLight = new THREE.PointLight(0xffc982, 2.3, 13, 2);
+    warmLight.position.set(site.x, floorTop + 4.4, centerZ - 2.5);
+    church.add(warmLight);
+    scene.add(church);
+
+    // 广场石铺面逐顶点贴地, 既保持连续图案又不会在缓坡上悬浮.
+    const plazaCenterZ = site.z + 14;
+    const plazaBase = Math.min(
+      this.getHeight(site.x - 13.5, plazaCenterZ - 9), this.getHeight(site.x + 13.5, plazaCenterZ - 9),
+      this.getHeight(site.x - 13.5, plazaCenterZ + 9), this.getHeight(site.x + 13.5, plazaCenterZ + 9),
+    ) - 0.2;
+    const plazaFoundation = new THREE.Mesh(
+      new THREE.BoxGeometry(27, plazaTop - plazaBase, 18), stone,
+    );
+    plazaFoundation.position.set(site.x, plazaBase + (plazaTop - plazaBase) / 2, plazaCenterZ);
+    plazaFoundation.castShadow = true;
+    plazaFoundation.receiveShadow = true;
+    scene.add(plazaFoundation);
+    this.addCollider({
+      kind: 'aabb', minX: site.x - 13.5, minY: plazaBase, minZ: plazaCenterZ - 9,
+      maxX: site.x + 13.5, maxY: plazaTop, maxZ: plazaCenterZ + 9, tag: 'floor',
+    });
+    this.platforms.push({
+      minX: site.x - 13.5, minZ: plazaCenterZ - 9,
+      maxX: site.x + 13.5, maxZ: plazaCenterZ + 9, top: plazaTop,
+    });
+    const plazaGeo = new THREE.PlaneGeometry(27, 18, 18, 12);
+    plazaGeo.rotateX(-Math.PI / 2);
+    const plazaPos = plazaGeo.attributes.position as THREE.BufferAttribute;
+    const plazaColors = new Float32Array(plazaPos.count * 3);
+    const tileColor = new THREE.Color();
+    for (let i = 0; i < plazaPos.count; i++) {
+      const lx = plazaPos.getX(i);
+      const lz = plazaPos.getZ(i);
+      plazaPos.setY(i, plazaTop + 0.042);
+      const checker = (Math.floor((lx + 13.5) / 1.5) + Math.floor((lz + 9) / 1.5)) & 1;
+      tileColor.setHex(checker ? 0x88847b : 0x9b968a).multiplyScalar(0.94 + (i % 5) * 0.015);
+      plazaColors[i * 3] = tileColor.r;
+      plazaColors[i * 3 + 1] = tileColor.g;
+      plazaColors[i * 3 + 2] = tileColor.b;
+    }
+    plazaGeo.setAttribute('color', new THREE.BufferAttribute(plazaColors, 3));
+    plazaGeo.computeVertexNormals();
+    const plazaMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.96 });
+    applySurfaceAsset(plazaMat, 'stone', 1.45, 0.78);
+    const plaza = new THREE.Mesh(plazaGeo, plazaMat);
+    plaza.position.set(site.x, 0, plazaCenterZ);
+    plaza.receiveShadow = true;
+    scene.add(plaza);
+    let plazaParts = 2;
+
+    const fountainGround = plazaTop;
+    let fountainParts = 0;
+    const basin = new THREE.Mesh(new THREE.TorusGeometry(2.25, 0.3, 8, 24), stone);
+    basin.rotation.x = Math.PI / 2;
+    basin.position.set(site.x, fountainGround + 0.34, plazaCenterZ);
+    basin.castShadow = true;
+    basin.receiveShadow = true;
+    scene.add(basin);
+    fountainParts++;
+    const fountainWater = new THREE.MeshStandardMaterial({
+      color: 0x69b7ca, emissive: 0x285c68, emissiveIntensity: 0.46,
+      transparent: true, opacity: 0.74, roughness: 0.12, metalness: 0.04,
+      depthWrite: false,
+    });
+    const water = new THREE.Mesh(
+      new THREE.CircleGeometry(1.95, 24),
+      fountainWater,
+    );
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(site.x, fountainGround + 0.36, plazaCenterZ);
+    scene.add(water);
+    fountainParts++;
+    const fountainColumn = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.58, 2.3, 10), stone);
+    fountainColumn.position.set(site.x, fountainGround + 1.2, plazaCenterZ);
+    fountainColumn.castShadow = true;
+    scene.add(fountainColumn);
+    fountainParts++;
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 0.65, 0.24, 12), stone);
+    bowl.position.set(site.x, fountainGround + 2.15, plazaCenterZ);
+    bowl.castShadow = true;
+    scene.add(bowl);
+    fountainParts++;
+    const upperWater = new THREE.Mesh(new THREE.CircleGeometry(0.9, 18), fountainWater);
+    upperWater.rotation.x = -Math.PI / 2;
+    upperWater.position.set(site.x, fountainGround + 2.29, plazaCenterZ);
+    scene.add(upperWater);
+    fountainParts++;
+    const finial = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 7), stone);
+    finial.position.set(site.x, fountainGround + 2.58, plazaCenterZ);
+    finial.castShadow = true;
+    scene.add(finial);
+    fountainParts++;
+
+    // 六组平滑分段水线从上层水钵落入主池，共用一套几何和材质，强化喷泉辨识度但不增加碰撞。
+    const jetGeometry = new THREE.CylinderGeometry(0.035, 0.055, 1, 6);
+    const up = new THREE.Vector3(0, 1, 0);
+    const jetFrom = new THREE.Vector3();
+    const jetTo = new THREE.Vector3();
+    const jetDelta = new THREE.Vector3();
+    for (let direction = 0; direction < 6; direction++) {
+      const angle = direction / 6 * Math.PI * 2;
+      const dx = Math.cos(angle);
+      const dz = Math.sin(angle);
+      const points: THREE.Vector3[] = [];
+      for (let point = 0; point <= 5; point++) {
+        const t = point / 5;
+        const radius = 0.36 + 1.36 * t;
+        const y = 2.31 - 1.76 * t + Math.sin(Math.PI * t) * 1.25;
+        points.push(new THREE.Vector3(
+          site.x + dx * radius, fountainGround + y, plazaCenterZ + dz * radius,
+        ));
+      }
+      for (let segment = 0; segment < points.length - 1; segment++) {
+        jetFrom.copy(points[segment] as THREE.Vector3);
+        jetTo.copy(points[segment + 1] as THREE.Vector3);
+        jetDelta.subVectors(jetTo, jetFrom);
+        const jet = new THREE.Mesh(jetGeometry, fountainWater);
+        jet.position.copy(jetFrom).add(jetTo).multiplyScalar(0.5);
+        jet.scale.y = jetDelta.length();
+        jet.quaternion.setFromUnitVectors(up, jetDelta.normalize());
+        jet.renderOrder = 3;
+        scene.add(jet);
+        fountainParts++;
+      }
+    }
+    const crownJet = new THREE.Mesh(jetGeometry, fountainWater);
+    crownJet.position.set(site.x, fountainGround + 3.02, plazaCenterZ);
+    crownJet.scale.y = 1.35;
+    scene.add(crownJet);
+    fountainParts++;
+    const crownSpray = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), fountainWater);
+    crownSpray.scale.set(1.5, 0.62, 1.5);
+    crownSpray.position.set(site.x, fountainGround + 3.72, plazaCenterZ);
+    scene.add(crownSpray);
+    fountainParts++;
+    const splashRing = new THREE.Mesh(new THREE.TorusGeometry(1.7, 0.055, 6, 28), fountainWater);
+    splashRing.rotation.x = Math.PI / 2;
+    splashRing.position.set(site.x, fountainGround + 0.43, plazaCenterZ);
+    scene.add(splashRing);
+    fountainParts++;
+    plazaParts += fountainParts;
+    this.fountainDetailCount = fountainParts;
+    this.addCollider({ kind: 'cyl', x: site.x, z: plazaCenterZ, r: 2.3, y0: fountainGround, y1: fountainGround + 2.35, tag: 'rock' });
+    this.tacticalCoverCount++;
+
+    // 广场边缘的长椅, 花坛和路灯组织空间, 中央仍保留清晰通行环线.
+    const plazaBox = (
+      x: number, z: number, w: number, h: number, d: number,
+      material: THREE.Material, collide = false,
+    ): void => {
+      const ground = plazaTop;
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      mesh.position.set(x, ground + h / 2 + 0.05, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      plazaParts++;
+      if (collide) {
+        this.addCollider({
+          kind: 'aabb', minX: x - w / 2, minY: ground, minZ: z - d / 2,
+          maxX: x + w / 2, maxY: ground + h, maxZ: z + d / 2, tag: 'wall',
+        });
+        this.tacticalCoverCount++;
+      }
+    };
+    for (const side of [-1, 1]) {
+      for (const zOffset of [-5.8, 5.8]) {
+        plazaBox(site.x + side * 8.5, plazaCenterZ + zOffset, 3.8, 0.48, 0.72, wood, true);
+        plazaBox(site.x + side * 8.5, plazaCenterZ + zOffset - 0.3, 3.8, 0.72, 0.14, wood);
+      }
+      plazaBox(site.x + side * 10.8, plazaCenterZ, 2.8, 1.02, 2.8, stone, true);
+      plazaBox(site.x + side * 10.8, plazaCenterZ - 0.25, 2.45, 0.26, 2.45, trim);
+      for (const zOffset of [-0.62, 0, 0.62]) {
+        const hedge = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.68, 1),
+          new THREE.MeshLambertMaterial({ color: zOffset === 0 ? 0x4f7339 : 0x637f42 }),
+        );
+        hedge.scale.set(1.12, 0.78 + Math.abs(zOffset) * 0.12, 0.92);
+        hedge.position.set(site.x + side * 10.8, plazaTop + 1.14, plazaCenterZ + zOffset);
+        hedge.castShadow = true;
+        scene.add(hedge);
+        plazaParts++;
+      }
+    }
+    for (const [dx, dz] of [[-11.5, -7], [11.5, -7], [-11.5, 7], [11.5, 7]] as const) {
+      const x = site.x + dx;
+      const z = plazaCenterZ + dz;
+      const ground = plazaTop;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, 4.5, 7), dark);
+      post.position.set(x, ground + 2.25, z);
+      post.castShadow = true;
+      scene.add(post);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), glass);
+      lamp.position.set(x, ground + 4.55, z);
+      scene.add(lamp);
+      plazaParts += 2;
+      this.addCollider({ kind: 'cyl', x, z, r: 0.18, y0: ground, y1: ground + 4.5, tag: 'rock' });
+    }
+    // 南侧宽阶梯将地形连续抬升到广场平台, 两侧保留车辆绕行空间.
+    const plazaEntryZ = plazaCenterZ + 10.4;
+    const plazaEntryGround = this.getHeight(site.x, plazaEntryZ + 1.4);
+    for (let i = 0; i < 5; i++) {
+      const top = plazaEntryGround + (plazaTop - plazaEntryGround) * ((i + 1) / 5);
+      const z = plazaEntryZ + 1.05 - i * 0.55;
+      const stepHeight = Math.max(0.18, top - plazaEntryGround + 0.04);
+      const step = new THREE.Mesh(new THREE.BoxGeometry(6.6 + i * 0.35, stepHeight, 0.7), stone);
+      step.position.set(site.x, top - stepHeight / 2, z);
+      step.castShadow = true;
+      step.receiveShadow = true;
+      scene.add(step);
+      this.platforms.push({
+        minX: site.x - (6.6 + i * 0.35) / 2, minZ: z - 0.35,
+        maxX: site.x + (6.6 + i * 0.35) / 2, maxZ: z + 0.35, top,
+      });
+      plazaParts++;
+    }
+    this.churchDetailCount = churchParts;
+    this.plazaDetailCount = plazaParts;
+    this.environmentDetailInstanceCount += churchParts + plazaParts;
+  }
+
   private addEnvironmentProps(scene: THREE.Scene): void {
     const poleGeo = new THREE.CylinderGeometry(0.12, 0.17, 7.2, 7);
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x4c3928, roughness: 0.95 });
@@ -1489,6 +1951,418 @@ varying vec3 vTerrainWorld;`,
     postMesh.castShadow = true;
     railMesh.castShadow = true;
     scene.add(postMesh, railMesh);
+
+    const streetMetal = new THREE.MeshStandardMaterial({ color: 0x343b3d, roughness: 0.7, metalness: 0.3 });
+    const lampGlow = new THREE.MeshStandardMaterial({
+      color: 0xffe1a0, emissive: 0xffc76b, emissiveIntensity: 0.7, roughness: 0.42,
+    });
+    const lampPosts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.075, 0.11, 4.4, 8), streetMetal, 28);
+    const lampHeads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 0.18, 0.34), lampGlow, 28);
+    let lampCount = 0;
+    for (let pi = 0; pi < 2 && lampCount < 28; pi++) {
+      const path = ROAD_PATHS[pi] as readonly (readonly [number, number])[];
+      for (let i = 0; i < path.length - 1 && lampCount < 28; i++) {
+        const a = path[i] as readonly [number, number];
+        const b = path[i + 1] as readonly [number, number];
+        const dx = b[0] - a[0];
+        const dz = b[1] - a[1];
+        const len = Math.hypot(dx, dz);
+        for (let distance = 13; distance < len - 5 && lampCount < 28; distance += 21) {
+          const side = lampCount % 2 === 0 ? 1 : -1;
+          const x = a[0] + dx / len * distance - dz / len * 4.15 * side;
+          const z = a[1] + dz / len * distance + dx / len * 4.15 * side;
+          if (regionAt(x, z)?.id !== 'stonegate' || !this.pointFree(x, z, 0.2, WATER_Y + 0.3, 15)) continue;
+          const h = this.getHeight(x, z);
+          q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.atan2(dz, dx));
+          s.set(1, 1, 1);
+          m.compose(new THREE.Vector3(x, h + 2.2, z), q, s);
+          lampPosts.setMatrixAt(lampCount, m);
+          m.compose(new THREE.Vector3(x, h + 4.36, z), q, s);
+          lampHeads.setMatrixAt(lampCount, m);
+          this.addCollider({ kind: 'cyl', x, z, r: 0.14, y0: h, y1: h + 4.5, tag: 'rock' });
+          lampCount++;
+        }
+      }
+    }
+    lampPosts.count = lampCount;
+    lampHeads.count = lampCount;
+    lampPosts.instanceMatrix.needsUpdate = true;
+    lampHeads.instanceMatrix.needsUpdate = true;
+    lampPosts.castShadow = true;
+    lampHeads.castShadow = true;
+    lampPosts.computeBoundingSphere();
+    lampHeads.computeBoundingSphere();
+    scene.add(lampPosts, lampHeads);
+
+    const signPosts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.09, 2.1, 0.09), poleMat, 18);
+    const signBoards = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1.35, 0.62, 0.1),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.76, vertexColors: true }),
+      18,
+    );
+    const signColor = new THREE.Color();
+    let signCount = 0;
+    for (let pi = 0; pi < ROAD_PATHS.length && signCount < 18; pi++) {
+      const path = ROAD_PATHS[pi] as readonly (readonly [number, number])[];
+      for (let i = 1; i < path.length - 1 && signCount < 18; i += 2) {
+        const [x0, z0] = path[i] as readonly [number, number];
+        const [x1, z1] = path[i + 1] as readonly [number, number];
+        const dx = x1 - x0;
+        const dz = z1 - z0;
+        const len = Math.hypot(dx, dz);
+        const x = x0 - dz / len * 4.8;
+        const z = z0 + dx / len * 4.8;
+        if (!this.pointFree(x, z, 0.18, WATER_Y + 0.3, 16) || this.inScenicSite(x, z, 1)) continue;
+        const h = this.getHeight(x, z);
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.atan2(dz, dx));
+        s.set(1, 1, 1);
+        m.compose(new THREE.Vector3(x, h + 1.05, z), q, s);
+        signPosts.setMatrixAt(signCount, m);
+        m.compose(new THREE.Vector3(x, h + 1.78, z), q, s);
+        signBoards.setMatrixAt(signCount, m);
+        const region = regionAt(x, z);
+        signColor.setHex(region?.color ?? 0x7d8d76);
+        signBoards.setColorAt(signCount, signColor);
+        this.addCollider({ kind: 'cyl', x, z, r: 0.12, y0: h, y1: h + 2.12, tag: 'rock' });
+        signCount++;
+      }
+    }
+    signPosts.count = signCount;
+    signBoards.count = signCount;
+    signPosts.instanceMatrix.needsUpdate = true;
+    signBoards.instanceMatrix.needsUpdate = true;
+    if (signBoards.instanceColor) signBoards.instanceColor.needsUpdate = true;
+    signPosts.castShadow = true;
+    signBoards.castShadow = true;
+    signPosts.computeBoundingSphere();
+    signBoards.computeBoundingSphere();
+    scene.add(signPosts, signBoards);
+
+    const furnitureRng = mulberry32(99521);
+    const benchParts = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0x76583a, roughness: 0.92 }),
+      60,
+    );
+    let benchCount = 0;
+    for (let t = 0; t < 240 && benchCount < 10; t++) {
+      const x = -60 + (furnitureRng() * 2 - 1) * 78;
+      const z = -20 + (furnitureRng() * 2 - 1) * 72;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.4 || this.inPlot(x, z, 2.1) || !this.pointFree(x, z, 1.25, WATER_Y + 0.3, 15)) continue;
+      const yaw = furnitureRng() * Math.PI * 2;
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+      const base = benchCount * 6;
+      const part = (index: number, ox: number, oy: number, oz: number, sx: number, sy: number, sz: number): void => {
+        const local = new THREE.Vector3(ox, oy, oz).applyQuaternion(q);
+        m.compose(new THREE.Vector3(x + local.x, h + local.y, z + local.z), q, new THREE.Vector3(sx, sy, sz));
+        benchParts.setMatrixAt(base + index, m);
+      };
+      part(0, 0, 0.62, 0, 1.7, 0.12, 0.48);
+      part(1, 0, 1.05, 0.2, 1.7, 0.58, 0.1);
+      part(2, -0.68, 0.3, -0.12, 0.1, 0.58, 0.1);
+      part(3, 0.68, 0.3, -0.12, 0.1, 0.58, 0.1);
+      part(4, -0.68, 0.3, 0.2, 0.1, 0.58, 0.1);
+      part(5, 0.68, 0.3, 0.2, 0.1, 0.58, 0.1);
+      this.addCollider({
+        kind: 'aabb', minX: x - 1, minY: h, minZ: z - 1,
+        maxX: x + 1, maxY: h + 1.4, maxZ: z + 1, tag: 'wall',
+      });
+      benchCount++;
+    }
+    benchParts.count = benchCount * 6;
+    benchParts.instanceMatrix.needsUpdate = true;
+    benchParts.castShadow = true;
+    benchParts.computeBoundingSphere();
+    scene.add(benchParts);
+
+    const barrelCap = 46;
+    const barrels = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.34, 0.34, 0.78, 10),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, metalness: 0.2, vertexColors: true }),
+      barrelCap,
+    );
+    let barrelCount = 0;
+    const settlements = [regionById('stonegate'), regionById('ironring'), regionById('tideharbor')];
+    for (let t = 0; t < 800 && barrelCount < barrelCap; t++) {
+      const region = settlements[Math.floor(furnitureRng() * settlements.length)] as (typeof settlements)[number];
+      const x = region.x + (furnitureRng() * 2 - 1) * region.radius * 0.82;
+      const z = region.z + (furnitureRng() * 2 - 1) * region.radius * 0.82;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.25 || h > 15 || this.inPlot(x, z, 1.2) || !this.pointFree(x, z, 0.42, WATER_Y + 0.2, 16)) continue;
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), furnitureRng() * Math.PI * 2);
+      s.set(0.82 + furnitureRng() * 0.24, 0.88 + furnitureRng() * 0.2, 0.82 + furnitureRng() * 0.24);
+      m.compose(new THREE.Vector3(x, h + 0.39 * s.y, z), q, s);
+      barrels.setMatrixAt(barrelCount, m);
+      signColor.setHex(barrelCount % 3 === 0 ? 0x4d6d78 : barrelCount % 3 === 1 ? 0x6b5b42 : 0x5d6951);
+      barrels.setColorAt(barrelCount++, signColor);
+      this.addCollider({ kind: 'cyl', x, z, r: 0.36, y0: h, y1: h + 0.86, tag: 'rock' });
+    }
+    barrels.count = barrelCount;
+    barrels.instanceMatrix.needsUpdate = true;
+    if (barrels.instanceColor) barrels.instanceColor.needsUpdate = true;
+    barrels.castShadow = true;
+    barrels.computeBoundingSphere();
+    scene.add(barrels);
+
+    this.humanDetailPropCount = lampCount * 2 + signCount * 2 + benchCount * 6 + barrelCount;
+    this.environmentDetailInstanceCount += this.humanDetailPropCount;
+    this.assetUsage.add('map.infrastructure.street-furniture', lampCount + signCount + benchCount + barrelCount);
+  }
+
+  private addRegionalIdentityProps(scene: THREE.Scene): void {
+    const rng = mulberry32(44713);
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const color = new THREE.Color();
+    const up = new THREE.Vector3(0, 1, 0);
+    const boxCap = 260;
+    const cylinderCap = 180;
+    const sphereCap = 260;
+    const boxes = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9 }),
+      boxCap,
+    );
+    const cylinders = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.5, 0.5, 1, 10),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9 }),
+      cylinderCap,
+    );
+    const spheres = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.5, 9, 6),
+      new THREE.MeshLambertMaterial({
+        color: 0xffffff, vertexColors: true, emissive: 0x182018, emissiveIntensity: 0.24,
+      }),
+      sphereCap,
+    );
+    const nets = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1, 6, 4),
+      new THREE.MeshStandardMaterial({
+        color: 0x8aa5a0, roughness: 0.96, transparent: true, opacity: 0.58,
+        side: THREE.DoubleSide, wireframe: true,
+      }),
+      10,
+    );
+    const mushroomStems = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.5, 0.68, 1, 8),
+      new THREE.MeshLambertMaterial({
+        color: 0xffffff, vertexColors: true, emissive: 0x705b45, emissiveIntensity: 0.48,
+      }),
+      86,
+    );
+    const mushroomCaps = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.5, 10, 6),
+      new THREE.MeshLambertMaterial({
+        color: 0xffffff, vertexColors: true, emissive: 0x6b301f, emissiveIntensity: 0.42,
+      }),
+      86,
+    );
+    let boxCount = 0;
+    let cylinderCount = 0;
+    let sphereCount = 0;
+    let netCount = 0;
+    const addBox = (
+      x: number, y: number, z: number, sx: number, sy: number, sz: number, hex: number, yaw = 0,
+    ): void => {
+      if (boxCount >= boxCap) return;
+      rotation.setFromAxisAngle(up, yaw);
+      position.set(x, y, z);
+      scale.set(sx, sy, sz);
+      matrix.compose(position, rotation, scale);
+      boxes.setMatrixAt(boxCount, matrix);
+      boxes.setColorAt(boxCount++, color.setHex(hex));
+    };
+    const addCylinder = (
+      x: number, y: number, z: number, sx: number, sy: number, sz: number, hex: number,
+      yaw = 0, tiltZ = 0,
+    ): void => {
+      if (cylinderCount >= cylinderCap) return;
+      rotation.setFromEuler(new THREE.Euler(0, yaw, tiltZ));
+      position.set(x, y, z);
+      scale.set(sx, sy, sz);
+      matrix.compose(position, rotation, scale);
+      cylinders.setMatrixAt(cylinderCount, matrix);
+      cylinders.setColorAt(cylinderCount++, color.setHex(hex));
+    };
+    const addSphere = (
+      x: number, y: number, z: number, sx: number, sy: number, sz: number, hex: number,
+    ): void => {
+      if (sphereCount >= sphereCap) return;
+      rotation.identity();
+      position.set(x, y, z);
+      scale.set(sx, sy, sz);
+      matrix.compose(position, rotation, scale);
+      spheres.setMatrixAt(sphereCount, matrix);
+      spheres.setColorAt(sphereCount++, color.setHex(hex));
+    };
+    const decorFree = (x: number, z: number, radius: number): boolean => (
+      this.pointFree(x, z, radius, WATER_Y + 0.2, 16) &&
+      !this.bushes.some((bush) => Math.hypot(x - bush.x, z - bush.z) < bush.r / 1.5 + radius)
+    );
+
+    // 雾松林场: 林下蘑菇簇与砍伐痕迹形成独有近景识别。
+    const mistwood = regionById('mistwood');
+    let mushroomClusters = 0;
+    for (let t = 0; t < 1800 && mushroomClusters < 86; t++) {
+      const x = mistwood.x + (rng() * 2 - 1) * mistwood.radius * 0.9;
+      const z = mistwood.z + (rng() * 2 - 1) * mistwood.radius * 0.9;
+      if (regionAt(x, z)?.id !== 'mistwood') continue;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.7 || h > 12 || this.slopeAt(x, z) > 0.46) continue;
+      if (this.inPlot(x, z, 1.3) || this.nearRoad(x, z, 0.35)) continue;
+      const size = 0.32 + rng() * 0.42;
+      const capColor = rng() < 0.48 ? 0xb85d3d : rng() < 0.7 ? 0xd0a45a : 0x8b6a4a;
+      rotation.setFromAxisAngle(up, rng() * Math.PI * 2);
+      position.set(x, h + size * 0.24, z);
+      scale.set(size * 0.16, size * 0.48, size * 0.16);
+      matrix.compose(position, rotation, scale);
+      mushroomStems.setMatrixAt(mushroomClusters, matrix);
+      mushroomStems.setColorAt(mushroomClusters, color.setHex(0xd7c6a1));
+      position.set(x, h + size * 0.53, z);
+      scale.set(size * 0.48, size * 0.22, size * 0.48);
+      matrix.compose(position, rotation, scale);
+      mushroomCaps.setMatrixAt(mushroomClusters, matrix);
+      mushroomCaps.setColorAt(mushroomClusters, color.setHex(capColor));
+      mushroomClusters++;
+    }
+
+    // 丰禾农场: 灌溉土沟, 稻草人和手推木车。
+    let farmChannels = 0;
+    for (let row = -3; row <= 3; row++) {
+      for (let segment = -4; segment <= 4; segment++) {
+        const x = -40 + row * 8.5;
+        const z = 200 + segment * 6.1;
+        const h = this.getHeight(x, z);
+        if (h < WATER_Y + 0.35 || this.inPlot(x, z, 0.4)) continue;
+        addBox(x, h + 0.018, z, 0.5, 0.036, 5.3, row % 2 === 0 ? 0x66533a : 0x765e3d);
+        farmChannels++;
+      }
+    }
+    let scarecrowCount = 0;
+    for (const [x, z, yaw] of [[-70, 183, 0.2], [-11, 214, -0.3], [-72, 233, 0.15], [-17, 177, -0.2]] as const) {
+      if (!decorFree(x, z, 0.45)) continue;
+      const h = this.getHeight(x, z);
+      addCylinder(x, h + 1.2, z, 0.1, 2.4, 0.1, 0x68503a, yaw);
+      addBox(x, h + 1.55, z, 1.45, 0.09, 0.09, 0x80603d, yaw);
+      addBox(x, h + 1.22, z, 0.58, 0.72, 0.28, 0xb8944f, yaw);
+      addSphere(x, h + 2.15, z, 0.42, 0.5, 0.42, 0xcaa45f);
+      scarecrowCount++;
+    }
+    let cartCount = 0;
+    for (const [x, z, yaw] of [[-96, 166, 0.25], [-4, 238, -0.2], [-94, 250, 0.4]] as const) {
+      if (!decorFree(x, z, 1.4)) continue;
+      const h = this.getHeight(x, z);
+      addBox(x, h + 0.68, z, 2.1, 0.55, 1.2, 0x7b5937, yaw);
+      for (const side of [-1, 1]) {
+        for (const end of [-0.68, 0.68]) {
+          const wx = x + Math.cos(yaw) * end - Math.sin(yaw) * side * 0.72;
+          const wz = z + Math.sin(yaw) * end + Math.cos(yaw) * side * 0.72;
+          addCylinder(wx, h + 0.38, wz, 0.56, 0.18, 0.56, 0x332d27, yaw, Math.PI / 2);
+        }
+      }
+      cartCount++;
+    }
+
+    // 潮汐渔港: 晾网架与岸线浮标。
+    let netRackCount = 0;
+    for (const [x, z, yaw] of [[180, -232, 0.25], [196, -244, -0.15], [218, -229, 0.35], [225, -207, -0.25], [188, -204, 0.1]] as const) {
+      if (!decorFree(x, z, 1.7)) continue;
+      const h = this.getHeight(x, z);
+      const dx = Math.cos(yaw) * 1.45;
+      const dz = Math.sin(yaw) * 1.45;
+      addCylinder(x - dx, h + 1.35, z - dz, 0.12, 2.7, 0.12, 0x674c32);
+      addCylinder(x + dx, h + 1.35, z + dz, 0.12, 2.7, 0.12, 0x674c32);
+      addBox(x, h + 2.62, z, 3.15, 0.11, 0.11, 0x674c32, yaw);
+      if (netCount < nets.count) {
+        rotation.setFromAxisAngle(up, -yaw);
+        position.set(x, h + 1.55, z);
+        scale.set(2.7, 1.55, 1);
+        matrix.compose(position, rotation, scale);
+        nets.setMatrixAt(netCount++, matrix);
+      }
+      netRackCount++;
+    }
+    let buoyCount = 0;
+    const harbor = regionById('tideharbor');
+    for (let t = 0; t < 1800 && buoyCount < 32; t++) {
+      const x = harbor.x + (rng() * 2 - 1) * harbor.radius * 0.72;
+      const z = harbor.z + (rng() * 2 - 1) * harbor.radius * 0.72;
+      const h = this.getHeight(x, z);
+      if (Math.abs(h - WATER_Y) > 0.72 || this.inPlot(x, z, 0.6)) continue;
+      const size = 0.22 + rng() * 0.18;
+      addSphere(x, Math.max(WATER_Y + 0.08, h + size * 0.28), z, size, size * 1.18, size, buoyCount % 2 ? 0xd36d40 : 0xe2bd4c);
+      buoyCount++;
+    }
+
+    // 磐石城: 街角花箱让硬质建筑之间出现连续生活层。
+    let cityPlanterCount = 0;
+    for (let t = 0; t < 700 && cityPlanterCount < 18; t++) {
+      const x = -60 + (rng() * 2 - 1) * 78;
+      const z = -20 + (rng() * 2 - 1) * 72;
+      if (regionAt(x, z)?.id !== 'stonegate' || this.inPlot(x, z, 1.9) || !decorFree(x, z, 0.95)) continue;
+      const h = this.getHeight(x, z);
+      const yaw = rng() * Math.PI * 2;
+      addBox(x, h + 0.28, z, 1.35, 0.56, 0.62, 0x8a7357, yaw);
+      addSphere(x - Math.cos(yaw) * 0.32, h + 0.76, z - Math.sin(yaw) * 0.32, 0.72, 0.5, 0.68, 0x426f34);
+      addSphere(x + Math.cos(yaw) * 0.32, h + 0.78, z + Math.sin(yaw) * 0.32, 0.66, 0.54, 0.64, 0x557f3b);
+      cityPlanterCount++;
+    }
+
+    // 教堂广场: 环形石花坛与暖色花簇强化中心空间。
+    const church = this.scenicSites.find((site) => site.kind === 'church');
+    let churchBedCount = 0;
+    if (church) {
+      for (let i = 0; i < 10; i++) {
+        const angle = i / 10 * Math.PI * 2;
+        const x = church.x + Math.cos(angle) * 11.2;
+        const z = church.z + Math.sin(angle) * 11.2;
+        if (!decorFree(x, z, 0.72)) continue;
+        const h = this.getHeight(x, z);
+        addBox(x, h + 0.22, z, 1.05, 0.44, 0.72, 0x8e8575, -angle);
+        for (let flower = 0; flower < 3; flower++) {
+          const offset = (flower - 1) * 0.28;
+          addSphere(
+            x + Math.cos(angle) * offset, h + 0.6, z + Math.sin(angle) * offset,
+            0.28, 0.34, 0.28, flower % 2 === 0 ? 0xd99072 : 0xe6c96f,
+          );
+        }
+        churchBedCount++;
+      }
+    }
+
+    boxes.count = boxCount;
+    cylinders.count = cylinderCount;
+    spheres.count = sphereCount;
+    nets.count = netCount;
+    for (const mesh of [boxes, cylinders, spheres, nets]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = mesh !== nets;
+      mesh.computeBoundingSphere();
+      scene.add(mesh);
+    }
+    if (boxes.instanceColor) boxes.instanceColor.needsUpdate = true;
+    if (cylinders.instanceColor) cylinders.instanceColor.needsUpdate = true;
+    if (spheres.instanceColor) spheres.instanceColor.needsUpdate = true;
+    mushroomStems.count = mushroomClusters;
+    mushroomCaps.count = mushroomClusters;
+    mushroomStems.instanceMatrix.needsUpdate = true;
+    mushroomCaps.instanceMatrix.needsUpdate = true;
+    if (mushroomStems.instanceColor) mushroomStems.instanceColor.needsUpdate = true;
+    if (mushroomCaps.instanceColor) mushroomCaps.instanceColor.needsUpdate = true;
+    mushroomStems.computeBoundingSphere();
+    mushroomCaps.computeBoundingSphere();
+    mushroomStems.castShadow = true;
+    mushroomCaps.castShadow = true;
+    scene.add(mushroomStems, mushroomCaps);
+    this.regionalIdentityDetailCount = boxCount + cylinderCount + sphereCount + netCount + mushroomClusters * 2;
+    this.environmentDetailInstanceCount += this.regionalIdentityDetailCount;
+    this.assetUsage.add(
+      'map.landmark.regional-detail',
+      mushroomClusters + farmChannels + scarecrowCount + cartCount + netRackCount + buoyCount + cityPlanterCount + churchBedCount,
+    );
   }
 
   private addRegionalTacticalProps(scene: THREE.Scene): void {
@@ -1774,6 +2648,7 @@ varying vec3 vTerrainWorld;`,
     }
 
     for (const site of this.mapSites) this.addMapContentLootSpots(site);
+    this.addScenicLootSpots();
   }
 
   private resolveMapContentSite(def: (typeof MAP_CONTENT_SITES)[number]): ResolvedMapContentSite | null {
@@ -2083,8 +2958,11 @@ varying vec3 vTerrainWorld;`,
       box(site, -2.4, 2.8, 2.4, 1.65, 1.8, concrete, 0.12, true);
       box(site, 2.5, 2.5, 2.2, 1.2, 1.7, metal, -0.08, true);
       for (const x of [-3.6, 3.6]) box(site, x, -3.2, 3.2, 0.75, 0.62, concrete, x < 0 ? 0.25 : -0.25, true);
-      // 双层天线阵列和红白警示段强化山顶轮廓。
-      for (const lift of [2.2, 5.5, 8.6]) box(site, 0, 0, 2.5 - lift * 0.08, 0.1, 0.1, lift > 5 ? red : canvas, 0, false, lift);
+      // 错位竖向接收板取代穿过主杆的横臂，保留通信塔识别度但不形成十字剪影。
+      for (const [index, lift] of [2.2, 5.5, 8.6].entries()) {
+        box(site, index % 2 === 0 ? -0.5 : 0.5, 0, 0.24, 0.72, 0.12,
+          lift > 5 ? red : canvas, 0, false, lift);
+      }
       for (const x of [-1.5, 1.5]) cylinder(site, x, 1.15, 0.11, 4.6, metal);
     } else {
       for (const x of [-2.5, 2.5]) {
@@ -2126,6 +3004,32 @@ varying vec3 vTerrainWorld;`,
       }
       if (!found) continue;
     }
+  }
+
+  private addScenicLootSpots(): void {
+    const church = this.scenicSites.find((site) => site.kind === 'church');
+    if (!church) return;
+    const region = regionAt(church.x, church.z);
+    if (!region || region.id === 'wilderness') return;
+    const floorY = this.churchFloorTop(church);
+    const centerZ = church.z - 5;
+    const interior = [
+      [church.x, centerZ + 2.0, false],
+      [church.x, centerZ - 3.2, true],
+      [church.x + 4.9, centerZ - 7.8, true],
+    ] as const;
+    for (const [x, z, premium] of interior) {
+      this.mapLootSpots.push({
+        x, y: floorY, z, premium,
+        region: region.id, siteId: 'stonegate-church',
+      });
+    }
+    const plazaX = church.x + 4.1;
+    const plazaZ = church.z + 14;
+    this.mapLootSpots.push({
+      x: plazaX, y: this.churchPlazaTop(church), z: plazaZ,
+      premium: false, region: region.id, siteId: 'stonegate-church-plaza',
+    });
   }
 
   private addDistantLandforms(scene: THREE.Scene): void {
@@ -2295,8 +3199,213 @@ varying vec3 vTerrainWorld;`,
     deadwood.castShadow = true;
     scene.add(deadwood);
 
-    this.naturalGroundDetailCount += fernCount + flowerCount + litterCount + deadwoodCount;
-    this.environmentDetailInstanceCount += fernCount + flowerCount + litterCount + deadwoodCount;
+    // 裸土斑和细碎石为草地提供近景纹理层, 不参与碰撞也不遮挡移动。
+    const soilCap = Math.round(budget.flowers * 0.32);
+    const soilGeometry = new THREE.CircleGeometry(1, 12);
+    soilGeometry.rotateX(-Math.PI / 2);
+    const soil = new THREE.InstancedMesh(
+      soilGeometry,
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        roughness: 1,
+        transparent: true,
+        opacity: 0.58,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      }),
+      soilCap,
+    );
+    soil.renderOrder = 1;
+    let soilCount = 0;
+    for (let t = 0; t < soilCap * 12 && soilCount < soilCap; t++) {
+      const x = (rng() * 2 - 1) * 326;
+      const z = (rng() * 2 - 1) * 326;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.55 || h > 13.5 || this.slopeAt(x, z) > 0.36) continue;
+      if (this.inPlot(x, z, 1.1) || this.inScenicSite(x, z, 0.25) || this.nearRoad(x, z, 0.08)) continue;
+      const size = 0.42 + rng() * 1.15;
+      position.set(x, h + 0.014, z);
+      rotation.setFromAxisAngle(up, rng() * Math.PI * 2);
+      scale.set(size * (1.2 + rng() * 1.35), size * (0.52 + rng() * 0.42), 1);
+      matrix.compose(position, rotation, scale);
+      soil.setMatrixAt(soilCount, matrix);
+      tint.setHex(rng() < 0.45 ? 0x806a48 : rng() < 0.72 ? 0x695b43 : 0x92734c);
+      soil.setColorAt(soilCount++, tint);
+    }
+    soil.count = soilCount;
+    soil.instanceMatrix.needsUpdate = true;
+    if (soil.instanceColor) soil.instanceColor.needsUpdate = true;
+    soil.computeBoundingSphere();
+    scene.add(soil);
+
+    const microStoneCap = Math.round(budget.flowers * 0.62);
+    const microStones = new THREE.InstancedMesh(
+      new THREE.DodecahedronGeometry(1, 0),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true }),
+      microStoneCap,
+    );
+    let microStoneCount = 0;
+    for (let t = 0; t < microStoneCap * 10 && microStoneCount < microStoneCap; t++) {
+      const x = (rng() * 2 - 1) * 328;
+      const z = (rng() * 2 - 1) * 328;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.5 || h > 15 || this.slopeAt(x, z) > 0.62) continue;
+      if (this.inPlot(x, z, 0.9) || this.inScenicSite(x, z, 0.2)) continue;
+      const size = 0.035 + rng() * 0.11;
+      position.set(x, h + size * 0.18, z);
+      rotation.setFromEuler(new THREE.Euler(rng() * 0.3, rng() * Math.PI * 2, rng() * 0.3));
+      scale.set(size * (1.1 + rng()), size * (0.28 + rng() * 0.35), size * (0.8 + rng() * 0.7));
+      matrix.compose(position, rotation, scale);
+      microStones.setMatrixAt(microStoneCount, matrix);
+      tint.setHex(rng() < 0.5 ? 0x85847a : rng() < 0.75 ? 0xa09782 : 0x666c67);
+      microStones.setColorAt(microStoneCount++, tint);
+    }
+    microStones.count = microStoneCount;
+    microStones.instanceMatrix.needsUpdate = true;
+    if (microStones.instanceColor) microStones.instanceColor.needsUpdate = true;
+    microStones.computeBoundingSphere();
+    microStones.receiveShadow = true;
+    scene.add(microStones);
+
+    this.groundMicroDetailCount = fernCount + flowerCount + litterCount + soilCount + microStoneCount;
+    const added = this.groundMicroDetailCount + deadwoodCount;
+    this.naturalGroundDetailCount += added;
+    this.environmentDetailInstanceCount += added;
+  }
+
+  private addNaturalStoryProps(scene: THREE.Scene): void {
+    const rng = mulberry32(61207);
+    const matrix = new THREE.Matrix4();
+    const rotation = new THREE.Quaternion();
+    const position = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    const axis = new THREE.Vector3();
+    const barkMaterial = new THREE.MeshStandardMaterial({ color: 0x67482f, roughness: 1 });
+    const cutMaterial = new THREE.MeshStandardMaterial({ color: 0xb09161, roughness: 0.96 });
+    applySurfaceAsset(barkMaterial, 'wood', 3.4, 0.74);
+    applySurfaceAsset(cutMaterial, 'wood', 2.6, 0.42);
+
+    const stumpCap = 52;
+    const stumpBodies = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.3, 0.4, 0.72, 10), barkMaterial, stumpCap,
+    );
+    const stumpTops = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.305, 0.305, 0.025, 12), cutMaterial, stumpCap,
+    );
+    let stumpCount = 0;
+    for (let t = 0; t < 1600 && stumpCount < stumpCap; t++) {
+      const x = (rng() * 2 - 1) * 285;
+      const z = -115 - rng() * 215;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.8 || h > 12.5 || this.slopeAt(x, z) > 0.42) continue;
+      if (this.inPlot(x, z, 2.4) || this.inScenicSite(x, z, 1.5) || this.nearRoad(x, z, 1.1)) continue;
+      const size = 0.72 + rng() * 0.55;
+      if (!this.pointFree(x, z, 0.44 * size, WATER_Y + 0.5, 14)) continue;
+      if (this.bushes.some((bush) => Math.hypot(x - bush.x, z - bush.z) < bush.r / 1.5 + 0.44 * size)) continue;
+      rotation.setFromEuler(new THREE.Euler((rng() - 0.5) * 0.08, rng() * Math.PI * 2, (rng() - 0.5) * 0.08));
+      scale.set(size, size * (0.78 + rng() * 0.35), size);
+      position.set(x, h + 0.36 * scale.y, z);
+      matrix.compose(position, rotation, scale);
+      stumpBodies.setMatrixAt(stumpCount, matrix);
+      position.y = h + 0.72 * scale.y + 0.012;
+      matrix.compose(position, rotation, scale);
+      stumpTops.setMatrixAt(stumpCount, matrix);
+      this.addCollider({ kind: 'cyl', x, z, r: 0.38 * size, y0: h - 0.1, y1: h + 0.78 * scale.y, tag: 'tree' });
+      stumpCount++;
+    }
+    stumpBodies.count = stumpCount;
+    stumpTops.count = stumpCount;
+    stumpBodies.instanceMatrix.needsUpdate = true;
+    stumpTops.instanceMatrix.needsUpdate = true;
+    stumpBodies.castShadow = true;
+    stumpTops.castShadow = true;
+    stumpBodies.computeBoundingSphere();
+    stumpTops.computeBoundingSphere();
+    scene.add(stumpBodies, stumpTops);
+
+    const logCap = 38;
+    const logBodies = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.29, 0.35, 3.2, 10), barkMaterial, logCap,
+    );
+    const logCuts = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.295, 0.295, 0.035, 12), cutMaterial, logCap * 2,
+    );
+    let logCount = 0;
+    for (let t = 0; t < 1800 && logCount < logCap; t++) {
+      const x = (rng() * 2 - 1) * 295;
+      const z = -105 - rng() * 220;
+      const h = this.getHeight(x, z);
+      if (h < WATER_Y + 0.85 || h > 12.5 || this.slopeAt(x, z) > 0.35) continue;
+      if (this.inPlot(x, z, 3.1) || this.inScenicSite(x, z, 2) || this.nearRoad(x, z, 1.4)) continue;
+      const lengthScale = 0.82 + rng() * 0.42;
+      if (!this.pointFree(x, z, 1.9 * lengthScale, WATER_Y + 0.5, 14)) continue;
+      if (this.bushes.some((bush) => Math.hypot(x - bush.x, z - bush.z) < bush.r / 1.5 + 1.9 * lengthScale)) continue;
+      const yaw = rng() * Math.PI * 2;
+      rotation.setFromEuler(new THREE.Euler(0, yaw, Math.PI / 2 + (rng() - 0.5) * 0.06));
+      scale.set(0.85 + rng() * 0.28, lengthScale, 0.85 + rng() * 0.28);
+      position.set(x, h + 0.31 * scale.x, z);
+      matrix.compose(position, rotation, scale);
+      logBodies.setMatrixAt(logCount, matrix);
+      axis.set(0, 1, 0).applyQuaternion(rotation);
+      for (let end = 0; end < 2; end++) {
+        const direction = end === 0 ? -1 : 1;
+        position.set(
+          x + axis.x * 1.61 * lengthScale * direction,
+          h + 0.31 * scale.x + axis.y * 1.61 * lengthScale * direction,
+          z + axis.z * 1.61 * lengthScale * direction,
+        );
+        matrix.compose(position, rotation, scale);
+        logCuts.setMatrixAt(logCount * 2 + end, matrix);
+      }
+      const halfX = Math.abs(axis.x) * 1.7 * lengthScale + 0.38 * scale.x;
+      const halfZ = Math.abs(axis.z) * 1.7 * lengthScale + 0.38 * scale.z;
+      this.addCollider({
+        kind: 'aabb', minX: x - halfX, minY: h - 0.08, minZ: z - halfZ,
+        maxX: x + halfX, maxY: h + 0.72 * scale.x, maxZ: z + halfZ, tag: 'wall',
+      });
+      logCount++;
+    }
+    logBodies.count = logCount;
+    logCuts.count = logCount * 2;
+    logBodies.instanceMatrix.needsUpdate = true;
+    logCuts.instanceMatrix.needsUpdate = true;
+    logBodies.castShadow = true;
+    logCuts.castShadow = true;
+    logBodies.computeBoundingSphere();
+    logCuts.computeBoundingSphere();
+    scene.add(logBodies, logCuts);
+
+    const driftwoodCap = 58;
+    const driftwood = new THREE.InstancedMesh(
+      new THREE.CapsuleGeometry(0.06, 1.25, 2, 7),
+      new THREE.MeshStandardMaterial({ color: 0x79684e, roughness: 1 }),
+      driftwoodCap,
+    );
+    let driftwoodCount = 0;
+    for (let t = 0; t < 6000 && driftwoodCount < driftwoodCap; t++) {
+      const x = (rng() * 2 - 1) * 335;
+      const z = (rng() * 2 - 1) * 335;
+      const h = this.getHeight(x, z);
+      if (shorelineSuitability(h, WATER_Y, this.slopeAt(x, z)) < 0.42) continue;
+      if (this.inPlot(x, z, 1.3) || this.nearRoad(x, z, 0.4)) continue;
+      const size = 0.65 + rng() * 0.75;
+      rotation.setFromEuler(new THREE.Euler(Math.PI / 2 + (rng() - 0.5) * 0.08, rng() * Math.PI * 2, 0));
+      scale.set(size, size, size);
+      position.set(x, h + 0.07, z);
+      matrix.compose(position, rotation, scale);
+      driftwood.setMatrixAt(driftwoodCount++, matrix);
+    }
+    driftwood.count = driftwoodCount;
+    driftwood.instanceMatrix.needsUpdate = true;
+    driftwood.castShadow = true;
+    driftwood.computeBoundingSphere();
+    scene.add(driftwood);
+
+    this.naturalStoryPropCount = stumpCount * 2 + logCount * 3 + driftwoodCount;
+    this.environmentDetailInstanceCount += this.naturalStoryPropCount;
+    this.assetUsage.add('map.nature.deadwood', stumpCount + logCount + driftwoodCount);
   }
 
   private addShoreDetails(scene: THREE.Scene): void {
@@ -2871,18 +3980,20 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
   }
 }
 
-// 草丛几何体: 5 叶片丛(圆盘内散布), 根深暗/尖亮(顶点色围绕 1.0, 与 instanceColor 相乘)
+// 草丛几何体: 11 叶片组成三团交错草簇, 根深暗/尖亮(顶点色围绕 1.0, 与 instanceColor 相乘)
 // 法线统一朝上 -- 让叶片接受与地形一致的光照, 避免逆光黑刺
 function makeGrassGeo(): THREE.BufferGeometry {
   const pos: number[] = [];
   const col: number[] = [];
   const nrm: number[] = [];
   const rng = mulberry32(9917);
-  for (let b = 0; b < 5; b++) {
+  for (let b = 0; b < 11; b++) {
     const a = rng() * Math.PI * 2;
-    const rr = rng() * 0.16;
-    const ox = Math.cos(a) * rr;
-    const oz = Math.sin(a) * rr;
+    const cluster = b % 3;
+    const clusterAngle = cluster / 3 * Math.PI * 2;
+    const rr = rng() * 0.22;
+    const ox = Math.cos(a) * rr + Math.cos(clusterAngle) * 0.14;
+    const oz = Math.sin(a) * rr + Math.sin(clusterAngle) * 0.14;
     const fa = rng() * Math.PI * 2;
     const dx = Math.cos(fa);
     const dz = Math.sin(fa);

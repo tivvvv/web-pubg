@@ -3,6 +3,7 @@
 // 约定: 原点 = 握把顶端(右手持握点), 枪管朝 +Z, 上为 +Y; 步枪全长约 0.9m
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { GunAttachments, MeleeId, ThrowableId, WeaponId } from './types';
 import { applySurfaceAsset } from './assets';
 
@@ -25,16 +26,24 @@ const FIREARM_MODEL_IDS: ReadonlySet<string> = new Set([
   'pistol', 'smg', 'rifle', 'akm', 'lmg', 'dmr', 'sniper', 'shotgun',
 ]);
 
-// 共享几何: 单位盒 / 单位圆柱(沿 Y, 半径 1 高 1) / 单位球
-const BOX = new THREE.BoxGeometry(1, 1, 1);
-const CYL = new THREE.CylinderGeometry(1, 1, 1, 10);
-const SPH = new THREE.SphereGeometry(1, 12, 10);
+// 共享几何: 圆角盒替代锋利方块, 枪管和球面提高分段数但仍由所有原型共享。
+const BOX = new RoundedBoxGeometry(1, 1, 1, 2, 0.055);
+const CYL = new THREE.CylinderGeometry(1, 1, 1, 16, 2);
+const SPH = new THREE.SphereGeometry(1, 16, 12);
+const MUZZLE_RING = new THREE.TorusGeometry(1, 0.16, 8, 20);
+const TRIGGER_GUARD = new THREE.TorusGeometry(1, 0.12, 7, 18, Math.PI);
 
 // 共享材质: 深金属 / 亮金属 / 聚合物 / 木色家具
-const MAT_DK = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.42, metalness: 0.72 }); // 深金属(机匣/枪管)
-const MAT_LT = new THREE.MeshStandardMaterial({ color: 0xb9c1c9, roughness: 0.24, metalness: 0.88 }); // 亮金属(刃口/导轨/枪口)
-const MAT_PO = new THREE.MeshStandardMaterial({ color: 0x3d4148, roughness: 0.84, metalness: 0.03 }); // 聚合物(护木/枪托/握把)
+const MAT_DK = new THREE.MeshStandardMaterial({
+  color: 0x343b43, emissive: 0x10151a, emissiveIntensity: 0.22, roughness: 0.34, metalness: 0.72,
+}); // 深金属(机匣/枪管)
+const MAT_LT = new THREE.MeshStandardMaterial({ color: 0xaeb8c2, roughness: 0.26, metalness: 0.86 }); // 亮金属(刃口/导轨/枪口)
+const MAT_PO = new THREE.MeshStandardMaterial({ color: 0x464d55, roughness: 0.8, metalness: 0.04 }); // 聚合物(护木/枪托/握把)
 const MAT_TN = new THREE.MeshStandardMaterial({ color: 0x9a7a52, roughness: 0.82, metalness: 0.02 }); // 木色/沙色家具
+const MAT_BLACK = new THREE.MeshStandardMaterial({ color: 0x090b0d, roughness: 0.58, metalness: 0.62 });
+const MAT_RUBBER = new THREE.MeshStandardMaterial({ color: 0x171a1d, roughness: 0.94, metalness: 0.01 });
+const MAT_WOOD_DARK = new THREE.MeshStandardMaterial({ color: 0x63452f, roughness: 0.9, metalness: 0.01 });
+const MAT_BRASS = new THREE.MeshStandardMaterial({ color: 0xc59a45, roughness: 0.34, metalness: 0.72 });
 const MAT_FG = new THREE.MeshStandardMaterial({ color: 0x39543a, roughness: 0.68, metalness: 0.18 }); // 手雷墨绿
 const MAT_BD = new THREE.MeshStandardMaterial({ color: 0xc8503c, roughness: 0.62, metalness: 0.12 }); // 烟雾弹色带
 const MAT_LENS = new THREE.MeshStandardMaterial({
@@ -51,6 +60,8 @@ applySurfaceAsset(MAT_DK, 'metal', 5.5, 1);
 applySurfaceAsset(MAT_LT, 'metal', 7.5, 0.85);
 applySurfaceAsset(MAT_PO, 'fabric', 4, 0.5);
 applySurfaceAsset(MAT_TN, 'wood', 4.8, 0.85);
+applySurfaceAsset(MAT_WOOD_DARK, 'wood', 5.4, 0.92);
+applySurfaceAsset(MAT_RUBBER, 'fabric', 5.2, 0.34);
 applySurfaceAsset(MAT_FG, 'metal', 5, 0.45);
 applySurfaceAsset(MAT_BD, 'metal', 5, 0.45);
 
@@ -89,6 +100,132 @@ function cx(parent: THREE.Group, mat: THREE.Material, r: number, len: number, x:
   m.castShadow = true;
   parent.add(m);
   return m;
+}
+
+type DetailTransform = readonly [
+  sx: number, sy: number, sz: number,
+  x: number, y: number, z: number,
+  rx?: number, ry?: number, rz?: number,
+];
+
+// 重复小零件使用单个 InstancedMesh, 在提高局部密度的同时避免显著增加 draw call。
+function detailInstances(
+  parent: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  mat: THREE.Material,
+  transforms: readonly DetailTransform[],
+  name: string,
+): THREE.InstancedMesh {
+  const mesh = new THREE.InstancedMesh(geometry, mat, transforms.length);
+  mesh.name = name;
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3();
+  const rotation = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  transforms.forEach(([sx, sy, sz, x, y, z, rx = 0, ry = 0, rz = 0], index) => {
+    position.set(x, y, z);
+    rotation.setFromEuler(new THREE.Euler(rx, ry, rz));
+    scale.set(sx, sy, sz);
+    matrix.compose(position, rotation, scale);
+    mesh.setMatrixAt(index, matrix);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.castShadow = true;
+  mesh.computeBoundingSphere();
+  parent.add(mesh);
+  return mesh;
+}
+
+function railTeeth(parent: THREE.Group, y: number, zStart: number, count: number, spacing: number, width: number): void {
+  detailInstances(
+    parent,
+    BOX,
+    MAT_LT,
+    Array.from({ length: count }, (_, index) => (
+      [width, 0.007, 0.012, 0, y, zStart + index * spacing] as DetailTransform
+    )),
+    'rail-teeth',
+  );
+}
+
+function sideVents(parent: THREE.Group, x: number, y: number, zStart: number, count: number, spacing: number): void {
+  detailInstances(
+    parent,
+    BOX,
+    MAT_BLACK,
+    Array.from({ length: count * 2 }, (_, index) => {
+      const side = index % 2 === 0 ? -1 : 1;
+      const row = Math.floor(index / 2);
+      return [0.005, 0.018, 0.035, x * side, y, zStart + row * spacing] as DetailTransform;
+    }),
+    'handguard-vents',
+  );
+}
+
+function receiverPins(parent: THREE.Group, x: number, y: number, positions: readonly number[]): void {
+  detailInstances(
+    parent,
+    CYL,
+    MAT_LT,
+    positions.flatMap((z) => ([
+      [0.006, 0.008, 0.006, x, y, z, 0, 0, Math.PI / 2] as DetailTransform,
+      [0.006, 0.008, 0.006, -x, y, z, 0, 0, Math.PI / 2] as DetailTransform,
+    ])),
+    'receiver-pins',
+  );
+}
+
+function triggerGuard(parent: THREE.Group, y: number, z: number, scale = 0.035): void {
+  const guard = new THREE.Mesh(TRIGGER_GUARD, MAT_DK);
+  guard.name = 'trigger-guard';
+  guard.scale.set(scale, scale, scale);
+  guard.rotation.y = Math.PI / 2;
+  guard.rotation.z = Math.PI;
+  guard.position.set(0, y, z);
+  guard.castShadow = true;
+  parent.add(guard);
+}
+
+// 双侧机匣铭牌、加工刻线和选择器点，近景形成高光断面，远景仍只占一个 draw call。
+function receiverMarkings(
+  parent: THREE.Group,
+  halfWidth: number,
+  y: number,
+  z: number,
+  length = 0.075,
+): void {
+  const marks: DetailTransform[] = [];
+  for (const side of [-1, 1]) {
+    marks.push([0.003, 0.004, length, halfWidth * side, y, z]);
+    marks.push([0.003, 0.004, length * 0.58, halfWidth * side, y - 0.012, z + 0.008]);
+    marks.push([0.003, 0.004, length * 0.32, halfWidth * side, y - 0.024, z + 0.016]);
+  }
+  detailInstances(parent, BOX, MAT_LT, marks, 'receiver-markings');
+  for (const side of [-1, 1]) {
+    const selector = new THREE.Mesh(SPH, MAT_BRASS);
+    selector.name = 'selector-indicator';
+    selector.scale.set(0.006, 0.006, 0.006);
+    selector.position.set(halfWidth * side, y - 0.034, z - length * 0.15);
+    selector.castShadow = true;
+    parent.add(selector);
+  }
+}
+
+function muzzleFinish(parent: THREE.Group, x: number, y: number, z: number, radius: number): void {
+  const ring = new THREE.Mesh(MUZZLE_RING, MAT_LT);
+  ring.name = 'muzzle-crown';
+  ring.scale.setScalar(radius);
+  ring.position.set(x, y, z - 0.001);
+  ring.castShadow = true;
+  parent.add(ring);
+  const bore = cz(parent, MAT_BLACK, radius * 0.66, 0.008, x, y, z + 0.002);
+  bore.name = 'muzzle-bore';
+}
+
+function markFirearmQuality(group: THREE.Group, id: WeaponId): void {
+  group.name = `weapon-${id}`;
+  group.userData.weaponId = id;
+  group.userData.assetQuality = 'firearm-v4';
 }
 
 function muzzleAt(g: THREE.Group, x: number, y: number, z: number): THREE.Object3D {
@@ -131,6 +268,18 @@ function buildRifle(): WeaponModel {
   b(g, MAT_DK, 0.006, 0.026, 0.008, 0, -0.045, 0.028);      // 扳机
   b(g, MAT_DK, 0.008, 0.006, 0.07, 0, -0.062, 0.02);        // 扳机护圈底
   b(g, MAT_LT, 0.004, 0.02, 0.012, -0.0285, 0.005, -0.02);  // 快慢机拨杆
+  railTeeth(g, 0.084, -0.09, 13, 0.043, 0.057);
+  sideVents(g, 0.052, 0.018, 0.29, 5, 0.045);
+  receiverPins(g, 0.031, 0.018, [-0.045, 0.055, 0.16]);
+  receiverMarkings(g, 0.056, 0.042, 0.115, 0.082);
+  triggerGuard(g, -0.042, 0.025, 0.032);
+  detailInstances(g, BOX, MAT_RUBBER, [
+    [0.012, 0.018, 0.12, -0.03, 0.045, -0.17, 0, 0.18, 0],
+    [0.012, 0.018, 0.12, 0.03, 0.045, -0.17, 0, -0.18, 0],
+    [0.048, 0.096, 0.008, 0, 0.008, -0.272],
+  ], 'stock-detail');
+  muzzleFinish(g, 0, 0.025, 0.7, 0.017);
+  markFirearmQuality(g, 'rifle');
   return { group: g, muzzle: muzzleAt(g, 0, 0.025, 0.7), mag };
 }
 
@@ -155,6 +304,21 @@ function buildLmg(): WeaponModel {
   b(g, MAT_DK, 0.012, 0.012, 0.19, -0.055, -0.055, 0.57, 0.42);
   b(g, MAT_DK, 0.012, 0.012, 0.19, 0.055, -0.055, 0.57, 0.42);
   b(g, MAT_LT, 0.009, 0.035, 0.009, 0, 0.095, 0.63);
+  railTeeth(g, 0.102, -0.06, 15, 0.046, 0.064);
+  sideVents(g, 0.066, 0.025, 0.26, 7, 0.052);
+  receiverPins(g, 0.039, 0.025, [-0.04, 0.07, 0.18]);
+  receiverMarkings(g, 0.066, 0.045, 0.1, 0.09);
+  triggerGuard(g, -0.048, -0.015, 0.036);
+  detailInstances(g, CYL, MAT_BRASS, Array.from({ length: 8 }, (_, index) => (
+    [0.008, 0.026, 0.008, 0.074, -0.032 - index * 0.009, 0.035 + index * 0.018, 0, 0, Math.PI / 2] as DetailTransform
+  )), 'ammo-belt');
+  detailInstances(g, BOX, MAT_RUBBER, [
+    [0.062, 0.112, 0.01, 0, 0.005, -0.408],
+    [0.03, 0.012, 0.045, -0.055, -0.07, 0.68, 0.35],
+    [0.03, 0.012, 0.045, 0.055, -0.07, 0.68, 0.35],
+  ], 'lmg-rubber-parts');
+  muzzleFinish(g, 0, 0.032, 0.94, 0.022);
+  markFirearmQuality(g, 'lmg');
   return { group: g, muzzle: muzzleAt(g, 0, 0.032, 0.94), mag };
 }
 
@@ -174,6 +338,19 @@ function buildAkm(): WeaponModel {
   b(g, MAT_TN, 0.034, 0.09, 0.045, 0, -0.055, -0.02, 0.3);
   b(g, MAT_LT, 0.008, 0.035, 0.008, 0, 0.085, 0.54);
   b(g, MAT_DK, 0.028, 0.02, 0.018, 0, 0.083, -0.02);
+  b(g, MAT_WOOD_DARK, 0.059, 0.025, 0.22, 0, 0.065, 0.34); // 上护木
+  cz(g, MAT_DK, 0.014, 0.29, 0, 0.082, 0.42);              // 导气管
+  sideVents(g, 0.059, 0.025, 0.29, 4, 0.055);
+  receiverPins(g, 0.034, 0.022, [-0.04, 0.07, 0.17]);
+  receiverMarkings(g, 0.059, 0.04, 0.08, 0.08);
+  triggerGuard(g, -0.045, 0.005, 0.034);
+  detailInstances(g, BOX, MAT_WOOD_DARK, [
+    [0.051, 0.018, 0.16, 0, 0.052, -0.24, 0.08],
+    [0.054, 0.098, 0.012, 0, 0.005, -0.402],
+  ], 'akm-stock-detail');
+  b(g, MAT_LT, 0.006, 0.045, 0.085, 0.034, 0.042, 0.105, 0, 0, -0.18); // 拉机柄
+  muzzleFinish(g, 0, 0.03, 0.8, 0.018);
+  markFirearmQuality(g, 'akm');
   return { group: g, muzzle: muzzleAt(g, 0, 0.03, 0.8), mag };
 }
 
@@ -190,6 +367,18 @@ function buildDmr(): WeaponModel {
   b(g, MAT_DK, 0.047, 0.085, 0.018, 0, 0.01, -0.39);
   b(g, MAT_DK, 0.026, 0.017, 0.018, 0, 0.09, -0.02);
   b(g, MAT_LT, 0.007, 0.03, 0.007, 0, 0.088, 0.6);
+  railTeeth(g, 0.092, -0.08, 10, 0.048, 0.049);
+  receiverPins(g, 0.029, 0.02, [-0.045, 0.055, 0.15]);
+  receiverMarkings(g, 0.049, 0.04, 0.075, 0.072);
+  triggerGuard(g, -0.044, -0.005, 0.032);
+  detailInstances(g, BOX, MAT_WOOD_DARK, [
+    [0.047, 0.018, 0.19, 0, 0.052, 0.2],
+    [0.048, 0.024, 0.18, 0, 0.065, -0.22],
+    [0.052, 0.09, 0.009, 0, 0.01, -0.402],
+  ], 'dmr-furniture-detail');
+  b(g, MAT_LT, 0.004, 0.022, 0.08, 0.026, 0.035, 0.08); // 抛壳窗
+  muzzleFinish(g, 0, 0.038, 0.78, 0.013);
+  markFirearmQuality(g, 'dmr');
   return { group: g, muzzle: muzzleAt(g, 0, 0.038, 0.78), mag };
 }
 
@@ -213,6 +402,21 @@ function buildSmg(): WeaponModel {
   b(g, MAT_LT, 0.004, 0.02, 0.055, 0.0285, 0.035, 0.06);    // 抛壳窗
   b(g, MAT_DK, 0.006, 0.024, 0.008, 0, -0.042, 0.005);      // 扳机
   b(g, MAT_DK, 0.008, 0.006, 0.06, 0, -0.058, -0.005);      // 扳机护圈底
+  railTeeth(g, 0.09, -0.075, 9, 0.035, 0.052);
+  sideVents(g, 0.056, 0.025, 0.09, 4, 0.04);
+  receiverPins(g, 0.031, 0.018, [-0.045, 0.055, 0.135]);
+  receiverMarkings(g, 0.056, 0.045, 0.06, 0.068);
+  triggerGuard(g, -0.04, -0.002, 0.031);
+  detailInstances(g, BOX, MAT_RUBBER, [
+    [0.009, 0.012, 0.17, -0.036, 0.058, -0.1],
+    [0.009, 0.012, 0.17, 0.036, 0.015, -0.1],
+    [0.046, 0.07, 0.009, 0.032, 0.035, -0.205],
+  ], 'folding-stock-detail');
+  detailInstances(g, BOX, MAT_BLACK, Array.from({ length: 5 }, (_, index) => (
+    [0.03, 0.008, 0.008, 0, -0.085 - index * 0.022, 0.042] as DetailTransform
+  )), 'magazine-ribs');
+  muzzleFinish(g, 0, 0.03, 0.3, 0.016);
+  markFirearmQuality(g, 'smg');
   return { group: g, muzzle: muzzleAt(g, 0, 0.03, 0.3), mag };
 }
 
@@ -245,6 +449,27 @@ function buildSniper(): WeaponModel {
   const mag = b(g, MAT_DK, 0.035, 0.07, 0.09, 0, -0.045, 0.09);
   mag.name = 'mag';
   b(g, MAT_PO, 0.032, 0.07, 0.045, 0, -0.05, -0.06, 0.3);   // 握把
+  railTeeth(g, 0.09, -0.1, 11, 0.04, 0.054);
+  receiverPins(g, 0.032, 0.02, [-0.04, 0.055, 0.14]);
+  receiverMarkings(g, 0.056, 0.042, 0.07, 0.065);
+  triggerGuard(g, -0.05, -0.015, 0.034);
+  detailInstances(g, CYL, MAT_LT, [
+    [0.016, 0.012, 0.016, 0, 0.03, 0.34, Math.PI / 2],
+    [0.016, 0.012, 0.016, 0, 0.03, 0.44, Math.PI / 2],
+    [0.016, 0.012, 0.016, 0, 0.03, 0.54, Math.PI / 2],
+  ], 'barrel-fluting-collars');
+  detailInstances(g, BOX, MAT_RUBBER, [
+    [0.052, 0.12, 0.012, 0, 0.005, -0.338],
+    [0.044, 0.026, 0.12, 0, 0.082, -0.21],
+    [0.028, 0.012, 0.038, -0.03, -0.075, 0.57, 0.22],
+    [0.028, 0.012, 0.038, 0.03, -0.075, 0.57, 0.22],
+  ], 'sniper-stock-bipod-detail');
+  for (const z of [-0.057, 0.177]) {
+    const lens = cz(g, MAT_LENS, z < 0 ? 0.024 : 0.026, 0.006, 0, 0.105, z);
+    lens.name = 'integrated-scope-lens';
+  }
+  muzzleFinish(g, 0, 0.03, 0.76, 0.021);
+  markFirearmQuality(g, 'sniper');
   return { group: g, muzzle: muzzleAt(g, 0, 0.03, 0.76), mag };
 }
 
@@ -268,6 +493,19 @@ function buildPistol(): WeaponModel {
   cz(g, MAT_DK, 0.011, 0.025, 0, 0.032, 0.115);             // 枪口
   const mag = b(g, MAT_LT, 0.034, 0.012, 0.05, 0, -0.096, -0.048, 0.22); // 弹匣底板
   mag.name = 'mag';
+  triggerGuard(g, -0.022, 0.03, 0.024);
+  detailInstances(g, BOX, MAT_RUBBER, Array.from({ length: 5 }, (_, index) => (
+    [0.039, 0.008, 0.008, 0, -0.035 - index * 0.018, -0.035 + index * 0.004, 0, 0, 0.22] as DetailTransform
+  )), 'grip-checkering');
+  detailInstances(g, BOX, MAT_LT, [
+    [0.025, 0.006, 0.018, 0, -0.02, 0.085],
+    [0.025, 0.006, 0.018, 0, -0.028, 0.11],
+    [0.005, 0.017, 0.055, 0.039, 0.035, 0.025],
+  ], 'pistol-slide-frame-detail');
+  receiverPins(g, 0.038, 0, [-0.045, 0.025]);
+  receiverMarkings(g, 0.041, 0.043, 0.018, 0.045);
+  muzzleFinish(g, 0, 0.032, 0.13, 0.014);
+  markFirearmQuality(g, 'pistol');
   return { group: g, muzzle: muzzleAt(g, 0, 0.032, 0.13), mag };
 }
 
@@ -385,6 +623,22 @@ function buildShotgun(): WeaponModel {
   b(g, MAT_DK, 0.047, 0.1, 0.014, 0, -0.01, -0.395);         // 托底板
   b(g, MAT_DK, 0.006, 0.026, 0.008, 0, -0.042, 0.01);        // 扳机
   b(g, MAT_DK, 0.008, 0.006, 0.06, 0, -0.058, -0.01);        // 扳机护圈底
+  triggerGuard(g, -0.043, -0.005, 0.034);
+  detailInstances(g, BOX, MAT_WOOD_DARK, [
+    [0.06, 0.016, 0.2, 0, 0.043, 0.3],
+    [0.049, 0.02, 0.15, 0, 0.058, -0.22],
+    [0.052, 0.108, 0.009, 0, -0.01, -0.404],
+  ], 'shotgun-wood-detail');
+  detailInstances(g, BOX, MAT_BLACK, Array.from({ length: 8 }, (_, index) => {
+    const side = index % 2 === 0 ? -1 : 1;
+    const row = Math.floor(index / 2);
+    return [0.004, 0.01, 0.038, side * 0.03, 0.014, 0.245 + row * 0.048] as DetailTransform;
+  }), 'fore-end-checkering');
+  receiverPins(g, 0.038, 0.02, [-0.055, 0.015]);
+  receiverMarkings(g, 0.061, 0.04, -0.015, 0.062);
+  muzzleFinish(g, -0.018, 0.035, 0.59, 0.013);
+  muzzleFinish(g, 0.018, 0.035, 0.59, 0.013);
+  markFirearmQuality(g, 'shotgun');
   return { group: g, muzzle: muzzleAt(g, 0, 0.035, 0.59), mag: null };
 }
 
@@ -426,19 +680,24 @@ export function buildWeaponModel(id: WeaponModelId): WeaponModel {
 
 // ── 配件可视化: 在克隆武器模型上挂瞄具/枪口/扩容弹匣(共享几何/材质) ──
 const ATT_GEO = {
-  dotBase: new THREE.BoxGeometry(0.03, 0.035, 0.05),
-  dotGlass: new THREE.BoxGeometry(0.036, 0.034, 0.004),
-  dotHood: new THREE.TorusGeometry(0.024, 0.004, 5, 10),
-  reticle: new THREE.SphereGeometry(0.0025, 6, 4),
-  scopeTube: new THREE.CylinderGeometry(0.016, 0.016, 0.09, 8),
-  scopeBell: new THREE.CylinderGeometry(0.024, 0.02, 0.03, 8),
-  scopeLens: new THREE.CylinderGeometry(0.018, 0.018, 0.003, 12),
-  scopeTurret: new THREE.CylinderGeometry(0.006, 0.006, 0.015, 8),
-  scopeBase: new THREE.BoxGeometry(0.014, 0.02, 0.05),
-  suppressor: new THREE.CylinderGeometry(0.02, 0.02, 0.15, 8),
-  suppressorBand: new THREE.TorusGeometry(0.021, 0.0025, 5, 10),
-  comp: new THREE.BoxGeometry(0.034, 0.034, 0.06),
-  compPort: new THREE.BoxGeometry(0.036, 0.012, 0.013),
+  dotBase: new RoundedBoxGeometry(0.03, 0.035, 0.05, 2, 0.004),
+  dotGlass: new RoundedBoxGeometry(0.036, 0.034, 0.004, 2, 0.0015),
+  dotHood: new THREE.TorusGeometry(0.024, 0.004, 8, 16),
+  dotKnob: new THREE.CylinderGeometry(0.006, 0.006, 0.012, 12),
+  reticle: new THREE.SphereGeometry(0.0025, 8, 6),
+  scopeTube: new THREE.CylinderGeometry(0.016, 0.016, 0.09, 16, 2),
+  scopeBell: new THREE.CylinderGeometry(0.024, 0.02, 0.03, 16, 2),
+  scopeLens: new THREE.CylinderGeometry(0.018, 0.018, 0.003, 18),
+  scopeTurret: new THREE.CylinderGeometry(0.006, 0.006, 0.015, 12),
+  scopeRing: new THREE.TorusGeometry(0.017, 0.0025, 7, 16),
+  scopeBase: new RoundedBoxGeometry(0.014, 0.02, 0.05, 2, 0.0025),
+  suppressor: new THREE.CylinderGeometry(0.02, 0.02, 0.15, 18, 3),
+  suppressorBand: new THREE.TorusGeometry(0.021, 0.0025, 7, 18),
+  suppressorEnd: new THREE.TorusGeometry(0.018, 0.003, 7, 18),
+  comp: new RoundedBoxGeometry(0.034, 0.034, 0.06, 2, 0.004),
+  compPort: new RoundedBoxGeometry(0.036, 0.012, 0.013, 2, 0.002),
+  magPlate: new RoundedBoxGeometry(1, 1, 1, 2, 0.08),
+  magRib: new RoundedBoxGeometry(1, 1, 1, 2, 0.08),
 };
 export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void {
   // 地面 loot 外面还有 holder 包装层, 实际配件应挂到枪模型根节点上
@@ -466,6 +725,20 @@ export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void 
       reticle.name = 'reddot-reticle';
       reticle.position.set(0, 0.126, 0.039);
       weaponGroup.add(reticle);
+      for (const side of [-1, 1]) {
+        const guard = new THREE.Mesh(BOX, MAT_RUBBER);
+        guard.name = 'reddot-guard';
+        guard.scale.set(0.007, 0.038, 0.05);
+        guard.position.set(side * 0.022, 0.112, 0.02);
+        guard.castShadow = true;
+        weaponGroup.add(guard);
+      }
+      const knob = new THREE.Mesh(ATT_GEO.dotKnob, MAT_LT);
+      knob.name = 'reddot-knob';
+      knob.rotation.z = Math.PI / 2;
+      knob.position.set(0.022, 0.108, 0.015);
+      knob.castShadow = true;
+      weaponGroup.add(knob);
     } else {
       const tube = new THREE.Mesh(ATT_GEO.scopeTube, MAT_DK);
       tube.name = 'scope-tube';
@@ -494,6 +767,19 @@ export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void 
       turret.name = 'scope-turret';
       turret.position.set(0, 0.143, 0.018);
       weaponGroup.add(turret);
+      for (const z of [-0.016, 0.052]) {
+        const ring = new THREE.Mesh(ATT_GEO.scopeRing, z < 0 ? MAT_RUBBER : MAT_LT);
+        ring.name = 'scope-detail-ring';
+        ring.position.set(0, 0.112, z);
+        ring.castShadow = true;
+        weaponGroup.add(ring);
+      }
+      const sideTurret = new THREE.Mesh(ATT_GEO.scopeTurret, MAT_LT);
+      sideTurret.name = 'scope-side-turret';
+      sideTurret.rotation.z = Math.PI / 2;
+      sideTurret.position.set(0.022, 0.112, 0.018);
+      sideTurret.castShadow = true;
+      weaponGroup.add(sideTurret);
     }
   }
   // 枪口(消音器/补偿器, 挂 muzzle 节点后段)
@@ -511,6 +797,13 @@ export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void 
         band.position.set(muzzleNode.position.x, muzzleNode.position.y, z);
         weaponGroup.add(band);
       }
+      const cap = new THREE.Mesh(ATT_GEO.suppressorEnd, MAT_LT);
+      cap.name = 'suppressor-end-cap';
+      cap.position.set(muzzleNode.position.x, muzzleNode.position.y, muzzleZ + 0.143);
+      cap.castShadow = true;
+      weaponGroup.add(cap);
+      const bore = cz(weaponGroup, MAT_BLACK, 0.011, 0.005, muzzleNode.position.x, muzzleNode.position.y, muzzleZ + 0.145);
+      bore.name = 'suppressor-bore';
       muzzleNode.position.z = muzzleZ + 0.14;
     } else {
       const comp = new THREE.Mesh(ATT_GEO.comp, MAT_LT);
@@ -523,12 +816,46 @@ export function attachWeaponMods(group: THREE.Group, att: GunAttachments): void 
         port.position.set(muzzleNode.position.x, muzzleNode.position.y + 0.014, z);
         weaponGroup.add(port);
       }
+      const crown = new THREE.Mesh(MUZZLE_RING, MAT_BLACK);
+      crown.name = 'compensator-crown';
+      crown.scale.setScalar(0.015);
+      crown.position.set(muzzleNode.position.x, muzzleNode.position.y, muzzleZ + 0.057);
+      crown.castShadow = true;
+      weaponGroup.add(crown);
       muzzleNode.position.z = muzzleZ + 0.052;
     }
   }
   // 扩容弹匣(加长弹匣节点)
   if (att.mag === 'extmag') {
     const magNode = weaponGroup.getObjectByName('mag');
-    if (magNode) magNode.scale.y *= 1.45;
+    if (magNode) {
+      magNode.scale.y *= 1.45;
+      const base = new THREE.Mesh(ATT_GEO.magPlate, MAT_RUBBER);
+      base.name = 'extmag-baseplate';
+      base.scale.set(magNode.scale.x * 1.22, 0.014, magNode.scale.z * 1.2);
+      base.position.set(
+        magNode.position.x,
+        magNode.position.y - magNode.scale.y * 0.52,
+        magNode.position.z,
+      );
+      base.castShadow = true;
+      weaponGroup.add(base);
+      for (let index = 0; index < 3; index++) {
+        const rib = new THREE.Mesh(ATT_GEO.magRib, MAT_BLACK);
+        rib.name = 'extmag-rib';
+        rib.scale.set(magNode.scale.x * 1.12, 0.007, magNode.scale.z * 1.08);
+        rib.position.set(
+          magNode.position.x,
+          magNode.position.y - magNode.scale.y * (0.12 + index * 0.18),
+          magNode.position.z,
+        );
+        rib.rotation.copy(magNode.rotation);
+        rib.castShadow = true;
+        weaponGroup.add(rib);
+      }
+    }
   }
+  weaponGroup.traverse((object) => {
+    if (object instanceof THREE.Mesh) object.castShadow = true;
+  });
 }

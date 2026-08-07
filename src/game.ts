@@ -234,6 +234,8 @@ export class Game {
   private mapVehicles: { x: number; z: number; dead: boolean }[] = [];
   private mapSquad: { x: number; z: number }[] = [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }];
   private testSimulationSteps = 1;
+  private consecutiveFrameErrors = 0;
+  private frameErrorCount = 0;
   private readonly hudSquadRows: SquadHudRow[] = [
     { name: '你', hp: 100, alive: true, isPlayer: true, knocked: false },
     { name: MATE_NAMES[0] as string, hp: 100, alive: true, isPlayer: false, knocked: false },
@@ -345,11 +347,13 @@ export class Game {
       }
     };
     this.hud.onCloseBackpack = () => this.toggleBackpack(false);
+    this.hud.onToggleSound = () => this.toggleSound();
+    this.hud.setSoundMuted(this.audio.muted);
 
     window.addEventListener('resize', () => this.onResize());
     this.onResize();
     this.hud.showScreen('start');
-    this.graphics.setAnimationLoop(() => this.frame());
+    this.graphics.setAnimationLoop(() => this.frameSafely());
     (window as unknown as { __game?: Game }).__game = this;
   }
 
@@ -394,8 +398,7 @@ export class Game {
 
   private onAction(a: Action): void {
     if (a === 'mute') {
-      const m = this.audio.toggleMute();
-      this.hud.toast(m ? '已静音 (M)' : '声音开启');
+      this.toggleSound();
       return;
     }
     if (a === 'backpack') {
@@ -467,6 +470,13 @@ export class Game {
       case 'squadFollow': this.issueSquadOrder('follow'); break;
       default: break;
     }
+  }
+
+  private toggleSound(): void {
+    this.audio.unlock();
+    const muted = this.audio.toggleMute();
+    this.hud.setSoundMuted(muted);
+    this.hud.toast(muted ? '游戏声音已关闭' : '游戏声音已开启');
   }
 
   private issueSquadContextOrder(): void {
@@ -1025,6 +1035,28 @@ export class Game {
   }
 
   // ---- 主循环 ----
+
+  // 单帧异常不再直接终止浏览器动画循环. 连续异常时暂停对局, 保留现场供恢复和诊断。
+  private frameSafely(): void {
+    try {
+      this.frame();
+      this.consecutiveFrameErrors = 0;
+    } catch (error: unknown) {
+      this.consecutiveFrameErrors++;
+      this.frameErrorCount++;
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      document.body.dataset.runtimeIssue = `frame-${this.frameErrorCount}:${detail}`.slice(0, 240);
+      console.error('游戏帧更新异常', error);
+      this.lastT = performance.now();
+      if (this.consecutiveFrameErrors >= 3 && this.state === 'playing') {
+        this.state = 'paused';
+        this.input.exitLock();
+        this.hud.showScreen('pause');
+      } else if (!this.input.testMode) {
+        this.hud.toast('运行波动已自动恢复');
+      }
+    }
+  }
 
   private frame(): void {
     const t = performance.now();

@@ -21,8 +21,8 @@ export interface NaturalDetailBudget {
 export function naturalDetailBudget(hardwareConcurrency: number): NaturalDetailBudget {
   const compact = Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 4;
   return compact
-    ? { grass: 4500, understory: 1000, flowers: 700, shore: 800, screePerRock: 2 }
-    : { grass: 7500, understory: 1600, flowers: 1100, shore: 1200, screePerRock: 3 };
+    ? { grass: 12000, understory: 1500, flowers: 850, shore: 900, screePerRock: 2 }
+    : { grass: 22000, understory: 2400, flowers: 1400, shore: 1400, screePerRock: 3 };
 }
 
 // 统一地表生态权重. 所有颜色和自然物散布都使用同一套高度, 坡度和湿度语义.
@@ -121,68 +121,189 @@ export function makeWildflowerGeometry(): THREE.BufferGeometry {
   return geometry;
 }
 
-// 四层不规则枝盘组成一棵完整松冠。相比叠放巨大圆锥，近景能读出枝层、间隙和树梢轮廓。
+function appendFoliageLobe(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  sourcePosition: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
+  sourceNormal: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
+  x: number,
+  y: number,
+  z: number,
+  sx: number,
+  sy: number,
+  sz: number,
+  angle: number,
+  tint: readonly [number, number, number],
+): void {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  for (let i = 0; i < sourcePosition.count; i++) {
+    const localX = sourcePosition.getX(i) * sx;
+    const localZ = sourcePosition.getZ(i) * sz;
+    positions.push(
+      x + cos * localX - sin * localZ,
+      y + sourcePosition.getY(i) * sy,
+      z + sin * localX + cos * localZ,
+    );
+    const rawNX = sourceNormal.getX(i) / sx;
+    const rawNY = sourceNormal.getY(i) / sy;
+    const rawNZ = sourceNormal.getZ(i) / sz;
+    const invLength = 1 / Math.max(0.0001, Math.hypot(rawNX, rawNY, rawNZ));
+    normals.push(
+      (cos * rawNX - sin * rawNZ) * invLength,
+      rawNY * invLength,
+      (sin * rawNX + cos * rawNZ) * invLength,
+    );
+    colors.push(...tint);
+  }
+}
+
+// 多团枝叶组成宽展松冠. 闭合叶簇替代巨型三角锥, 避免树干阴影穿到树冠表面形成黑块.
 export function makePineCanopyGeometry(segments = 10): THREE.BufferGeometry {
   const positions: number[] = [];
+  const normals: number[] = [];
+  const colors: number[] = [];
+  const sourceGeometry = new THREE.IcosahedronGeometry(1, 1);
+  const sourcePosition = sourceGeometry.getAttribute('position');
+  const sourceNormal = sourceGeometry.getAttribute('normal');
   const tiers = [
-    { base: 0.2, top: 0.56, radius: 1 },
-    { base: 0.4, top: 0.73, radius: 0.82 },
-    { base: 0.59, top: 0.87, radius: 0.61 },
-    { base: 0.75, top: 1, radius: 0.38 },
+    { y: 0.27, radial: 0.48, sx: 0.42, sy: 0.082, sz: 0.22, count: 8 },
+    { y: 0.47, radial: 0.39, sx: 0.36, sy: 0.078, sz: 0.2, count: 7 },
+    { y: 0.65, radial: 0.3, sx: 0.3, sy: 0.072, sz: 0.17, count: 6 },
+    { y: 0.8, radial: 0.2, sx: 0.23, sy: 0.066, sz: 0.14, count: 5 },
   ] as const;
   tiers.forEach((tier, tierIndex) => {
-    const tipX = Math.sin(tierIndex * 2.1) * 0.035;
-    const tipZ = Math.cos(tierIndex * 1.7) * 0.035;
-    for (let i = 0; i < segments; i++) {
-      const a0 = i / segments * Math.PI * 2;
-      const a1 = (i + 1) / segments * Math.PI * 2;
-      const r0 = tier.radius * (0.91 + Math.sin(i * 2.37 + tierIndex) * 0.08);
-      const r1 = tier.radius * (0.91 + Math.sin((i + 1) * 2.37 + tierIndex) * 0.08);
-      const x0 = Math.cos(a0) * r0;
-      const z0 = Math.sin(a0) * r0;
-      const x1 = Math.cos(a1) * r1;
-      const z1 = Math.sin(a1) * r1;
-      positions.push(
-        x0, tier.base, z0,
-        x1, tier.base, z1,
-        tipX, tier.top, tipZ,
-        x1, tier.base + 0.012, z1,
-        x0, tier.base + 0.012, z0,
-        0, tier.base + 0.035, 0,
+    const count = Math.max(4, Math.round(tier.count * segments / 10));
+    for (let i = 0; i < count; i++) {
+      const angle = i / count * Math.PI * 2 + tierIndex * 0.46;
+      const wobble = 0.9 + Math.sin(i * 2.37 + tierIndex) * 0.1;
+      const shade = 0.78 + (Math.sin(i * 1.73 + tierIndex * 2.1) + 1) * 0.09;
+      appendFoliageLobe(
+        positions, normals, colors, sourcePosition, sourceNormal,
+        Math.cos(angle) * tier.radial * wobble, tier.y, Math.sin(angle) * tier.radial * wobble,
+        tier.sx * wobble, tier.sy * (0.92 + (i % 3) * 0.08), tier.sz, angle,
+        [shade * 0.94, shade, shade * 0.92],
       );
     }
   });
+  appendFoliageLobe(
+    positions, normals, colors, sourcePosition, sourceNormal,
+    0.02, 0.92, 0, 0.18, 0.18, 0.18, 0, [0.92, 0.98, 0.9],
+  );
+  sourceGeometry.dispose();
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.computeVertexNormals();
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   return geometry;
 }
 
-// 多团低多边形叶簇合并为单个树冠，保留块面风格但打破规则球体轮廓。
-export function makeBroadleafCrownGeometry(): THREE.BufferGeometry {
-  const source = new THREE.DodecahedronGeometry(1, 0);
-  const sourcePosition = source.getAttribute('position');
-  const lobes = [
-    [-0.52, 0.24, 0.02, 0.7, 0.62, 0.72],
-    [0.42, 0.28, 0.14, 0.78, 0.7, 0.72],
-    [-0.02, 0.55, -0.28, 0.84, 0.76, 0.82],
-    [-0.18, 0.43, 0.48, 0.68, 0.64, 0.7],
-    [0.22, 0.78, 0.04, 0.58, 0.56, 0.58],
-  ] as const;
+// 窄高寒地松冠. 紧凑叶簇向上收拢, 与宽展松冠形成明显品种差异.
+export function makeColumnarPineCanopyGeometry(segments = 9): THREE.BufferGeometry {
   const positions: number[] = [];
-  for (const [ox, oy, oz, sx, sy, sz] of lobes) {
-    for (let i = 0; i < sourcePosition.count; i++) {
-      positions.push(
-        sourcePosition.getX(i) * sx + ox,
-        sourcePosition.getY(i) * sy + oy,
-        sourcePosition.getZ(i) * sz + oz,
+  const normals: number[] = [];
+  const colors: number[] = [];
+  const sourceGeometry = new THREE.IcosahedronGeometry(1, 1);
+  const sourcePosition = sourceGeometry.getAttribute('position');
+  const sourceNormal = sourceGeometry.getAttribute('normal');
+  const tiers = [
+    { y: 0.23, radial: 0.3, sx: 0.27, sy: 0.16, sz: 0.18, count: 5 },
+    { y: 0.41, radial: 0.25, sx: 0.24, sy: 0.15, sz: 0.17, count: 5 },
+    { y: 0.58, radial: 0.2, sx: 0.2, sy: 0.14, sz: 0.15, count: 5 },
+    { y: 0.73, radial: 0.14, sx: 0.17, sy: 0.13, sz: 0.13, count: 4 },
+    { y: 0.86, radial: 0.08, sx: 0.13, sy: 0.11, sz: 0.11, count: 4 },
+  ] as const;
+  tiers.forEach((tier, tierIndex) => {
+    const count = Math.max(4, Math.round(tier.count * segments / 9));
+    for (let i = 0; i < count; i++) {
+      const angle = i / count * Math.PI * 2 + tierIndex * 0.57;
+      const wobble = 0.92 + Math.sin(i * 2.71 + tierIndex) * 0.08;
+      const shade = 0.8 + (Math.sin(i * 1.91 + tierIndex * 2.35) + 1) * 0.08;
+      appendFoliageLobe(
+        positions, normals, colors, sourcePosition, sourceNormal,
+        Math.cos(angle) * tier.radial * wobble, tier.y, Math.sin(angle) * tier.radial * wobble,
+        tier.sx * wobble, tier.sy, tier.sz, angle,
+        [shade * 0.92, shade, shade * 0.96],
       );
     }
+  });
+  appendFoliageLobe(
+    positions, normals, colors, sourcePosition, sourceNormal,
+    0.015, 0.96, 0, 0.12, 0.17, 0.12, 0, [0.9, 0.98, 0.94],
+  );
+  sourceGeometry.dispose();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  return geometry;
+}
+
+// 多团细分叶簇合并为单个树冠，保留清晰轮廓并通过平滑法线消除近景大三角切面。
+export function makeBroadleafCrownGeometry(): THREE.BufferGeometry {
+  const source = new THREE.IcosahedronGeometry(1, 1);
+  const sourcePosition = source.getAttribute('position');
+  const sourceNormal = source.getAttribute('normal');
+  const lobes = [
+    [-0.58, 0.22, 0.02, 0.72, 0.62, 0.72, -0.18],
+    [0.46, 0.26, 0.14, 0.8, 0.7, 0.74, 0.28],
+    [-0.04, 0.54, -0.3, 0.86, 0.76, 0.82, 0.08],
+    [-0.22, 0.44, 0.48, 0.7, 0.64, 0.72, -0.24],
+    [0.24, 0.78, 0.05, 0.62, 0.58, 0.62, 0.2],
+    [-0.62, 0.64, -0.24, 0.54, 0.5, 0.58, 0.12],
+    [0.68, 0.58, -0.2, 0.58, 0.54, 0.6, -0.16],
+    [0.03, 0.9, 0.3, 0.5, 0.48, 0.54, 0.3],
+  ] as const;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const colors: number[] = [];
+  for (let lobeIndex = 0; lobeIndex < lobes.length; lobeIndex++) {
+    const [ox, oy, oz, sx, sy, sz, angle] = lobes[lobeIndex] as typeof lobes[number];
+    const shade = 0.79 + (Math.sin(lobeIndex * 1.81) + 1) * 0.085;
+    appendFoliageLobe(
+      positions, normals, colors, sourcePosition, sourceNormal,
+      ox, oy, oz, sx, sy, sz, angle, [shade * 0.96, shade, shade * 0.9],
+    );
   }
   source.dispose();
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.computeVertexNormals();
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  return geometry;
+}
+
+// 偏冠阔叶树. 叶簇向一侧展开并保留枝间空隙, 用于草原和风口的识别性轮廓.
+export function makeWindshapedCrownGeometry(): THREE.BufferGeometry {
+  const source = new THREE.IcosahedronGeometry(1, 1);
+  const sourcePosition = source.getAttribute('position');
+  const sourceNormal = source.getAttribute('normal');
+  const lobes = [
+    [-0.68, 0.12, 0.02, 0.64, 0.5, 0.58, -0.12],
+    [-0.12, 0.28, -0.18, 0.78, 0.62, 0.72, 0.2],
+    [0.5, 0.4, 0.06, 0.84, 0.58, 0.66, -0.18],
+    [1.08, 0.48, 0.2, 0.6, 0.44, 0.56, 0.26],
+    [0.28, 0.72, -0.16, 0.58, 0.5, 0.52, -0.1],
+    [0.76, 0.78, -0.2, 0.5, 0.46, 0.5, 0.18],
+    [-0.34, 0.62, 0.24, 0.5, 0.46, 0.5, -0.22],
+  ] as const;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const colors: number[] = [];
+  for (let lobeIndex = 0; lobeIndex < lobes.length; lobeIndex++) {
+    const [ox, oy, oz, sx, sy, sz, angle] = lobes[lobeIndex] as typeof lobes[number];
+    const shade = 0.8 + (Math.sin(lobeIndex * 1.67) + 1) * 0.08;
+    appendFoliageLobe(
+      positions, normals, colors, sourcePosition, sourceNormal,
+      ox, oy, oz, sx, sy, sz, angle, [shade, shade * 0.98, shade * 0.84],
+    );
+  }
+  source.dispose();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   return geometry;
 }
 

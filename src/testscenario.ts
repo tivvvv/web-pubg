@@ -3,7 +3,7 @@ import { canAttach, emptyAttachments, magSizeOf } from './attachments';
 import { ARMORS } from './armor';
 import { findSwimBank } from './botnav';
 import { gunHasMatchingAmmoNearby, isGunKind, lootPointClear, LOOT_CAP } from './loot';
-import { isMultiStoreyArch, type ArchId } from './buildings';
+import { buildingStoreys, isMultiStoreyArch, type ArchId } from './buildings';
 import type { Game } from './game';
 import { VEHICLE_SPEC } from './vehicles';
 import { MELEE, WEAPONS } from './weapons';
@@ -29,6 +29,8 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=stairs&slice=1&view=facade',
   'scenario=stairs&slice=1&view=interior',
   'scenario=stairs&traverse=up&arch=cottage2',
+  'scenario=stairs&traverse=up&arch=terrace',
+  'scenario=stairs&traverse=up&arch=apartment&plot=last',
   'scenario=stairs&traverse=up&arch=apartment&flight=2',
   'scenario=stairs&view=entrance&arch=cottage2',
   'scenario=stairs&view=facade&arch=apartment&plot=last',
@@ -163,8 +165,36 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.mapLootSpotCount = String(game.world.mapLootSpots.length);
   panel.dataset.buildingVisualInstances = String(game.world.buildings.visualInstanceCount);
   panel.dataset.buildingDetailInstances = String(game.world.buildings.modelDetailInstanceCount);
+  panel.dataset.europeanFacadeDetails = String(game.world.buildings.europeanFacadeDetailCount);
+  panel.dataset.europeanFacadeByArch = JSON.stringify(game.world.buildings.europeanFacadeDetailsByArch);
   panel.dataset.environmentDetailInstances = String(game.world.environmentDetailInstanceCount);
   panel.dataset.naturalGroundDetails = String(game.world.naturalGroundDetailCount);
+  panel.dataset.groundMicroDetails = String(game.world.groundMicroDetailCount);
+  panel.dataset.naturalStoryProps = String(game.world.naturalStoryPropCount);
+  panel.dataset.humanDetailProps = String(game.world.humanDetailPropCount);
+  panel.dataset.regionalIdentityDetails = String(game.world.regionalIdentityDetailCount);
+  panel.dataset.treeCount = String(game.world.treeCount);
+  panel.dataset.treeVariants = String(game.world.treeVariantCount);
+  panel.dataset.treeSamples = game.world.cyls
+    .filter((collider) => collider.tag === 'tree')
+    .slice(0, 16)
+    .map((collider) => `${collider.x.toFixed(1)},${collider.z.toFixed(1)}`)
+    .join('|');
+  panel.dataset.treeVisualSamples = game.world.treeVisualSamples
+    .filter((sample, index, samples) => samples.findIndex((candidate) => candidate.kind === sample.kind) === index)
+    .map((sample) => `${sample.kind},${sample.x.toFixed(1)},${sample.z.toFixed(1)}`)
+    .join('|');
+  panel.dataset.tacticalRocks = String(game.world.tacticalRockCount);
+  panel.dataset.halfBushes = String(game.world.halfBushCount);
+  panel.dataset.grassPatches = String(game.world.grassPatchCount);
+  panel.dataset.churchDetails = String(game.world.churchDetailCount);
+  panel.dataset.plazaDetails = String(game.world.plazaDetailCount);
+  panel.dataset.fountainDetails = String(game.world.fountainDetailCount);
+  panel.dataset.religiousCrosses = String(game.world.religiousCrossCount);
+  const churchSite = game.world.landmarks.find((site) => site.kind === 'church');
+  panel.dataset.churchSite = churchSite
+    ? `${churchSite.x.toFixed(2)},${churchSite.z.toFixed(2)}`
+    : '';
   panel.dataset.shorelineDetails = String(game.world.shorelineDetailCount);
   panel.dataset.distantLandforms = String(game.world.distantLandformCount);
   panel.dataset.verticalSliceWorldDetails = String(game.world.verticalSliceDetailCount);
@@ -957,7 +987,9 @@ function setupStairs(game: Game): void {
     setGroundPlayer(game, x, z);
     const player = game.playerCtl;
     if (player) {
-      const roofY = game.world.groundHeight(x, z, plot.flatH + 5.2);
+      // 从原型的最高可能屋面向下查询，避免高层建筑只把测试角色放到二层楼板。
+      const roofProbeY = plot.flatH + 0.28 + buildingStoreys(plot) * (2.9 + 0.24) + 3;
+      const roofY = game.world.groundHeight(x, z, roofProbeY);
       player.char.pos.y = roofY;
       player.char.groundH = roofY;
       player.char.grounded = true;
@@ -1199,6 +1231,7 @@ function setupBotSwim(game: Game): void {
 
 function setupCombat(game: Game): void {
   const params = new URLSearchParams(window.location.search);
+  if (params.get('fpp') === '1') game.viewFpp = true;
   const weaponParam = params.get('weapon');
   const weaponId = weaponParam && weaponParam in WEAPONS ? weaponParam as keyof typeof WEAPONS : 'rifle';
   const def = WEAPONS[weaponId];
@@ -1786,8 +1819,10 @@ function setupMapTour(game: Game): void {
     setGroundPlayer(game, inspectX, inspectZ);
     const player = game.playerCtl;
     if (player) {
-      player.yaw = 0;
-      player.pitch = 0.04;
+      const inspectYaw = Number(params.get('yaw'));
+      const inspectPitch = Number(params.get('pitch'));
+      player.yaw = Number.isFinite(inspectYaw) && params.has('yaw') ? inspectYaw : 0;
+      player.pitch = Number.isFinite(inspectPitch) && params.has('pitch') ? inspectPitch : 0.04;
     }
     return;
   }

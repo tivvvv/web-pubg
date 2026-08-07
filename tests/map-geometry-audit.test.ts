@@ -90,6 +90,21 @@ describe('地图与建筑终极几何巡检', () => {
           platform.top > fromY + 0.02 && platform.top <= toY + 0.02
         )).map((platform) => platform.top.toFixed(3)));
         expect(stairTops.size, `${tower.storeys} 层高楼第 ${level + 1} 跑楼梯不连续`).toBeGreaterThanOrEqual(9);
+        const stairPlatforms = world.platforms.filter((platform) => (
+          platform.minX >= tower.minX + 2 && platform.maxX <= tower.maxX - 2 &&
+          platform.minZ >= tower.minZ + 2 && platform.maxZ <= tower.maxZ - 2 &&
+          platform.top > fromY + 0.02 && platform.top <= toY + 0.02
+        ));
+        for (const platform of stairPlatforms) {
+          const x = (platform.minX + platform.maxX) * 0.5;
+          const z = (platform.minZ + platform.maxZ) * 0.5;
+          const overhead = world.aabbs.find((collider) => (
+            !collider.off && collider.minX < x && collider.maxX > x &&
+            collider.minZ < z && collider.maxZ > z &&
+            collider.minY > platform.top + 0.02 && collider.minY < platform.top + 1.7
+          ));
+          expect(overhead, `${tower.storeys} 层高楼第 ${level + 1} 跑楼梯头顶净空不足`).toBeUndefined();
+        }
       }
     }
   });
@@ -165,10 +180,76 @@ describe('地图与建筑终极几何巡检', () => {
 
   it('自然环境具备完整地表生态, 岸线和远景层次预算', () => {
     const world = createWorld();
-    expect(world.naturalGroundDetailCount).toBeGreaterThanOrEqual(1800);
+    expect(world.grassPatchCount).toBeGreaterThanOrEqual(12000);
+    expect(world.halfBushCount).toBeGreaterThanOrEqual(620);
+    expect(world.tacticalRockCount).toBeGreaterThanOrEqual(64);
+    expect(world.treeCount).toBeGreaterThanOrEqual(540);
+    expect(world.treeVariantCount).toBe(4);
+    expect(world.naturalGroundDetailCount).toBeGreaterThanOrEqual(17000);
     expect(world.shorelineDetailCount).toBeGreaterThanOrEqual(1200);
     expect(world.distantLandformCount).toBeGreaterThanOrEqual(12);
-    expect(world.environmentDetailInstanceCount).toBeGreaterThanOrEqual(6000);
+    expect(world.environmentDetailInstanceCount).toBeGreaterThanOrEqual(24000);
+  });
+
+  it('空旷地带具备微地表, 中型自然物, 人造细节和区域专属四层内容', () => {
+    const world = createWorld();
+    expect(world.groundMicroDetailCount).toBeGreaterThanOrEqual(3000);
+    expect(world.naturalStoryPropCount).toBeGreaterThanOrEqual(140);
+    expect(world.humanDetailPropCount).toBeGreaterThanOrEqual(90);
+    expect(world.regionalIdentityDetailCount).toBeGreaterThanOrEqual(160);
+    expect(world.assetUsage.count('map.nature.deadwood')).toBeGreaterThanOrEqual(70);
+    expect(world.assetUsage.count('map.infrastructure.street-furniture')).toBeGreaterThanOrEqual(30);
+    expect(world.assetUsage.count('map.landmark.regional-detail')).toBeGreaterThanOrEqual(100);
+  });
+
+  it('树木, 自然岩石和半身灌木之间没有严重穿模', () => {
+    const world = createWorld();
+    const trees = world.cyls.filter((collider) => collider.tag === 'tree');
+    for (const rock of world.naturalRocks) {
+      for (const tree of trees) {
+        expect(
+          Math.hypot(rock.x - tree.x, rock.z - tree.z),
+          `岩石 ${rock.x.toFixed(1)},${rock.z.toFixed(1)} 与树木穿模`,
+        ).toBeGreaterThanOrEqual(rock.r + tree.r - 0.02);
+      }
+    }
+    for (const bush of world.bushes) {
+      const visualRadius = bush.r / 1.5;
+      for (const obstacle of [...trees, ...world.naturalRocks]) {
+        expect(
+          Math.hypot(bush.x - obstacle.x, bush.z - obstacle.z),
+          `灌木 ${bush.x.toFixed(1)},${bush.z.toFixed(1)} 与自然掩体穿模`,
+        ).toBeGreaterThanOrEqual(visualRadius + obstacle.r - 0.02);
+      }
+    }
+  });
+
+  it('磐石城新增可进入教堂和具备战术层次的完整广场', () => {
+    const world = createWorld();
+    const church = world.landmarks.find((site) => site.kind === 'church');
+    expect(church).toBeDefined();
+    if (!church) return;
+    expect(regionAt(church.x, church.z)?.id).toBe('stonegate');
+    expect(world.churchDetailCount).toBeGreaterThanOrEqual(60);
+    expect(world.plazaDetailCount).toBeGreaterThanOrEqual(20);
+    expect(world.fountainDetailCount).toBeGreaterThanOrEqual(15);
+    expect(world.religiousCrossCount).toBe(1);
+
+    const floorTop = world.platforms
+      .filter((platform) => (
+        platform.minX < church.x && platform.maxX > church.x &&
+        platform.minZ < church.z - 5 && platform.maxZ > church.z - 5
+      ))
+      .reduce((highest, platform) => Math.max(highest, platform.top), -Infinity);
+    expect(Number.isFinite(floorTop)).toBe(true);
+    expect(world.navPointFree(church.x, church.z + 3.1, floorTop, 0.35, false)).toBe(true);
+    expect(world.cyls.some((collider) => (
+      Math.abs(collider.x - church.x) < 0.05 &&
+      Math.abs(collider.z - (church.z + 14)) < 0.05 && collider.r >= 2.2
+    ))).toBe(true);
+    expect(world.mapLootSpots.filter((spot) => spot.siteId.startsWith('stonegate-church'))).toHaveLength(4);
+    expect(world.assetUsage.count('map.landmark.church')).toBe(1);
+    expect(world.assetUsage.count('map.landmark.plaza')).toBe(1);
   });
 
   it('地图和建筑生成结果均登记到可审计资产目录', () => {
@@ -179,5 +260,14 @@ describe('地图与建筑终极几何巡检', () => {
     expect(world.assetUsage.count('map.landmark.region-site')).toBe(6);
     expect(world.buildings.assetUsage.uniqueCount).toBeGreaterThanOrEqual(20);
     expect(world.buildings.assetUsage.totalInstances).toBeGreaterThan(world.buildings.plots.length * 6);
+  });
+
+  it('七种建筑原型全部接入欧式立面组件且不改变室内碰撞', () => {
+    const world = createWorld();
+    expect(world.buildings.assetUsage.count('building.module.european-facade')).toBe(world.buildings.plots.length);
+    expect(world.buildings.europeanFacadeDetailCount).toBeGreaterThan(world.buildings.plots.length * 45);
+    for (const [arch, count] of Object.entries(world.buildings.europeanFacadeDetailsByArch)) {
+      expect(count, `${arch} 没有完整欧式立面`).toBeGreaterThanOrEqual(45);
+    }
   });
 });
