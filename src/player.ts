@@ -44,6 +44,11 @@ const CANOPY_STEER_RESPONSE = 1.6;
 const AIR_STEER_DRAG = 1.2; // 松开方向键后保留少量惯性
 const CAMERA_PROBE_OFFSETS = [0, -0.14, 0.14] as const;
 
+// 在水中按住开火键时锁住扳机，离水后必须先松开再按，避免边界帧误开枪。
+export function updateSwimFireLatch(latched: boolean, swimming: boolean, fireHeld: boolean): boolean {
+  return fireHeld ? latched || swimming : false;
+}
+
 type InteractionTarget = LootItem | Destructible | Vehicle | Crate | DeathCrate | Character;
 
 export class PlayerController {
@@ -78,6 +83,7 @@ export class PlayerController {
   private stepAcc = 0;
   private swimAcc = 0;      // 游泳划水距离累计
   private swimToastT = 0;   // '游泳中无法攻击'提示节流
+  private swimFireLatch = false; // 水中按住左键时禁止跨状态边界补发一枪
   private throwHold = false; // 正在按住左键蓄力瞄准
   private holdT = 0;         // 蓄力时长
   private jumpHeld = false;
@@ -416,6 +422,7 @@ export class PlayerController {
       ? clamp(1 - this.reloadT / this.reloadTotal, 0.01, 1)
       : 0;
     const pressedEdge = input.consumeFirePressed();
+    this.swimFireLatch = updateSwimFireLatch(this.swimFireLatch, c.swimming, input.lmb);
     // 切离投掷栏时收起轨迹预览
     if (c.curSlot !== 4 && this.throwHold) {
       this.throwHold = false;
@@ -446,7 +453,7 @@ export class PlayerController {
       if (this.updateThrow(dt, input, game)) acted = true;
       this.spreadRad = lerp(this.spreadRad, 0.004, Math.min(1, dt * 10));
     } else if (gun) {
-      const wantFire = fireModeOf(gun) === 'auto' ? input.lmb : pressedEdge;
+      const wantFire = !this.swimFireLatch && (fireModeOf(gun) === 'auto' ? input.lmb : pressedEdge);
       if (wantFire && !this.reloading && this.fireTimer <= 0) {
         if (gun.mag <= 0) {
           game.audio.empty();
@@ -967,7 +974,7 @@ export class PlayerController {
     this.driving = v;
     v.driver = this.char;
     const c = this.char;
-    c.airPose = 'sit';
+    c.airPose = v.kind === 'moto' ? 'moto' : 'sit';
     c.stance = 'stand';
     c.stanceF = 0;
     c.moveLean = 0;

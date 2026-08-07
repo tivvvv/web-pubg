@@ -88,13 +88,13 @@ import { Hud, shouldShowSwimmingStatus, type BackpackData, type SquadHudRow } fr
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
 import { Input, type Action } from './input';
 import { doorwayOccupied } from './interaction';
-import { LootManager, isGunKind, isMeleeKind, type LootItem } from './loot';
+import { LootManager, isGunKind, isMeleeKind, lootPointClear, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
 import { GrenadeManager } from './throwables';
 import { TeammateController } from './teammate';
 import { VEHICLE_SPEC, VehicleManager, type Vehicle } from './vehicles';
-import type { AmmoType, DestructibleLike, GameStats, ThrowableId } from './types';
+import type { AmmoType, DestructibleLike, GameStats, GunAttachments, LootKind, ThrowableId, WeaponId } from './types';
 import { clamp, dist2D, rand } from './utils';
 import {
   AMMO_BOX, AMMO_NAME, MELEE, THROWABLES, THROWABLE_IDS, WEAPONS, ammoTypeFromLoot, applySpread, hitscan,
@@ -132,6 +132,21 @@ import {
 
 const TOTAL = MATCH_PLAYER_COUNT;
 const SLOT_LABELS = ['主武器1', '主武器2', '手枪', '近战'];
+
+export function weaponPickupSlot(
+  weapon: WeaponId,
+  guns: readonly ({ def: { tier: number } } | null)[],
+  currentSlot: number,
+  playerControlled: boolean,
+): number {
+  if (weapon === 'pistol') return 2;
+  if (!guns[0]) return 0;
+  if (!guns[1]) return 1;
+  if (playerControlled && (currentSlot === 0 || currentSlot === 1)) return currentSlot;
+  const tier0 = guns[0]?.def.tier ?? 99;
+  const tier1 = guns[1]?.def.tier ?? 99;
+  return tier0 <= tier1 ? 0 : 1;
+}
 
 export function accumulatePlayerDamage(
   current: number,
@@ -2061,6 +2076,37 @@ export class Game {
     }
   }
 
+  // 换下的装备必须落在角色当前承托面。使用地形高度会让楼内换枪直接掉到一楼或地底。
+  private spawnCharacterDrop(
+    c: Character,
+    kind: LootKind,
+    mag = -1,
+    ammo = 0,
+    att: GunAttachments | null = null,
+  ): LootItem | null {
+    const forwardX = Math.sin(c.yaw);
+    const forwardZ = Math.cos(c.yaw);
+    const rightX = forwardZ;
+    const rightZ = -forwardX;
+    const offsets: ReadonlyArray<readonly [number, number]> = [
+      [forwardX * 0.9, forwardZ * 0.9],
+      [rightX * 0.82, rightZ * 0.82],
+      [-rightX * 0.82, -rightZ * 0.82],
+      [-forwardX * 0.72, -forwardZ * 0.72],
+      [0, 0],
+    ];
+    for (const [dx, dz] of offsets) {
+      const x = c.pos.x + dx;
+      const z = c.pos.z + dz;
+      const groundY = this.world.groundHeight(x, z, c.pos.y + 0.32);
+      if (Math.abs(groundY - c.pos.y) > 0.55) continue;
+      if (!lootPointClear(this.world, x, groundY, z, 0.2)) continue;
+      return this.loot.spawn(kind, x, groundY, z, mag, ammo, att);
+    }
+    const groundY = this.world.groundHeight(c.pos.x, c.pos.z, c.pos.y + 0.32);
+    return this.loot.spawn(kind, c.pos.x, groundY, c.pos.z, mag, ammo, att);
+  }
+
   // F 拾取背包: 空槽直接装备; 已有则换下的旧包落地
   // 换更小背包时若当前负重超新容量 → 拒绝(超重换包不允许)
   tryPickupPack(c: Character, item: LootItem): boolean {
@@ -2071,7 +2117,7 @@ export class Game {
       return false;
     }
     if (c.pack) {
-      this.loot.spawn(packLootKind(c.pack.level), c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6));
+      this.spawnCharacterDrop(c, packLootKind(c.pack.level));
       if (c.isPlayer) this.hud.toast(`换下 ${PACKS[c.pack.level].name}`);
     }
     c.pack = { level };
@@ -2092,9 +2138,9 @@ export class Game {
     const durability = item.ammo > 0 ? item.ammo : def.maxDurability; // ammo 字段复用为耐久
     if (cur) {
       const curDef = ARMORS[info.kind][cur.level];
-      this.loot.spawn(
+      this.spawnCharacterDrop(
+        c,
         armorLootKind(info.kind, cur.level),
-        c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6),
         -1, Math.max(1, Math.round(cur.durability)),
       );
       if (c.isPlayer) this.hud.toast(`换下 ${curDef.name}`);
@@ -2134,9 +2180,9 @@ export class Game {
     if (!c.isPlayer && old) return false;
     this.loot.consume(item);
     if (old) {
-      this.loot.spawn(
+      this.spawnCharacterDrop(
+        c,
         ATT_LOOT_KIND[old],
-        c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6),
       );
     }
     gun.att[slot] = id;
@@ -2253,7 +2299,7 @@ export class Game {
     if (isMeleeKind(kind)) {
       if (c.melee.def.id === kind) return false;
       if (c.melee.def.id !== 'fists') {
-        this.loot.spawn(c.melee.def.id, c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6));
+        this.spawnCharacterDrop(c, c.melee.def.id);
       }
       c.melee = { def: MELEE[kind] };
       if (!c.hasGun()) c.curSlot = 3;
@@ -2268,40 +2314,26 @@ export class Game {
 
     const hadGun = c.hasGun();
     const def = WEAPONS[kind];
-    // 目标栏位
-    let slot: number;
-    if (def.id === 'pistol') {
-      slot = 2;
-    } else if (!c.guns[0]) {
-      slot = 0;
-    } else if (!c.guns[1]) {
-      slot = 1;
-    } else if (c.isPlayer && (c.curSlot === 0 || c.curSlot === 1)) {
-      slot = c.curSlot; // 玩家手持主武器时替换当前
-    } else {
-      // 替换品级较低的主武器
-      const t0 = c.guns[0]?.def.tier ?? 99;
-      const t1 = c.guns[1]?.def.tier ?? 99;
-      slot = t0 <= t1 ? 0 : 1;
-    }
-    // 手枪位被占 → 替换并掉落旧枪
+    const slot = weaponPickupSlot(def.id, c.guns, c.curSlot, c.isPlayer);
     const old = c.guns[slot];
-    if (old) {
-      this.loot.spawn(old.def.id, c.pos.x + rand(-0.6, 0.6), this.world.getHeight(c.pos.x, c.pos.z), c.pos.z + rand(-0.6, 0.6), old.mag, 0, old.att);
-    }
     const att = item.att
       ? { sight: item.att.sight, mag: item.att.mag, muzzle: item.att.muzzle }
       : emptyAttachments();
     const gun = { def, mag: 0, att };
     gun.mag = Math.min(item.mag >= 0 ? item.mag : def.magSize, magSizeOf(gun));
-    c.guns[slot] = gun;
-    c.ammo[def.ammo] += Math.max(0, item.ammo);
-    c.curSlot = slot;
+    const carriedAmmo = Math.max(0, item.ammo);
+    // 先回收被拾取的地面对象，再生成旧枪，物资池满载时也保证旧枪一定有槽位可落地。
     this.loot.consume(item);
+    if (old) this.spawnCharacterDrop(c, old.def.id, old.mag, 0, old.att);
+    c.guns[slot] = gun;
+    c.ammo[def.ammo] += carriedAmmo;
+    c.curSlot = slot;
     if (c.isPlayer) {
       const firstGun = shouldCelebrateFirstGun(hadGun, this.playerArmedAt);
       if (firstGun) this.playerArmedAt = this.now;
-      this.hud.toast(`拾取 ${def.name}`, firstGun ? 'success' : 'info');
+      this.hud.toast(old
+        ? `拾取 ${def.name}, 已替换并掉落 ${old.def.name}`
+        : `拾取 ${def.name}`, firstGun ? 'success' : 'info');
       this.audio.pickup();
     }
     return true;

@@ -55,6 +55,32 @@ describe('载具座位 命中和损毁状态', () => {
     expect(seated.parts.legR.rotation.x).toBeLessThan(-1.2);
   });
 
+  it('摩托驾驶姿态前倾并让双手对齐车把', () => {
+    const vehicle = new Vehicle('moto', new THREE.Vector3(4, 2, 8), 0);
+    const rider = new Character('摩托驾驶员', true, 0x3a6ea5);
+    seatWorldAt(vehicle, 0, rider.pos);
+    rider.airPose = 'moto';
+    rider.syncModel(1, false);
+    vehicle.sync();
+    rider.group.updateMatrixWorld(true);
+    vehicle.group.updateMatrixWorld(true);
+
+    expect(rider.parts.inner.rotation.x).toBeCloseTo(0.2, 5);
+    expect(rider.parts.armL.rotation.x).toBeCloseTo(-1, 5);
+    expect(rider.parts.armR.rotation.x).toBeCloseTo(-1, 5);
+    expect(rider.parts.armL.rotation.z).toBeCloseTo(0, 5);
+    expect(rider.parts.armR.rotation.z).toBeCloseTo(0, 5);
+    expect(rider.parts.elbowL.rotation.x).toBeCloseTo(-0.15, 5);
+    expect(rider.parts.elbowR.rotation.x).toBeCloseTo(-0.15, 5);
+    expect(VEHICLE_SPEC.moto.seat[2]).toBeGreaterThanOrEqual(0);
+    const leftHand = rider.group.getObjectByName('hand-left')?.getWorldPosition(new THREE.Vector3());
+    const rightHand = rider.group.getObjectByName('hand-right')?.getWorldPosition(new THREE.Vector3());
+    const leftGrip = vehicle.group.getObjectByName('handlebar-grip-left')?.getWorldPosition(new THREE.Vector3());
+    const rightGrip = vehicle.group.getObjectByName('handlebar-grip-right')?.getWorldPosition(new THREE.Vector3());
+    expect(leftHand?.distanceTo(leftGrip as THREE.Vector3)).toBeLessThan(0.1);
+    expect(rightHand?.distanceTo(rightGrip as THREE.Vector3)).toBeLessThan(0.1);
+  });
+
   it('最近载具查询忽略已占用和已损毁载具', () => {
     const manager = new VehicleManager(new THREE.Scene());
     const near = new Vehicle('moto', new THREE.Vector3(2, 0, 0), 0);

@@ -21,8 +21,8 @@ export interface NaturalDetailBudget {
 export function naturalDetailBudget(hardwareConcurrency: number): NaturalDetailBudget {
   const compact = Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 4;
   return compact
-    ? { grass: 3000, understory: 720, flowers: 480, shore: 620, screePerRock: 2 }
-    : { grass: 5000, understory: 1200, flowers: 820, shore: 900, screePerRock: 3 };
+    ? { grass: 4500, understory: 1000, flowers: 700, shore: 800, screePerRock: 2 }
+    : { grass: 7500, understory: 1600, flowers: 1100, shore: 1200, screePerRock: 3 };
 }
 
 // 统一地表生态权重. 所有颜色和自然物散布都使用同一套高度, 坡度和湿度语义.
@@ -118,6 +118,71 @@ export function makeWildflowerGeometry(): THREE.BufferGeometry {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  return geometry;
+}
+
+// 四层不规则枝盘组成一棵完整松冠。相比叠放巨大圆锥，近景能读出枝层、间隙和树梢轮廓。
+export function makePineCanopyGeometry(segments = 10): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const tiers = [
+    { base: 0.2, top: 0.56, radius: 1 },
+    { base: 0.4, top: 0.73, radius: 0.82 },
+    { base: 0.59, top: 0.87, radius: 0.61 },
+    { base: 0.75, top: 1, radius: 0.38 },
+  ] as const;
+  tiers.forEach((tier, tierIndex) => {
+    const tipX = Math.sin(tierIndex * 2.1) * 0.035;
+    const tipZ = Math.cos(tierIndex * 1.7) * 0.035;
+    for (let i = 0; i < segments; i++) {
+      const a0 = i / segments * Math.PI * 2;
+      const a1 = (i + 1) / segments * Math.PI * 2;
+      const r0 = tier.radius * (0.91 + Math.sin(i * 2.37 + tierIndex) * 0.08);
+      const r1 = tier.radius * (0.91 + Math.sin((i + 1) * 2.37 + tierIndex) * 0.08);
+      const x0 = Math.cos(a0) * r0;
+      const z0 = Math.sin(a0) * r0;
+      const x1 = Math.cos(a1) * r1;
+      const z1 = Math.sin(a1) * r1;
+      positions.push(
+        x0, tier.base, z0,
+        x1, tier.base, z1,
+        tipX, tier.top, tipZ,
+        x1, tier.base + 0.012, z1,
+        x0, tier.base + 0.012, z0,
+        0, tier.base + 0.035, 0,
+      );
+    }
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+// 多团低多边形叶簇合并为单个树冠，保留块面风格但打破规则球体轮廓。
+export function makeBroadleafCrownGeometry(): THREE.BufferGeometry {
+  const source = new THREE.DodecahedronGeometry(1, 0);
+  const sourcePosition = source.getAttribute('position');
+  const lobes = [
+    [-0.52, 0.24, 0.02, 0.7, 0.62, 0.72],
+    [0.42, 0.28, 0.14, 0.78, 0.7, 0.72],
+    [-0.02, 0.55, -0.28, 0.84, 0.76, 0.82],
+    [-0.18, 0.43, 0.48, 0.68, 0.64, 0.7],
+    [0.22, 0.78, 0.04, 0.58, 0.56, 0.58],
+  ] as const;
+  const positions: number[] = [];
+  for (const [ox, oy, oz, sx, sy, sz] of lobes) {
+    for (let i = 0; i < sourcePosition.count; i++) {
+      positions.push(
+        sourcePosition.getX(i) * sx + ox,
+        sourcePosition.getY(i) * sy + oy,
+        sourcePosition.getZ(i) * sz + oz,
+      );
+    }
+  }
+  source.dispose();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
   return geometry;
 }
 

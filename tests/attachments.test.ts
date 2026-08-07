@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { canAttach, emptyAttachments, magSizeOf, recoilFactorOf, sightZoomOf } from '../src/attachments';
 import { WEAPONS } from '../src/weapons';
-import { attachWeaponMods, buildWeaponModel } from '../src/weaponmodels';
+import { attachWeaponMods, buildWeaponModel, FIREARM_MODEL_SCALE } from '../src/weaponmodels';
 
 describe('武器配件规则', () => {
+  it('枪械模型统一放大且近战装备保持原尺寸', () => {
+    expect(buildWeaponModel('rifle').group.scale.x).toBe(FIREARM_MODEL_SCALE);
+    expect(buildWeaponModel('pistol').group.scale.x).toBe(FIREARM_MODEL_SCALE);
+    expect(buildWeaponModel('knife').group.scale.x).toBe(1);
+  });
   it('瞄具和枪口配件具有可辨认的近景结构', () => {
     const scoped = buildWeaponModel('rifle');
     attachWeaponMods(scoped.group, { sight: 'scope4', muzzle: 'suppressor', mag: null });

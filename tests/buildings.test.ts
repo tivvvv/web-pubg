@@ -23,7 +23,7 @@ describe('建筑门交互方向', () => {
     expect(gableRoofPitch(8)).toBeGreaterThan(0.1);
     expect(gableRoofPitch(8)).toBeLessThan(0.3);
     expect(gableRoofPitch(12)).toBeLessThan(gableRoofPitch(8));
-    expect(0.72 / GABLE_INFILL_LAYERS).toBeLessThanOrEqual(0.05);
+    expect(1.08 / GABLE_INFILL_LAYERS).toBeLessThanOrEqual(0.05);
   });
 
   it('六个区域拥有独立建筑主色和完整立面风格', () => {

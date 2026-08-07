@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { advancePoseBlend, Character, locomotionPose, ownModelVisibility } from '../src/character';
+import { advancePoseBlend, Character, locomotionPose, meleeMotionPose, ownModelVisibility } from '../src/character';
 import { emptyAttachments } from '../src/attachments';
 import { environmentLighting, environmentSurfaceDetail, environmentVisualProfile } from '../src/environment';
 import { RENDER_QUALITY } from '../src/rendering';
 import { WEAPONS } from '../src/weapons';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
-import { squadNameTagPresentation } from '../src/game';
+import { squadNameTagPresentation, weaponPickupSlot } from '../src/game';
 
 describe('画面回归保护', () => {
   it('角色近景具有独立五官和衣物结构线', () => {
@@ -32,6 +32,59 @@ describe('画面回归保护', () => {
     expect(pose.bob).toBeGreaterThan(0);
     const prone = locomotionPose(Math.PI / 2, 6.9, 2, 1);
     expect(Math.abs(prone.legL)).toBeLessThan(Math.abs(pose.legL));
+  });
+
+  it('徒手奔跑时双臂从身体两侧自然反摆', () => {
+    const character = new Character('徒手跑步测试', false, 0x335577);
+    character.grounded = true;
+    character.speed2d = 6.9;
+    for (let i = 0; i < 30; i++) character.syncModel(1 / 60, true);
+    character.walkPhase = Math.PI / 2;
+    character.syncModel(0, true);
+
+    expect(character.parts.armL.rotation.x).toBeGreaterThan(-0.8);
+    expect(character.parts.armR.rotation.x).toBeGreaterThan(-0.8);
+    expect(character.parts.armL.rotation.x * character.parts.armR.rotation.x).toBeLessThan(0);
+    expect(character.parts.armL.rotation.z).toBeCloseTo(0.12, 5);
+    expect(character.parts.armR.rotation.z).toBeCloseTo(-0.12, 5);
+    expect(character.parts.elbowR.rotation.x).toBeLessThan(-0.3);
+    expect(Math.abs(character.parts.inner.rotation.y)).toBeGreaterThan(0.05);
+  });
+
+  it('挥拳包含蓄力, 伸展和完整回收三个连续阶段', () => {
+    const start = meleeMotionPose(0);
+    const windup = meleeMotionPose(0.12);
+    const impact = meleeMotionPose(0.42);
+    const recovery = meleeMotionPose(0.78);
+    const end = meleeMotionPose(1);
+    expect(start.extension).toBe(0);
+    expect(windup.windup).toBeGreaterThan(0.3);
+    expect(impact.extension).toBeGreaterThan(0.9);
+    expect(recovery.extension).toBeGreaterThan(0);
+    expect(recovery.extension).toBeLessThan(impact.extension);
+    expect(end.extension).toBe(0);
+    expect(end.recovery).toBe(1);
+
+    const character = new Character('挥拳动作测试', false, 0x335577);
+    character.swingT = 0.58;
+    character.swingSide = 1;
+    character.syncModel(0, false);
+    expect(character.parts.armR.position.z).toBeGreaterThan(0.32);
+    expect(character.parts.elbowR.rotation.x).toBeGreaterThan(-0.2);
+    expect(character.parts.inner.rotation.y).toBeLessThan(-0.25);
+    expect(character.parts.armL.rotation.x).toBeLessThan(-0.8);
+  });
+
+  it('第三把主武器替换玩家当前主武器栏位', () => {
+    const guns = [
+      { def: WEAPONS.rifle },
+      { def: WEAPONS.akm },
+      null,
+    ];
+    expect(weaponPickupSlot('sniper', guns, 0, true)).toBe(0);
+    expect(weaponPickupSlot('smg', guns, 1, true)).toBe(1);
+    expect(weaponPickupSlot('pistol', guns, 1, true)).toBe(2);
+    expect(weaponPickupSlot('smg', [null, guns[1], null], 1, true)).toBe(0);
   });
 
   it('第一人称趴下隐藏会穿入相机的自身模型', () => {
@@ -162,10 +215,10 @@ describe('画面回归保护', () => {
     const clearNight = environmentLighting(0, 1, 0, 0);
     const rainyNight = environmentLighting(0, 0.86, 0.76, 0.16);
 
-    expect(day.hemiIntensity).toBeCloseTo(1.14, 5);
-    expect(day.exposure).toBeCloseTo(1.08, 5);
+    expect(day.hemiIntensity).toBeCloseTo(1.22, 5);
+    expect(day.exposure).toBeCloseTo(1.1, 5);
     expect(clearNight.hemiIntensity).toBeGreaterThanOrEqual(0.85);
-    expect(clearNight.exposure).toBeCloseTo(1.29, 5);
+    expect(clearNight.exposure).toBeCloseTo(1.3, 5);
     expect(rainyNight.hemiIntensity).toBeGreaterThan(clearNight.hemiIntensity);
     expect(rainyNight.exposure).toBeGreaterThanOrEqual(clearNight.exposure);
   });
@@ -221,9 +274,9 @@ describe('画面回归保护', () => {
       antialias: true,
       maxPixelRatio: 1.5,
       shadows: true,
-      baseExposure: 1.08,
-      saturation: 1.06,
-      contrast: 1.035,
+      baseExposure: 1.1,
+      saturation: 1.08,
+      contrast: 1.02,
     });
     expect(SUN_SHADOW_MAP_SIZE).toBe(2048);
   });

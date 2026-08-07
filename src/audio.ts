@@ -590,9 +590,9 @@ export class AudioSys {
 
   // 入水扑通(玩家)
   splashIn(): void {
-    if (this.playAsset('movement-splash', 0.56, 0, 0.92)) return;
-    this.noiseBurst(0.5, 0, 520, 0.8, 0.28);
-    this.thump(0.32, 0, 280, 60, 0.22);
+    if (this.playAsset('movement-splash', 0.38, 0, 0.88)) return;
+    this.noiseBurst(0.24, 0, 320, 0.65, 0.32);
+    this.thump(0.1, 0, 95, 50, 0.26);
   }
 
   // 出水涉水(玩家)
@@ -604,9 +604,9 @@ export class AudioSys {
   // 他人入水(距离/方位衰减)
   splashAt(dist: number, pan: number): void {
     const att = clamp(1.25 / (1 + dist * 0.03), 0.02, 1);
-    if (this.playAsset('movement-splash', 0.48 * att, pan, 0.96)) return;
-    this.noiseBurst(0.42 * att, pan, 560, 0.8, 0.24);
-    this.thump(0.26 * att, pan, 240, 70, 0.18);
+    if (this.playAsset('movement-splash', 0.34 * att, pan, 0.92)) return;
+    this.noiseBurst(0.22 * att, pan, 340, 0.68, 0.28);
+    this.thump(0.08 * att, pan, 90, 48, 0.22);
   }
 
   // 划水(玩家, 每 ~1.7m 一次)

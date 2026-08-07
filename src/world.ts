@@ -18,7 +18,8 @@ import { regionAt, regionById, type RegionId } from './regions';
 import { applySurfaceAsset, type FootstepSurface, type SurfaceAssetId } from './assets';
 import { AssetUsageRegistry, SURFACE_MATERIAL_PRESETS } from './assetcatalog';
 import {
-  makeDistantRidgeGeometry, makeFernGeometry, makeWildflowerGeometry,
+  makeBroadleafCrownGeometry, makeDistantRidgeGeometry, makeFernGeometry, makePineCanopyGeometry,
+  makeWildflowerGeometry,
   naturalDetailBudget, shorelineSuitability, terrainSurfaceWeights,
 } from './nature';
 
@@ -41,7 +42,7 @@ export function riverZAt(x: number): number {
   return 80 + 22 * Math.sin(x * 0.012 + 1.3);
 }
 
-const GRID = 150; // 地形网格分段
+const GRID = 192; // 更细地形网格让山脊、河岸和道路交界保持连续轮廓
 const CELL = WORLD_SIZE / GRID;
 const COLLISION_GRID_CELL = 20;
 const COLLISION_QUERY_PADDING = 3;
@@ -182,11 +183,11 @@ export class World {
     const colors = new Float32Array(pos.count * 3);
     const cSand = new THREE.Color(0xd7c18a);
     const cSandWet = new THREE.Color(0x8f8972);
-    const cGrassA = new THREE.Color(0x4f853d);
-    const cGrassB = new THREE.Color(0x7eaa52);
-    const cForest = new THREE.Color(0x3e6840);
-    const cDry = new THREE.Color(0xaaa461);
-    const cRock = new THREE.Color(0x858784);
+    const cGrassA = new THREE.Color(0x507f40);
+    const cGrassB = new THREE.Color(0x76a34f);
+    const cForest = new THREE.Color(0x456b47);
+    const cDry = new THREE.Color(0x9a925b);
+    const cRock = new THREE.Color(0x92938c);
     const tmpC = new THREE.Color();
     const grassC = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
@@ -507,20 +508,33 @@ varying vec3 vTerrainWorld;`,
     // ---- 树木(松树 60% + 阔叶 40%, 树干/碰撞体逻辑不变; 北境密林加密) ----
     const treeCap = 470; // 全图 350 + 密林加密 120
     const upY = new THREE.Vector3(0, 1, 0);
+    const trunkMat = new THREE.MeshLambertMaterial({
+      color: 0xffffff, vertexColors: true,
+      emissive: 0x24160d, emissiveIntensity: 0.18,
+    });
+    applySurfaceAsset(trunkMat, 'wood', 3.6, 0.58);
     const trunkMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.2, 0.34, 3.4, 6),
-      new THREE.MeshLambertMaterial({ color: 0x6b4a2e }),
+      trunkMat,
       treeCap * 2, // 两段收分树干
     );
-    const canopyMat = new THREE.MeshLambertMaterial({ color: 0x3f7a33 });
-    const canopyMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(1.7, 4.4, 7), canopyMat, treeCap * 3);
-    const broadMat = new THREE.MeshLambertMaterial({ color: 0x568c3f });
-    const broadMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.9, 1), broadMat, treeCap * 3);
+    const canopyMat = new THREE.MeshLambertMaterial({
+      color: 0xffffff, flatShading: true, vertexColors: true,
+      emissive: 0x2d6b31, emissiveIntensity: 0.58,
+    });
+    const broadMat = new THREE.MeshLambertMaterial({
+      color: 0xffffff, flatShading: true, vertexColors: true,
+      emissive: 0x3a7130, emissiveIntensity: 0.52,
+    });
+    applySurfaceAsset(canopyMat, 'foliage', 4.8, 0.52);
+    applySurfaceAsset(broadMat, 'foliage', 4.2, 0.56);
+    const canopyMesh = new THREE.InstancedMesh(makePineCanopyGeometry(), canopyMat, treeCap);
+    const broadMesh = new THREE.InstancedMesh(makeBroadleafCrownGeometry(), broadMat, treeCap);
     // 枝丫残桩(小斜枝)
     const branchMesh = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.09, 0.85, 0.09),
       new THREE.MeshLambertMaterial({ color: 0x5e4026 }),
-      treeCap * 2,
+      treeCap * 3,
     );
     const rootMesh = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.2, 0.18, 1.15),
@@ -558,70 +572,55 @@ varying vec3 vTerrainWorld;`,
         vScale.set(s, s, s);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2, m4);
+        canopyC.setRGB(0.46 + rng() * 0.08, 0.31 + rng() * 0.06, 0.18 + rng() * 0.04);
+        trunkMesh.setColorAt(treeCount * 2, canopyC);
         // 上段细干(伸入树冠)
         vPos.set(x, h + 3.9 * s, z);
         vScale.set(s * 0.58, s * 0.62, s * 0.58);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2 + 1, m4);
-        // 三层错落松冠: 下裙、主冠、顶冠，远看轮廓更自然。
-        vPos.set(x, h + 4.05 * s, z);
-        vScale.set(s * 1.12, s * 0.72, s * 1.12);
+        trunkMesh.setColorAt(treeCount * 2 + 1, canopyC);
+        // 单个松冠几何内部已经包含四层枝盘，缩短整体高度并露出真实树干比例。
+        vPos.set(x, h, z);
+        vScale.set(s * 1.78, s * 7.35, s * 1.78);
         m4.compose(vPos, q0, vScale);
-        canopyMesh.setMatrixAt(pineCount * 3, m4);
-        const g = 0.75 + rng() * 0.5;
-        canopyC.setRGB(0.22 * g, 0.42 * g, 0.18 * g);
-        canopyMesh.setColorAt(pineCount * 3, canopyC);
-        vPos.set(x, h + (3.4 + 2.0) * s, z);
-        vScale.set(s, s, s);
-        m4.compose(vPos, q0, vScale);
-        canopyMesh.setMatrixAt(pineCount * 3 + 1, m4);
-        canopyMesh.setColorAt(pineCount * 3 + 1, canopyC);
-        vPos.set(x, h + (3.4 + 2.0 + 2.3) * s, z);
-        vScale.set(s * 0.58, s * 0.58, s * 0.58);
-        m4.compose(vPos, q0, vScale);
-        canopyMesh.setMatrixAt(pineCount * 3 + 2, m4);
-        canopyMesh.setColorAt(pineCount * 3 + 2, canopyC);
+        canopyMesh.setMatrixAt(pineCount, m4);
+        const pineTone = 0.9 + rng() * 0.22;
+        canopyC.setRGB(0.42 * pineTone, 0.78 * pineTone, 0.36 * pineTone);
+        canopyMesh.setColorAt(pineCount, canopyC);
         pineCount++;
       } else {
-        // 阔叶: 双段树干 + 三团错落树冠
+        // 阔叶: 双段树干 + 合并式五团块面树冠
         const st = s * 0.75;
         vPos.set(x, h + 1.7 * st, z);
         vScale.set(s, st, s);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2, m4);
+        canopyC.setRGB(0.43 + rng() * 0.08, 0.3 + rng() * 0.05, 0.18 + rng() * 0.04);
+        trunkMesh.setColorAt(treeCount * 2, canopyC);
         vPos.set(x, h + 3.9 * st, z);
         vScale.set(s * 0.6, st * 0.55, s * 0.6);
         m4.compose(vPos, q0, vScale);
         trunkMesh.setMatrixAt(treeCount * 2 + 1, m4);
+        trunkMesh.setColorAt(treeCount * 2 + 1, canopyC);
         const cs = s * 1.15;
-        const g = 0.7 + rng() * 0.55;
-        canopyC.setRGB(0.3 * g, 0.5 * g, 0.2 * g);
-        vPos.set(x, h + 3.4 * st + 1.15 * cs, z);
-        vScale.set(cs, cs * 0.8, cs);
+        const broadTone = 0.9 + rng() * 0.2;
+        canopyC.setRGB(0.52 * broadTone, 0.88 * broadTone, 0.4 * broadTone);
+        vPos.set(x, h + 3.4 * st + 0.78 * cs, z);
+        vScale.set(cs, cs, cs);
         m4.compose(vPos, q0, vScale);
-        broadMesh.setMatrixAt(broadCount * 3, m4);
-        broadMesh.setColorAt(broadCount * 3, canopyC);
-        // 两团偏移小冠
-        vPos.set(x + cs * 0.85, h + 3.4 * st + 1.05 * cs, z + cs * 0.3);
-        vScale.set(cs * 0.68, cs * 0.55, cs * 0.68);
-        m4.compose(vPos, q0, vScale);
-        broadMesh.setMatrixAt(broadCount * 3 + 1, m4);
-        broadMesh.setColorAt(broadCount * 3 + 1, canopyC);
-        vPos.set(x - cs * 0.6, h + 3.4 * st + 1.25 * cs, z - cs * 0.5);
-        vScale.set(cs * 0.55, cs * 0.45, cs * 0.55);
-        m4.compose(vPos, q0, vScale);
-        broadMesh.setMatrixAt(broadCount * 3 + 2, m4);
-        broadMesh.setColorAt(broadCount * 3 + 2, canopyC);
+        broadMesh.setMatrixAt(broadCount, m4);
+        broadMesh.setColorAt(broadCount, canopyC);
         broadCount++;
       }
-      // 枝丫残桩 ×2(中下段斜出)
-      for (let bi = 0; bi < 2; bi++) {
+      // 三组中下段枝干连接树干和树冠，近景不会只剩一根直柱。
+      for (let bi = 0; bi < 3; bi++) {
         const ba = rng() * Math.PI * 2;
         q0.setFromEuler(new THREE.Euler(0.5 + rng() * 0.4, ba, 0));
         vPos.set(x + Math.sin(ba) * 0.3 * s, h + (1.9 + bi * 0.9) * s, z + Math.cos(ba) * 0.3 * s);
         vScale.set(s, s, s);
         m4.compose(vPos, q0, vScale);
-        branchMesh.setMatrixAt(treeCount * 2 + bi, m4);
+        branchMesh.setMatrixAt(treeCount * 3 + bi, m4);
       }
       // 三向根系贴住地面，消除树干像插在地表上的感觉。
       for (let ri = 0; ri < 3; ri++) {
@@ -644,15 +643,16 @@ varying vec3 vTerrainWorld;`,
       tryTree((rng() * 2 - 1) * 330, (rng() * 2 - 1) * 330);
     }
     trunkMesh.count = treeCount * 2;
-    canopyMesh.count = pineCount * 3;
-    broadMesh.count = broadCount * 3;
-    branchMesh.count = treeCount * 2;
+    canopyMesh.count = pineCount;
+    broadMesh.count = broadCount;
+    branchMesh.count = treeCount * 3;
     rootMesh.count = treeCount * 3;
     trunkMesh.instanceMatrix.needsUpdate = true;
     canopyMesh.instanceMatrix.needsUpdate = true;
     broadMesh.instanceMatrix.needsUpdate = true;
     branchMesh.instanceMatrix.needsUpdate = true;
     rootMesh.instanceMatrix.needsUpdate = true;
+    if (trunkMesh.instanceColor) trunkMesh.instanceColor.needsUpdate = true;
     if (canopyMesh.instanceColor) canopyMesh.instanceColor.needsUpdate = true;
     if (broadMesh.instanceColor) broadMesh.instanceColor.needsUpdate = true;
     trunkMesh.computeBoundingSphere();
@@ -665,7 +665,7 @@ varying vec3 vTerrainWorld;`,
     scene.add(broadMesh);
     scene.add(branchMesh);
     scene.add(rootMesh);
-    this.environmentDetailInstanceCount += rootMesh.count + pineCount;
+    this.environmentDetailInstanceCount += rootMesh.count + branchMesh.count + pineCount + broadCount;
     this.assetUsage.add('map.nature.tree.pine', pineCount);
     this.assetUsage.add('map.nature.tree.broadleaf', broadCount);
 

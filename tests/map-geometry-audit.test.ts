@@ -12,6 +12,7 @@ type Plot = {
   maxZ: number;
   flatH: number;
   arch: string;
+  storeys?: number;
 };
 
 function createWorld(): World {
@@ -56,6 +57,40 @@ describe('地图与建筑终极几何巡检', () => {
       expect(collider.maxX).toBeGreaterThan(collider.minX);
       expect(collider.maxY).toBeGreaterThan(collider.minY);
       expect(collider.maxZ).toBeGreaterThan(collider.minZ);
+    }
+  });
+
+  it('磐石城拥有两栋不同高度且屋顶可达的高层建筑', () => {
+    const world = createWorld();
+    const towers = (world.buildings.plots as Plot[])
+      .filter((plot) => plot.arch === 'apartment')
+      .sort((a, b) => (b.storeys ?? 0) - (a.storeys ?? 0));
+    expect(towers).toHaveLength(2);
+    expect(towers.map((plot) => plot.storeys)).toEqual([7, 6]);
+    for (const tower of towers) {
+      const centerX = (tower.minX + tower.maxX) * 0.5;
+      const firstFloorY = tower.flatH + 0.28;
+      const roofY = tower.flatH + 0.28 + (tower.storeys ?? 0) * (2.9 + 0.24);
+      const roofPlatforms = world.aabbs.filter((collider) => (
+        collider.tag === 'floor' && Math.abs(collider.maxY - roofY) < 0.05 &&
+        collider.minX < centerX && collider.maxX > centerX
+      ));
+      expect(roofPlatforms.length, `${tower.storeys} 层高楼缺少可站立屋顶`).toBeGreaterThan(0);
+      expect(world.buildings.lootSpots.some((spot) => (
+        spot.x > tower.minX + 2 && spot.x < tower.maxX - 2 &&
+        spot.z > tower.minZ + 2 && spot.z < tower.maxZ - 2 &&
+        Math.abs(spot.y - roofY) < 0.05
+      )), `${tower.storeys} 层高楼屋顶缺少物资`).toBe(true);
+      for (let level = 0; level < (tower.storeys ?? 0); level++) {
+        const fromY = firstFloorY + level * (2.9 + 0.24);
+        const toY = fromY + 2.9 + 0.24;
+        const stairTops = new Set(world.platforms.filter((platform) => (
+          platform.minX >= tower.minX + 2 && platform.maxX <= tower.maxX - 2 &&
+          platform.minZ >= tower.minZ + 2 && platform.maxZ <= tower.maxZ - 2 &&
+          platform.top > fromY + 0.02 && platform.top <= toY + 0.02
+        )).map((platform) => platform.top.toFixed(3)));
+        expect(stairTops.size, `${tower.storeys} 层高楼第 ${level + 1} 跑楼梯不连续`).toBeGreaterThanOrEqual(9);
+      }
     }
   });
 
@@ -111,6 +146,9 @@ describe('地图与建筑终极几何巡检', () => {
         return dx * dx + dz * dz < 0.3 * 0.3;
       });
       expect(blocked, `物资点 ${spot.x.toFixed(2)},${spot.y.toFixed(2)},${spot.z.toFixed(2)} 与实体重叠`).toBe(false);
+      const supportY = world.groundHeight(spot.x, spot.z, spot.y + 0.18);
+      expect(Math.abs(supportY - spot.y),
+        `物资点 ${spot.x.toFixed(2)},${spot.y.toFixed(2)},${spot.z.toFixed(2)} 缺少承托面`).toBeLessThan(0.08);
     }
   });
 

@@ -314,9 +314,13 @@ const audioManifest = [
   writeWav('movement-footstep-water-b.wav', 0.29, footstep({ body: 66, grit: 0.38, splash: 1 }), 112),
   writeWav('movement-splash.wav', 0.46, (t, _i, random, state) => {
     const white = noise(random);
-    state.low += (white - state.low) * 0.14;
-    return (white - state.low) * Math.exp(-t * 8) * 0.6
-      + state.low * Math.exp(-t * 5) * 0.52;
+    state.low += (white - state.low) * 0.035;
+    state.low2 += (state.low - state.low2) * 0.07;
+    const attack = Math.min(1, t / 0.045);
+    const wash = (state.low - state.low2) * Math.exp(-t * 4.8) * 0.9;
+    const body = Math.sin(Math.PI * 2 * (78 - t * 20) * t) * Math.exp(-t * 7) * 0.18;
+    const bubbles = Math.sin(Math.PI * 2 * (210 + t * 150) * t) * Math.exp(-t * 10) * 0.08;
+    return (wash + body + bubbles) * attack;
   }, 44),
   writeWav('action-door.wav', 0.48, (t, _i, random) => {
     const creak = Math.sin(Math.PI * 2 * (145 + t * 130) * t + Math.sin(t * 68) * 0.8);

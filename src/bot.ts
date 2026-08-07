@@ -831,7 +831,7 @@ export class BotController {
     v.driver = c;
     this.driving = v;
     v.speed = Math.abs(v.speed) < 0.5 ? 0 : v.speed;
-    c.airPose = 'sit';
+    c.airPose = v.kind === 'moto' ? 'moto' : 'sit';
     c.setStance('stand');
     c.stanceF = 0;
     c.moveLean = 0;

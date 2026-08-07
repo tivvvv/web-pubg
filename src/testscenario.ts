@@ -256,6 +256,11 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       ]),
     ),
   );
+  panel.dataset.buildingTowerStoreys = game.world.buildings.plots
+    .filter((plot) => plot.arch === 'apartment')
+    .map((plot) => plot.storeys ?? 3)
+    .sort((a, b) => b - a)
+    .join(',');
   const lootKinds: Record<string, number> = {};
   const weaponsByRegion: Record<string, Record<string, number>> = Object.fromEntries(
     regionIds.map((region) => [region, {}]),
@@ -380,9 +385,23 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.matchState = game.stateStr;
       panel.dataset.characterReload = character.reload01.toFixed(3);
       panel.dataset.characterHeld = character.parts.held ? 'true' : 'false';
+      panel.dataset.characterSlots = character.guns.map((slot) => slot?.def.id ?? 'empty').join(',');
+      panel.dataset.nearbyWeaponDrops = game.loot.items.filter((item) => (
+        item.active && isGunKind(item.kind) &&
+        Math.hypot(item.group.position.x - character.pos.x, item.group.position.z - character.pos.z) < 3.2 &&
+        Math.abs(item.baseY - character.pos.y - 1) < 0.65
+      )).map((item) => item.kind).join(',');
       panel.dataset.characterSwimming = String(character.swimming);
       panel.dataset.characterSpeed = character.speed2d.toFixed(2);
       panel.dataset.characterAirPose = character.airPose ?? 'none';
+      panel.dataset.characterShotRecent = String(game.nowSec - character.lastShotT < 0.5);
+      panel.dataset.heldModelScale = character.parts.held?.group.scale.x.toFixed(2) ?? 'none';
+      panel.dataset.characterArmPose = [
+        character.parts.armL.rotation.x,
+        character.parts.armR.rotation.x,
+        character.parts.armL.rotation.z,
+        character.parts.armR.rotation.z,
+      ].map((value) => value.toFixed(2)).join(',');
       panel.dataset.characterKnocked = String(character.knocked);
       panel.dataset.characterHp = character.hp.toFixed(1);
       panel.dataset.characterFlash = character.flashT.toFixed(2);
@@ -418,7 +437,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
           speed: actor.speed2d,
           grounded: actor.grounded,
           swimming: actor.swimming,
-          seated: actor.airPose === 'sit',
+          seated: actor.airPose === 'sit' || actor.airPose === 'moto',
           // 与 Character.applyMove 使用相同脚底参考高度, 避免把头顶平台误判为脚下地面。
           groundY: game.world.groundHeight(actor.pos.x, actor.pos.z, actor.pos.y + 0.1),
           magazine: gun?.mag ?? null,
@@ -512,6 +531,12 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
         panel.dataset.combatSpread = controller.spreadRad.toFixed(5);
         panel.dataset.combatSpeed = character.speed2d.toFixed(2);
         panel.dataset.combatPose = character.stance;
+        panel.dataset.combatSlots = character.guns.map((slot) => slot?.def.id ?? 'empty').join(',');
+        panel.dataset.combatNearbyWeaponDrops = game.loot.items.filter((item) => (
+          item.active && isGunKind(item.kind) &&
+          Math.hypot(item.group.position.x - character.pos.x, item.group.position.z - character.pos.z) < 3.2 &&
+          Math.abs(item.baseY - character.pos.y - 1) < 0.65
+        )).map((item) => item.kind).join(',');
         panel.dataset.combatCameraMode = controller.aiming ? 'ads' : game.viewFpp ? 'fpp' : 'tpp';
         panel.dataset.combatShotRecent = String(game.nowSec - character.lastShotT < 0.5);
         panel.dataset.combatLoudShotRecent = String(game.nowSec - character.lastLoudShotT < 0.5);
@@ -894,6 +919,34 @@ function setupStairs(game: Game): void {
     setGroundPlayer(game, -60, -20);
     return;
   }
+  if (params.get('view') === 'upper') {
+    const ix0 = plot.minX + 2;
+    const ix1 = plot.maxX - 2;
+    const iz0 = plot.minZ + 2;
+    const iz1 = plot.maxZ - 2;
+    const requestedFloor = Math.max(2, Math.min(plot.storeys ?? 3, Math.trunc(Number(params.get('floor')) || 4)));
+    const floorY = plot.flatH + 0.28 + (requestedFloor - 1) * (2.9 + 0.24);
+    const x = ix0 + (ix1 - ix0) * 0.52;
+    const z = iz0 + (iz1 - iz0) * 0.28;
+    setGroundPlayer(game, x, z);
+    const player = game.playerCtl;
+    if (player) {
+      const c = player.char;
+      c.pos.y = floorY;
+      c.groundH = floorY;
+      c.grounded = true;
+      c.guns[0] = { def: WEAPONS.rifle, mag: WEAPONS.rifle.magSize, att: emptyAttachments() };
+      c.guns[1] = { def: WEAPONS.akm, mag: WEAPONS.akm.magSize, att: emptyAttachments() };
+      c.curSlot = 0;
+      player.yaw = Math.PI;
+      player.pitch = -0.04;
+      if (params.get('pickup') === 'replace') {
+        const replacement = game.loot.spawn('sniper', x, floorY, z, WEAPONS.sniper.magSize);
+        if (replacement) window.setTimeout(() => game.tryPickupWeapon(c, replacement), 360);
+      }
+    }
+    return;
+  }
   if (params.get('view') === 'roof') {
     const ix0 = plot.minX + 2;
     const ix1 = plot.maxX - 2;
@@ -921,12 +974,14 @@ function setupStairs(game: Game): void {
     const halfX = (plot.maxX - plot.minX) / 2;
     const halfZ = (plot.maxZ - plot.minZ) / 2;
     const showcaseOffset = params.get('slice') === '1' ? -halfX * 0.68 : 0;
+    const tallFacade = plot.arch === 'apartment' && (plot.storeys ?? 3) > 3;
+    const facadeDistance = tallFacade ? 15.5 : 7.5;
     const candidates = [
       // 垂直切片镜头略偏离门轴, 避免第三人称角色遮住门廊、雨棚和砖石细节。
-      { x: cx + showcaseOffset, z: cz - halfZ - 7.5 },
-      { x: cx - showcaseOffset, z: cz + halfZ + 7.5 },
-      { x: cx - halfX - 7.5, z: cz },
-      { x: cx + halfX + 7.5, z: cz },
+      { x: cx + showcaseOffset, z: cz - halfZ - facadeDistance },
+      { x: cx - showcaseOffset, z: cz + halfZ + facadeDistance },
+      { x: cx - halfX - facadeDistance, z: cz },
+      { x: cx + halfX + facadeDistance, z: cz },
     ];
     const chosen = candidates.find((candidate) => {
       const terrain = game.world.getHeight(candidate.x, candidate.z);
@@ -940,7 +995,7 @@ function setupStairs(game: Game): void {
     const player = game.playerCtl;
     if (player) {
       player.yaw = Math.atan2(cx - chosen.x, cz - chosen.z);
-      player.pitch = 0.18;
+      player.pitch = tallFacade ? 0.34 : 0.18;
     }
     return;
   }
@@ -1063,6 +1118,11 @@ function setupSwim(game: Game): void {
   c.grounded = false;
   c.swimming = true;
   const params = new URLSearchParams(window.location.search);
+  if (params.get('weapon') === 'rifle') {
+    c.guns[0] = { def: WEAPONS.rifle, mag: WEAPONS.rifle.magSize, att: emptyAttachments() };
+    c.ammo.rifle = 90;
+    c.curSlot = 0;
+  }
   if (params.get('auto') === '1') {
     game.input.keys.add('KeyW');
     game.input.keys.add('ShiftLeft');
@@ -1167,6 +1227,24 @@ function setupCombat(game: Game): void {
   c.guns[0] = gun;
   c.ammo[def.ammo] = Math.max(60, def.magSize * 6);
   c.curSlot = 0;
+  if (params.get('pickup') === 'replace') {
+    c.guns[1] = {
+      def: WEAPONS.akm,
+      mag: WEAPONS.akm.magSize,
+      att: emptyAttachments(),
+    };
+    const replacement = game.loot.spawn('sniper', c.pos.x, c.pos.y, c.pos.z, WEAPONS.sniper.magSize);
+    if (replacement) window.setTimeout(() => game.tryPickupWeapon(c, replacement), 360);
+  }
+  if (params.get('unarmed') === '1') {
+    c.guns[0] = null;
+    c.curSlot = 3;
+    if (params.get('autopunch') === '1') {
+      window.setTimeout(() => game.meleeAttack(c), 500);
+      window.setTimeout(() => game.meleeAttack(c), 980);
+      window.setTimeout(() => game.meleeAttack(c), 1460);
+    }
+  }
   const healParam = params.get('heal');
   if (healParam === 'bandage' || healParam === 'medkit' || healParam === 'drink') {
     c.heals[healParam as HealId] = 1;

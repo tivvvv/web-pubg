@@ -182,7 +182,7 @@ export function surfaceTexture(id: SurfaceAssetId): THREE.Texture {
 }
 
 export function applySurfaceAsset(
-  material: THREE.MeshStandardMaterial,
+  material: THREE.MeshStandardMaterial | THREE.MeshLambertMaterial,
   id: SurfaceAssetId,
   scale: number,
   strength: number,

@@ -7,9 +7,9 @@ export const RENDER_QUALITY = Object.freeze({
   antialias: true,
   maxPixelRatio: 1.5,
   shadows: true,
-  baseExposure: 1.08,
-  saturation: 1.06,
-  contrast: 1.035,
+  baseExposure: 1.1,
+  saturation: 1.08,
+  contrast: 1.02,
 });
 
 export interface RenderStats {

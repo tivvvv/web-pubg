@@ -28,7 +28,7 @@ export interface VehicleSpec {
 export const VEHICLE_SPEC: Record<VehicleKind, VehicleSpec> = {
   // seat.y 是角色根节点高度；髋部在根节点上方 0.74m，不能直接填写座垫表面高度。
   car: { hp: 800, seats: 4, radius: 1.4, accel: 9.5, vmax: 22, steer: 1.8, brake: 15, revMax: 7, half: [0.85, 0.8, 1.7], seat: [-0.5, 0.18, 0.15] },
-  moto: { hp: 400, seats: 2, radius: 0.9, accel: 12, vmax: 27, steer: 2.5, brake: 17, revMax: 6, half: [0.4, 0.7, 1.05], seat: [0, 0.08, -0.15] },
+  moto: { hp: 400, seats: 2, radius: 0.9, accel: 12, vmax: 27, steer: 2.5, brake: 17, revMax: 6, half: [0.4, 0.7, 1.05], seat: [0, 0.08, 0.02] },
   buggy: { hp: 560, seats: 2, radius: 1.15, accel: 11, vmax: 25, steer: 2.15, brake: 16, revMax: 7, half: [0.75, 0.8, 1.35], seat: [-0.28, 0.13, -0.1] },
 };
 
@@ -358,8 +358,8 @@ export class Vehicle {
       exhaust.position.set(-0.14, 0.4, -0.3);
       exhaust.castShadow = true;
       g.add(exhaust);
-      add(new THREE.BoxGeometry(0.09, 0.07, 0.14), dark, -0.31, 0.95, 0.82);
-      add(new THREE.BoxGeometry(0.09, 0.07, 0.14), dark, 0.31, 0.95, 0.82);
+      add(new THREE.BoxGeometry(0.09, 0.07, 0.14), dark, -0.31, 0.95, 0.82).name = 'handlebar-grip-left';
+      add(new THREE.BoxGeometry(0.09, 0.07, 0.14), dark, 0.31, 0.95, 0.82).name = 'handlebar-grip-right';
       add(new THREE.BoxGeometry(0.04, 0.34, 0.05), dark, -0.16, 0.22, -0.15, 0, 0.35);
       // 发动机、散热鳍片、脚踏和后避震，让裸露机械结构在近景成立。
       add(new THREE.BoxGeometry(0.32, 0.3, 0.34), chrome, 0, 0.45, 0.02).name = 'engine-block';

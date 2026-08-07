@@ -19,6 +19,12 @@ export const MUZZLE_SCALE: Record<WeaponId, number> = {
   pistol: 0.65, smg: 0.85, rifle: 1.0, akm: 1.12, lmg: 1.24, dmr: 1.18, sniper: 1.5, shotgun: 1.35,
 };
 
+// 枪械相对角色统一放大，近景轮廓和持枪比例更接近真实尺寸；近战与投掷物保持原尺寸。
+export const FIREARM_MODEL_SCALE = 1.12;
+const FIREARM_MODEL_IDS: ReadonlySet<string> = new Set([
+  'pistol', 'smg', 'rifle', 'akm', 'lmg', 'dmr', 'sniper', 'shotgun',
+]);
+
 // 共享几何: 单位盒 / 单位圆柱(沿 Y, 半径 1 高 1) / 单位球
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const CYL = new THREE.CylinderGeometry(1, 1, 1, 10);
@@ -412,6 +418,7 @@ function proto(id: WeaponModelId): WeaponModel {
 export function buildWeaponModel(id: WeaponModelId): WeaponModel {
   const p = proto(id);
   const group = p.group.clone(true);
+  if (FIREARM_MODEL_IDS.has(id)) group.scale.setScalar(FIREARM_MODEL_SCALE);
   const muzzle = group.getObjectByName('muzzle') as THREE.Object3D;
   const mag = (group.getObjectByName('mag') as THREE.Object3D | undefined) ?? null;
   return { group, muzzle, mag };

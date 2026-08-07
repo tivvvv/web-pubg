@@ -94,13 +94,13 @@ export function environmentLighting(
   const rainFill = rain * (0.12 + daylight * 0.14) + storm * 0.05;
   return {
     // 白天亮度维持原水平，夜间和背光面增加环境补光，避免角色与建筑压成纯黑剪影。
-    hemiIntensity: 0.96 + daylight * 0.18 * light + rainFill,
+    hemiIntensity: 1.04 + daylight * 0.18 * light + rainFill,
     moonIntensity: 0.58 * light,
     exposure: clamp(
-      1.12 - daylight * 0.04 + (1 - light) * 0.05 + rain * 0.08 + storm * 0.03
-        + (1 - daylight) * 0.17,
-      1.08,
-      1.35,
+      1.14 - daylight * 0.04 + (1 - light) * 0.06 + rain * 0.08 + storm * 0.03
+        + (1 - daylight) * 0.16,
+      1.1,
+      1.36,
     ),
   };
 }
@@ -140,8 +140,8 @@ export function environmentVisualProfile(input: {
     fogNear: Math.max(24, input.fogNear),
     fogFar: Math.max(input.fogNear + 90, input.fogFar),
     rainOpacity: clamp(rain * (0.54 + daylight * 0.1), 0, 0.64),
-    saturation: clamp(1.06 - cloud * 0.035 - rain * 0.018 + twilight * 0.012, 0.99, 1.07),
-    contrast: clamp(1.035 - cloud * 0.014 - rain * 0.008 + (1 - daylight) * 0.012, 1.01, 1.05),
+    saturation: clamp(1.08 - cloud * 0.03 - rain * 0.015 + twilight * 0.012, 1.01, 1.09),
+    contrast: clamp(1.02 - cloud * 0.008 - rain * 0.006 + (1 - daylight) * 0.008, 1.008, 1.035),
     warmth,
   };
 }
@@ -170,8 +170,9 @@ const NEXT_WEATHER: Record<WeatherKind, readonly WeatherKind[]> = {
   storm: ['rain', 'cloudy'],
 };
 
-const INITIAL_WEATHER: readonly WeatherKind[] = ['clear', 'cloudy', 'rain', 'fog', 'storm'];
-const START_HOURS = [12, 7.25, 16.8, 6.1, 20.4] as const;
+// 构造阶段先展示上午多云菜单，首场对局固定进入晴朗午前，确保玩家第一眼能看清完整场景资产。
+const INITIAL_WEATHER: readonly WeatherKind[] = ['cloudy', 'clear', 'rain', 'fog', 'storm'];
+const START_HOURS = [9.5, 11.25, 16.8, 8.4, 20.4] as const;
 const DAY_DURATION_SEC = 420;
 
 function copyProfile(p: WeatherProfile): WeatherProfile {
@@ -220,20 +221,20 @@ export class EnvironmentSystem {
   private readonly fogColor = new THREE.Color();
   private readonly sunDir = new THREE.Vector3(0.7, 0.6, 0.35).normalize();
   private readonly lightDir = new THREE.Vector3();
-  private readonly dayZenith = new THREE.Color(0x438fce);
-  private readonly dayHorizon = new THREE.Color(0xd9e5e1);
+  private readonly dayZenith = new THREE.Color(0x529dd8);
+  private readonly dayHorizon = new THREE.Color(0xe7eee8);
   private readonly dawnZenith = new THREE.Color(0x405f91);
   private readonly dawnHorizon = new THREE.Color(0xefa16c);
   private readonly nightZenith = new THREE.Color(0x061226);
   private readonly nightHorizon = new THREE.Color(0x17263a);
   private readonly dayWater = new THREE.Color(0x2c7898);
   private readonly nightWater = new THREE.Color(0x102d49);
-  private readonly cloudFog = new THREE.Color(0x687985);
+  private readonly cloudFog = new THREE.Color(0x8798a2);
   private readonly warmSun = new THREE.Color(0xffa268);
   private readonly daySun = new THREE.Color(0xffefcf);
-  private readonly dayHemi = new THREE.Color(0x7cafdd);
+  private readonly dayHemi = new THREE.Color(0x9fc7e4);
   private readonly nightHemi = new THREE.Color(0x9aabc4);
-  private readonly dayGround = new THREE.Color(0x68704d);
+  private readonly dayGround = new THREE.Color(0x7b8969);
   private readonly nightGround = new THREE.Color(0x5c6779);
   private readonly stormWater = new THREE.Color(0x294b5b);
   private current = copyProfile(WEATHER.clear);

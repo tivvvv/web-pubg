@@ -25,6 +25,7 @@ export interface HousePlot {
   arch: ArchId;
   w: number; // 内宽(x)
   d: number; // 内深(z)
+  storeys?: number; // 高层建筑覆盖默认层数
 }
 
 // 原型表: 尺寸范围与村庄放置权重(gym 特殊定点)
@@ -56,14 +57,14 @@ const FABRIC_C = 0x7d836c;
 
 // 坡屋面瓦层的纵深位置和高度。三组成对分布，保持屋面左右对称。
 export const GABLE_ROOF_COURSES = Object.freeze([
-  { z: 0.1, y: 0.205 }, { z: 0.9, y: 0.205 },
-  { z: 0.25, y: 0.425 }, { z: 0.75, y: 0.425 },
-  { z: 0.4, y: 0.645 }, { z: 0.6, y: 0.645 },
+  { z: 0.1, y: 0.31 }, { z: 0.9, y: 0.31 },
+  { z: 0.25, y: 0.63 }, { z: 0.75, y: 0.63 },
+  { z: 0.4, y: 0.94 }, { z: 0.6, y: 0.94 },
 ]);
-export const GABLE_INFILL_LAYERS = 16;
+export const GABLE_INFILL_LAYERS = 24;
 
 export function gableRoofPitch(depth: number): number {
-  return Math.atan2(0.72, Math.max(1, depth * 0.5 + 0.22));
+  return Math.atan2(1.08, Math.max(1, depth * 0.5 + 0.22));
 }
 
 export interface RegionalBuildingStyle {
@@ -182,6 +183,11 @@ export function doorColliderDisabled(alive: boolean, open: boolean, currentAngle
 
 export function isMultiStoreyArch(arch: ArchId): boolean {
   return arch === 'cottage2' || arch === 'terrace' || arch === 'apartment';
+}
+
+export function buildingStoreys(plot: Pick<HousePlot, 'arch' | 'storeys'>): number {
+  if (plot.arch === 'apartment') return Math.max(3, Math.floor(plot.storeys ?? 3));
+  return plot.arch === 'cottage2' || plot.arch === 'terrace' ? 2 : 1;
 }
 
 export interface DoorLeafSegment {
@@ -453,7 +459,7 @@ export class Buildings {
       return false;
     };
 
-    // 中央城区 (-60,-20, r~90): 行列式 12 栋 - 三层×2 露台×3 小店×2 其余民居
+    // 中央城区 (-60,-20, r~90): 两栋高层地标 + 露台×3 小店×2 其余民居
     const townArchs: ArchId[] = [
       'apartment', 'apartment', 'terrace', 'terrace', 'terrace',
       'shop', 'shop', 'cottage2', 'cottage2', 'cottage1', 'cottage1', 'cottage2',
@@ -464,6 +470,10 @@ export class Buildings {
       const placed = tryPlace(arch, streetX + (rng() * 2 - 1) * 14, -20 + (rng() * 2 - 1) * 60, 26, 4.5, 5);
       if (!placed) tryPlace(arch, -60, -20, 82, 4.8, 3.5);
     }
+    // 城区最先生成的两栋公寓分别成为 7 层和 6 层地标，维持确定性位置和清晰天际线。
+    this.plots.filter((plot) => plot.arch === 'apartment').slice(0, 2).forEach((plot, index) => {
+      plot.storeys = index === 0 ? 7 : 6;
+    });
 
     // 东部竞技场 (+180,-40): 体育馆地标 + 2 民居
     tryPlace('gym', 180, -40, 18, 5.5, 13);
@@ -884,13 +894,16 @@ export class Buildings {
 
     // 多层建筑的箱堆按楼梯井方向分开放置，避免压住上下楼出口。
     if (multistory) {
-      const floors = plot.arch === 'apartment' ? 2 : 1;
+      const floors = plot.arch === 'apartment' ? buildingStoreys(plot) - 1 : 1;
       for (let floor = 1; floor <= floors; floor++) {
         const fy = f1 + floor * (WALL_H + SLAB_T);
         const cx = plot.arch === 'apartment'
-          ? (floor === 1 ? ix0 + w * 0.48 : ix0 + w * 0.34)
+          ? (floor % 2 === 1 ? ix0 + w * 0.48 : ix0 + w * 0.34)
           : ix1 - 1.15;
         const cz = iz0 + (floor === 1 ? 1.35 : 1.5);
+        // 薄底座与楼板重叠，保证箱堆在所有楼层都有明确接触面和接触阴影。
+        box('floor', cx - 0.5, fy - 0.025, cz - 0.5, cx + 0.5, fy + 0.055, cz + 0.5,
+          0x625845, { collider: false, detail: true, surface: 'wood' });
         box('wall', cx - 0.45, fy, cz - 0.45, cx + 0.45, fy + 0.78, cz + 0.45, CRATE_C);
         this.addCrateBands(box, cx - 0.45, fy, cz - 0.45, cx + 0.45, fy + 0.78, cz + 0.45);
         if (floor === floors) {
@@ -1039,10 +1052,54 @@ export class Buildings {
     const iz0 = plot.minZ + 2;
     const iz1 = plot.maxZ - 2;
     const f1 = plot.flatH + 0.28;
-    const storeys = plot.arch === 'apartment' ? 3 : plot.arch === 'cottage2' || plot.arch === 'terrace' ? 2 : 1;
+    const storeys = buildingStoreys(plot);
     const top = f1 + storeys * (WALL_H + SLAB_T) - SLAB_T;
     const bandY = Math.max(f1 + 2.46, top - 0.34);
     const t = 0.055;
+    const masonry = { collider: false, detail: true, surface: 'stone' } as const;
+    const trim = { collider: false, detail: true, surface: 'paintedMetal' } as const;
+    const paving = { collider: false, detail: true, surface: 'concrete' } as const;
+
+    // 建筑四周增加窄硬化带和门前步道，消除墙体直接插进草地的临时场景感。
+    const apronY0 = f1 - 0.27;
+    const apronY1 = f1 - 0.19;
+    const apronColor = style === REGIONAL_BUILDING_STYLES.sunfield ? 0xa99b75 :
+      style === REGIONAL_BUILDING_STYLES.tideharbor ? 0x829596 : 0x8d8e87;
+    box('floor', ix0 - 0.72, apronY0, iz0 - 0.72, ix1 + 0.72, apronY1, iz0, apronColor, paving);
+    box('floor', ix0 - 0.72, apronY0, iz1, ix1 + 0.72, apronY1, iz1 + 0.72, apronColor, paving);
+    box('floor', ix0 - 0.72, apronY0, iz0, ix0, apronY1, iz1, apronColor, paving);
+    box('floor', ix1, apronY0, iz0, ix1 + 0.72, apronY1, iz1, apronColor, paving);
+    const entranceX = (ix0 + ix1) * 0.5;
+    box('floor', entranceX - 0.82, apronY0, plot.minZ + 0.32, entranceX + 0.82, apronY1, iz0, apronColor, paving);
+    for (let step = 0; step < 3; step++) {
+      const z = plot.minZ + 0.58 + step * Math.max(0.42, (iz0 - plot.minZ - 0.9) / 3);
+      box('floor', entranceX - 0.68, apronY1, z, entranceX + 0.68, apronY1 + 0.025, z + 0.08, style.accent, paving);
+    }
+
+    // 连续墙脚、层间腰线和厚檐口把大平面拆成近中远三层，避免建筑只剩规则盒体。
+    box('wall', ix0 - 0.07, f1 - 0.08, iz0 - 0.07, ix1 + 0.07, f1 + 0.42, iz0 + 0.02, style.accent, masonry);
+    box('wall', ix0 - 0.07, f1 - 0.08, iz1 - 0.02, ix1 + 0.07, f1 + 0.42, iz1 + 0.07, style.accent, masonry);
+    box('wall', ix0 - 0.07, f1 - 0.08, iz0, ix0 + 0.02, f1 + 0.42, iz1, style.accent, masonry);
+    box('wall', ix1 - 0.02, f1 - 0.08, iz0, ix1 + 0.07, f1 + 0.42, iz1, style.accent, masonry);
+    for (let floor = 1; floor < storeys; floor++) {
+      const y = f1 + floor * (WALL_H + SLAB_T) - 0.14;
+      box('wall', ix0 - 0.11, y, iz0 - 0.1, ix1 + 0.11, y + 0.18, iz0 + 0.03, style.accent, masonry);
+      box('wall', ix0 - 0.11, y, iz1 - 0.03, ix1 + 0.11, y + 0.18, iz1 + 0.1, style.accent, masonry);
+      box('wall', ix0 - 0.1, y, iz0, ix0 + 0.03, y + 0.18, iz1, style.accent, masonry);
+      box('wall', ix1 - 0.03, y, iz0, ix1 + 0.1, y + 0.18, iz1, style.accent, masonry);
+    }
+    box('roof', ix0 - 0.22, top - 0.06, iz0 - 0.22, ix1 + 0.22, top + 0.1, iz0 + 0.04, style.accent, trim);
+    box('roof', ix0 - 0.22, top - 0.06, iz1 - 0.04, ix1 + 0.22, top + 0.1, iz1 + 0.22, style.accent, trim);
+
+    // 侧立面用竖向壁柱划分开间，让无窗墙也保留建筑尺度和承重节奏。
+    for (const z of [iz0 + (iz1 - iz0) * 0.3, iz0 + (iz1 - iz0) * 0.7]) {
+      box('wall', ix0 - 0.075, f1 + 0.42, z - 0.075, ix0 + 0.025, top - 0.12, z + 0.075, style.accent, masonry);
+      box('wall', ix1 - 0.025, f1 + 0.42, z - 0.075, ix1 + 0.075, top - 0.12, z + 0.075, style.accent, masonry);
+    }
+    for (const x of [ix0 + (ix1 - ix0) * 0.28, ix0 + (ix1 - ix0) * 0.72]) {
+      box('wall', x - 0.075, f1 + 0.42, iz0 - 0.075, x + 0.075, top - 0.12, iz0 + 0.025, style.accent, masonry);
+      box('wall', x - 0.075, f1 + 0.42, iz1 - 0.025, x + 0.075, top - 0.12, iz1 + 0.075, style.accent, masonry);
+    }
 
     box('wall', ix0, bandY, iz0 - t, ix1, bandY + 0.13, iz0, style.accent, { collider: false });
     box('wall', ix0, bandY, iz1, ix1, bandY + 0.13, iz1 + t, style.accent, { collider: false });
@@ -1064,6 +1121,17 @@ export class Buildings {
         signX + signW / 2, f1 + 2.68, iz0 - 0.025,
         style.secondary, { collider: false },
       );
+    }
+
+    // 常用入口增加有厚度的雨棚和支架，形成明确的门前视觉焦点。
+    if (plot.arch !== 'barn' && plot.arch !== 'gym' && (idx % 2 === 0 || plot.arch === 'shop')) {
+      const center = (ix0 + ix1) * 0.5;
+      const canopyY = f1 + 2.34;
+      box('roof', center - 1.08, canopyY, iz0 - 0.72, center + 1.08, canopyY + 0.14, iz0 - 0.02, style.secondary, trim);
+      for (const x of [center - 0.88, center + 0.88]) {
+        box('wall', x - 0.045, f1 + 1.72, iz0 - 0.58, x + 0.045, canopyY, iz0 - 0.49, style.accent, trim);
+        box('wall', x - 0.045, canopyY - 0.24, iz0 - 0.54, x + 0.045, canopyY, iz0 - 0.12, style.accent, trim);
+      }
     }
 
     // 山脊通信区和渔港屋顶增加轻量识别构件，保持碰撞关闭以免污染屋顶路线。
@@ -1090,7 +1158,7 @@ export class Buildings {
     const iz0 = plot.minZ + 2;
     const iz1 = plot.maxZ - 2;
     const f1 = plot.flatH + 0.28;
-    const storeys = plot.arch === 'apartment' ? 3 : isMultiStoreyArch(plot.arch) ? 2 : 1;
+    const storeys = buildingStoreys(plot);
     const top = f1 + storeys * (WALL_H + SLAB_T) - SLAB_T;
     const brick = { collider: false, detail: true, surface: 'stonegateBrick' } as const;
     const stone = { collider: false, detail: true, surface: 'stone' } as const;
@@ -1340,7 +1408,10 @@ export class Buildings {
     const roofBase = (() => {
       if (plot.arch === 'barn') return f1 + 4.2;
       if (plot.arch === 'gym') return f1 + 8.6;
-      if (plot.arch === 'apartment') return f1 + WALL_H * 3 + SLAB_T * 2;
+      if (plot.arch === 'apartment') {
+        const storeys = buildingStoreys(plot);
+        return f1 + WALL_H * storeys + SLAB_T * (storeys - 1);
+      }
       if (plot.arch === 'cottage2' || plot.arch === 'terrace') return f1 + WALL_H * 2 + SLAB_T - 0.15;
       return f1 + WALL_H;
     })();
@@ -1387,7 +1458,7 @@ export class Buildings {
   ): void {
     const dz = iz1 - iz0;
     const zm = (iz0 + iz1) / 2;
-    const rise = 0.72;
+    const rise = 1.08;
     const overhang = 0.22;
     const halfRun = dz * 0.5 + overhang;
     const panelLength = Math.hypot(halfRun, rise);
@@ -1417,8 +1488,8 @@ export class Buildings {
       );
     }
 
-    // 六级隐藏碰撞体把斜面高度误差压到 6cm 左右。
-    const collisionSteps = 6;
+    // 十二级隐藏碰撞体让加高屋面的站立高度仍然贴合斜面。
+    const collisionSteps = 12;
     for (let side = 0; side < 2; side++) {
       for (let i = 0; i < collisionSteps; i++) {
         const near = dz * 0.5 * (i / collisionSteps);
@@ -1752,79 +1823,132 @@ export class Buildings {
     this.extras(box, p, ix0, iz0, ix1, uwt + 0.2, w);
   }
 
-  // ═══════════════ 原型: 三层楼(双跑楼梯, 顶层高级物资) ═══════════════
+  // ═══════════════ 原型: 城区高层楼(交替楼梯, 可抵达屋顶) ═══════════════
   private addApartment(world: World, plot: HousePlot, p: Palette, box: BoxFn): void {
     const ix0 = plot.minX + 2, ix1 = plot.maxX - 2, iz0 = plot.minZ + 2, iz1 = plot.maxZ - 2;
     const w = ix1 - ix0, d = iz1 - iz0;
     const f1 = plot.flatH + 0.28;
+    const storeys = buildingStoreys(plot);
+    const storeyStep = WALL_H + SLAB_T;
     box('floor', ix0, f1 - 0.28, iz0, ix1, f1, iz1, FLOOR_C);
-    const wt1 = f1 + WALL_H;
-
     const win = (a0: number, fy: number): Op => ({ a0, a1: a0 + WIN_W, y0: fy + WIN_SILL, y1: fy + WIN_SILL + WIN_H });
     const buried = f1 - 0.9;
     const doorA0 = ix0 + w / 2 - DOOR_W / 2;
-    // 1F: 每面两窗(北墙为门)
-    const lowerWallTop = wt1 + STOREY_JOINT_OVERLAP;
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, buried, lowerWallTop, [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: f1, y1: f1 + DOOR_H, door: true }], p.wall, WT, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, buried, lowerWallTop, [win(ix0 + w * 0.22, f1), win(ix0 + w * 0.62, f1)], p.wall, WT, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, buried, lowerWallTop, [], p.wall, WT, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, buried, lowerWallTop, [win(iz0 + d * 0.3, f1), win(iz0 + d * 0.65, f1)], p.wall, WT, -1);
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
     this.entranceStep(world, box, 'x', iz0, doorA0, doorA0 + DOOR_W, f1, -1);
-    this.lootSpots.push(
-      { x: ix0 + w * 0.3, y: f1, z: iz0 + d * 0.35, premium: false },
-      { x: ix1 - w * 0.25, y: f1, z: iz1 - d * 0.3, premium: false },
-    );
 
-    // 跑梯 1: 西墙 1F→2F(北端上)
-    const f2 = wt1 + SLAB_T;
-    const rise = (f2 - f1) / STAIR_STEPS;
-    const s1x0 = ix0 + 0.14, s1x1 = s1x0 + STAIR_W;
-    const hole1Z0 = iz0 + STAIR_LANDING;
-    const hole1Z1 = iz1 - STAIR_LANDING;
-    this.stairs(box, s1x0, s1x1, hole1Z1, hole1Z0, f1, rise, FLOOR2_C);
-    this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, s1x1, hole1Z0, hole1Z1, wt1, f2, FLOOR2_C);
-    this.stairGuard(box, s1x1, hole1Z0, hole1Z1, f2);
+    const holeZ0 = iz0 + STAIR_LANDING;
+    const holeZ1 = iz1 - STAIR_LANDING;
+    for (let level = 0; level < storeys; level++) {
+      const fy = f1 + level * storeyStep;
+      const wallBottom = level === 0 ? buried : fy - STOREY_JOINT_OVERLAP;
+      const wallTop = fy + WALL_H + (level < storeys - 1 ? STOREY_JOINT_OVERLAP : 0);
+      const wallThickness = level === 0 ? WT : WT2;
+      const stairOnWest = level % 2 === 0;
+      const frontOpenings: Op[] = level === 0
+        ? [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: fy, y1: fy + DOOR_H, door: true }]
+        : [win(ix0 + w * 0.22, fy), win(ix0 + w * 0.64, fy)];
+      this.wallRun(world, box, 'x', iz0, ix0, ix1, wallBottom, wallTop, frontOpenings, p.wall, wallThickness, 1);
+      this.wallRun(world, box, 'x', iz1, ix0, ix1, wallBottom, wallTop,
+        [win(ix0 + w * 0.2, fy), win(ix0 + w * 0.62, fy)], p.wall, wallThickness, -1);
+      this.wallRun(world, box, 'z', ix0, iz0, iz1, wallBottom, wallTop,
+        stairOnWest ? [] : [win(iz0 + d * 0.42, fy)], p.wall, wallThickness, 1);
+      this.wallRun(world, box, 'z', ix1, iz0, iz1, wallBottom, wallTop,
+        stairOnWest ? [win(iz0 + d * 0.42, fy)] : [], p.wall, wallThickness, -1);
 
-    // 2F 墙 + 窗(南北两面双窗, 东西单窗)
-    const win2 = (a0: number): Op => win(a0, f2);
-    const secondWallBottom = f2 - STOREY_JOINT_OVERLAP;
-    const secondWallTop = f2 + WALL_H + STOREY_JOINT_OVERLAP;
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, secondWallBottom, secondWallTop, [win2(ix0 + w * 0.25), win2(ix0 + w * 0.6)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, secondWallBottom, secondWallTop, [win2(ix0 + w * 0.3), win2(ix0 + w * 0.65)], p.wall, WT2, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, secondWallBottom, secondWallTop, [win2(iz0 + d * 0.45)], p.wall, WT2, 1);
-    // 二楼东墙紧邻第二跑楼梯，取消与踏步重叠的窗洞。
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, secondWallBottom, secondWallTop, [], p.wall, WT2, -1);
-    this.lootSpots.push(
-      { x: ix0 + w * 0.5, y: f2, z: iz0 + d * 0.35, premium: false },
-      { x: ix1 - w * 0.2, y: f2, z: iz1 - d * 0.25, premium: false },
-    );
+      // 中央带门洞的短隔墙形成走廊和房间，不侵入两侧交替楼梯井。
+      if (level > 0) {
+        const splitX0 = ix0 + STAIR_W + STAIR_SIDE_CLEARANCE;
+        const splitX1 = ix1 - STAIR_W - STAIR_SIDE_CLEARANCE;
+        if (splitX1 - splitX0 > DOOR_W + 0.9) {
+          const innerDoor = (splitX0 + splitX1) * 0.5 - DOOR_W / 2;
+          this.wallRun(world, box, 'x', iz0 + d * 0.56, splitX0, splitX1, fy, fy + WALL_H - 0.22, [
+            { a0: innerDoor, a1: innerDoor + DOOR_W, y0: fy, y1: fy + DOOR_H, door: true, doorless: true },
+          ], 0xb8b4aa, WT2, -1);
+        }
+      }
 
-    // 跑梯 2: 东墙 2F→3F(南端上, 与跑梯1对角)
-    const wt2 = f2 + WALL_H;
-    const f3 = wt2 + SLAB_T;
-    const rise2 = (f3 - f2) / STAIR_STEPS;
-    const s2x1 = ix1 - 0.14, s2x0 = s2x1 - STAIR_W;
-    const hole2Z0 = iz0 + STAIR_LANDING;
-    const hole2Z1 = iz1 - STAIR_LANDING;
-    this.stairs(box, s2x0, s2x1, hole2Z0, hole2Z1, f2, rise2, FLOOR2_C, 'min');
-    this.stairSlab(box, ix0, ix1, iz0, iz1, s2x0, ix1, hole2Z0, hole2Z1, wt2, f3, FLOOR2_C);
-    this.stairGuard(box, s2x0, hole2Z0, hole2Z1, f3);
+      const premium = level >= storeys - 2;
+      this.lootSpots.push(
+        { x: ix0 + w * 0.43, y: fy, z: iz0 + d * 0.28, premium },
+        { x: ix1 - w * 0.35, y: fy, z: iz1 - d * 0.25, premium },
+      );
 
-    // 3F 墙 + 窗(南北双窗, 东西单窗) + 顶层高级物资
-    const win3 = (a0: number): Op => win(a0, f3);
-    const thirdWallBottom = f3 - STOREY_JOINT_OVERLAP;
-    const thirdWallTop = f3 + WALL_H + STOREY_JOINT_OVERLAP;
-    this.wallRun(world, box, 'x', iz0, ix0, ix1, thirdWallBottom, thirdWallTop, [win3(ix0 + w * 0.25), win3(ix0 + w * 0.6)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'x', iz1, ix0, ix1, thirdWallBottom, thirdWallTop, [win3(ix0 + w * 0.3), win3(ix0 + w * 0.65)], p.wall, WT2, -1);
-    this.wallRun(world, box, 'z', ix0, iz0, iz1, thirdWallBottom, thirdWallTop, [win3(iz0 + d * 0.45)], p.wall, WT2, 1);
-    this.wallRun(world, box, 'z', ix1, iz0, iz1, thirdWallBottom, thirdWallTop, [win3(iz0 + d * 0.5)], p.wall, WT2, -1);
-    this.lootSpots.push(
-      { x: ix0 + w * 0.4, y: f3, z: iz0 + d * 0.35, premium: true },
-      { x: ix1 - w * 0.3, y: f3, z: iz1 - d * 0.3, premium: true },
-    );
-    this.gableRoof(box, ix0, iz0, ix1, iz1, f3 + WALL_H, p.roof, p.wall);
-    this.extras(box, p, ix0, iz0, ix1, f3 + WALL_H + 0.2, w);
+      // 每层楼梯交替靠西/东墙布置，最后一跑直接抵达可战斗屋顶。
+      const nextFloor = fy + storeyStep;
+      const rise = storeyStep / STAIR_STEPS;
+      if (stairOnWest) {
+        const sx0 = ix0 + 0.14, sx1 = sx0 + STAIR_W;
+        this.stairs(box, sx0, sx1, holeZ1, holeZ0, fy, rise, FLOOR2_C);
+        this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, sx1, holeZ0, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
+        this.stairGuard(box, sx1, holeZ0, holeZ1, nextFloor);
+      } else {
+        const sx1 = ix1 - 0.14, sx0 = sx1 - STAIR_W;
+        this.stairs(box, sx0, sx1, holeZ0, holeZ1, fy, rise, FLOOR2_C, 'min');
+        this.stairSlab(box, ix0, ix1, iz0, iz1, sx0, ix1, holeZ0, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
+        this.stairGuard(box, sx0, holeZ0, holeZ1, nextFloor);
+      }
+
+      // 浅阳台和竖向立面构件打破高盒子轮廓，同时保持室内与导航碰撞不变。
+      if (level > 0 && level % 2 === 1) {
+        const balconyX0 = ix0 + w * 0.28;
+        const balconyX1 = ix1 - w * 0.18;
+        box('floor', balconyX0, fy + 0.03, iz1, balconyX1, fy + 0.16, iz1 + 0.62,
+          0x85837d, { collider: false, detail: true, surface: 'concrete' });
+        // 开放式护栏和墙侧托臂取代整块实心板，远看不再像悬浮黑箱。
+        for (const railY of [fy + 0.48, fy + 0.9]) {
+          box('wall', balconyX0, railY, iz1 + 0.53, balconyX1, railY + 0.08, iz1 + 0.61,
+            RAIL_C, { collider: false, detail: true, surface: 'paintedMetal' });
+        }
+        const balconyPosts = 4;
+        for (let post = 0; post <= balconyPosts; post++) {
+          const x = balconyX0 + (balconyX1 - balconyX0) * post / balconyPosts;
+          box('wall', x - 0.035, fy + 0.14, iz1 + 0.53, x + 0.035, fy + 0.96, iz1 + 0.61,
+            RAIL_C, { collider: false, detail: true, surface: 'paintedMetal' });
+        }
+        for (const x of [balconyX0 + 0.3, balconyX1 - 0.3]) {
+          box('wall', x - 0.07, fy - 0.34, iz1 + 0.04, x + 0.07, fy + 0.16, iz1 + 0.18,
+            0x66615a, { collider: false, detail: true, surface: 'metal' });
+          box('wall', x - 0.07, fy - 0.08, iz1 + 0.12, x + 0.07, fy + 0.1, iz1 + 0.57,
+            0x66615a, { collider: false, detail: true, surface: 'metal' });
+        }
+      }
+    }
+
+    const roofY = f1 + storeys * storeyStep;
+    const parapet = 0.92;
+    box('wall', ix0 - 0.08, roofY, iz0 - 0.08, ix1 + 0.08, roofY + parapet, iz0 + 0.12, p.roof);
+    box('wall', ix0 - 0.08, roofY, iz1 - 0.12, ix1 + 0.08, roofY + parapet, iz1 + 0.08, p.roof);
+    box('wall', ix0 - 0.08, roofY, iz0, ix0 + 0.12, roofY + parapet, iz1, p.roof);
+    box('wall', ix1 - 0.12, roofY, iz0, ix1 + 0.08, roofY + parapet, iz1, p.roof);
+    this.lootSpots.push({ x: ix0 + w * 0.52, y: roofY, z: iz1 - 1.25, premium: true });
+
+    if (storeys >= 7) {
+      // 7 层塔楼使用居中的设备冠部和通信桅杆，形成较尖锐的城市主地标。
+      const coreX = (ix0 + ix1) * 0.5;
+      box('wall', coreX - 1.25, roofY, iz0 + 0.7, coreX + 1.25, roofY + 1.5, iz0 + 2.55,
+        0x777d7c, { detail: true, surface: 'concrete' });
+      box('roof', coreX - 1.42, roofY + 1.5, iz0 + 0.55, coreX + 1.42, roofY + 1.68, iz0 + 2.7,
+        p.roof, { collider: false, detail: true, surface: 'roof' });
+      box('wall', coreX - 0.06, roofY + 1.68, iz0 + 1.55, coreX + 0.06, roofY + 4.25, iz0 + 1.67,
+        0x4a5456, { collider: false, detail: true, surface: 'metal' });
+      for (const y of [roofY + 2.55, roofY + 3.35]) {
+        box('wall', coreX - 0.72, y, iz0 + 1.58, coreX + 0.72, y + 0.07, iz0 + 1.64,
+          0x4a5456, { collider: false, detail: true, surface: 'metal' });
+      }
+    } else {
+      // 6 层住宅楼采用偏置水箱和屋顶棚架，与通信塔形成不同的阶梯式轮廓。
+      const tankX = ix1 - 2.05;
+      box('wall', tankX - 0.85, roofY + 0.5, iz0 + 0.7, tankX + 0.85, roofY + 1.48, iz0 + 2.2,
+        0x697b7e, { collider: false, detail: true, surface: 'paintedMetal' });
+      for (const x of [ix0 + 0.85, ix0 + 3.25]) {
+        box('wall', x - 0.08, roofY, iz1 - 2.4, x + 0.08, roofY + 2.0, iz1 - 2.24,
+          0x5c6464, { collider: false, detail: true, surface: 'metal' });
+      }
+      box('roof', ix0 + 0.68, roofY + 1.9, iz1 - 2.55, ix0 + 3.42, roofY + 2.06, iz1 - 0.55,
+        p.roof, { collider: false, detail: true, surface: 'roof' });
+    }
+    this.extras(box, p, ix0, iz0, ix1, roofY + 0.18, w);
   }
 
   // ═══════════════ 原型: 谷仓(高大单空间, 大门洞) ═══════════════

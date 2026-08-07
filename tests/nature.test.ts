@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  makeDistantRidgeGeometry, makeFernGeometry, makeWildflowerGeometry,
+  makeBroadleafCrownGeometry, makeDistantRidgeGeometry, makeFernGeometry, makePineCanopyGeometry,
+  makeWildflowerGeometry,
   naturalDetailBudget, shorelineSuitability, terrainSurfaceWeights,
 } from '../src/nature';
 import { WATER_Y } from '../src/world';
@@ -36,9 +37,17 @@ describe('地形与自然环境重制', () => {
   });
 
   it('自然物程序几何具有可渲染顶点与法线', () => {
-    for (const geometry of [makeFernGeometry(), makeWildflowerGeometry(), makeDistantRidgeGeometry(1.2)]) {
+    for (const geometry of [
+      makeFernGeometry(), makeWildflowerGeometry(), makePineCanopyGeometry(),
+      makeBroadleafCrownGeometry(), makeDistantRidgeGeometry(1.2),
+    ]) {
       expect(geometry.getAttribute('position').count).toBeGreaterThan(12);
       expect(geometry.getAttribute('normal').count).toBe(geometry.getAttribute('position').count);
     }
+  });
+
+  it('树冠资产具有多层次轮廓而不是单一几何体', () => {
+    expect(makePineCanopyGeometry().getAttribute('position').count).toBeGreaterThanOrEqual(200);
+    expect(makeBroadleafCrownGeometry().getAttribute('position').count).toBeGreaterThanOrEqual(150);
   });
 });

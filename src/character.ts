@@ -36,6 +36,8 @@ export interface LocomotionPose {
   armSwing: number;
   bob: number;
   hipYaw: number;
+  shoulderRoll: number;
+  lateral: number;
 }
 
 // 相位驱动的步态采样让脚步落点, 膝盖弯曲, 手臂反摆和重心起伏保持同一节奏。
@@ -45,19 +47,45 @@ export function locomotionPose(phase: number, speed: number, stanceF: number, bl
   const prone = Math.max(0, stanceF - 1);
   const strideScale = clamp(blend, 0, 1) * (1 - crouch * 0.5 - prone * 0.72);
   const stride = Math.sin(phase);
+  const harmonic = Math.sin(phase * 2) * motion * 0.08;
   // Bend the knee that is travelling forward. Deriving the lift from the
   // stride itself keeps the knee and thigh in phase at every frame rate.
-  const leftLift = Math.max(0, -stride);
-  const rightLift = Math.max(0, stride);
+  const leftLift = Math.max(0, -stride + harmonic);
+  const rightLift = Math.max(0, stride + harmonic);
   const amplitude = (0.3 + motion * 0.56) * strideScale;
   return {
-    legL: stride * amplitude,
-    legR: -stride * amplitude,
+    legL: (stride + harmonic) * amplitude,
+    legR: (-stride + harmonic) * amplitude,
     kneeL: leftLift * (0.12 + motion * 0.5) * strideScale,
     kneeR: rightLift * (0.12 + motion * 0.5) * strideScale,
-    armSwing: -stride * (0.18 + motion * 0.42) * strideScale,
+    armSwing: -(stride + harmonic * 0.45) * (0.2 + motion * 0.46) * strideScale,
     bob: (0.5 - Math.cos(phase * 2) * 0.5) * (0.014 + motion * 0.045) * (1 - crouch * 0.72),
-    hipYaw: -stride * motion * 0.065 * (1 - prone),
+    hipYaw: -stride * motion * 0.105 * (1 - prone),
+    shoulderRoll: (-stride * 0.026 + Math.sin(phase * 2) * 0.012) * motion * (1 - prone),
+    lateral: Math.cos(phase) * motion * 0.018 * strideScale,
+  };
+}
+
+export interface MeleeMotionPose {
+  windup: number;
+  extension: number;
+  recovery: number;
+}
+
+function smoothRange(edge0: number, edge1: number, value: number): number {
+  const t = clamp((value - edge0) / Math.max(0.001, edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+// 预备、爆发、回收分成三段，避免旧动画只在前半程抽动一次后僵直等待冷却。
+export function meleeMotionPose(progress: number): MeleeMotionPose {
+  const p = clamp(progress, 0, 1);
+  const strike = smoothRange(0.16, 0.4, p);
+  const recover = smoothRange(0.52, 0.98, p);
+  return {
+    windup: smoothRange(0, 0.2, p) * (1 - strike),
+    extension: strike * (1 - recover),
+    recovery: recover,
   };
 }
 
@@ -292,6 +320,7 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     epad.position.set(0, -0.1, -0.075);
     elbow.add(epad);
     const hand = new THREE.Mesh(GEO.hand, MAT.glove);
+    hand.name = side < 0 ? 'hand-left' : 'hand-right';
     hand.position.set(0, -0.32, 0);
     elbow.add(hand);
     arm.add(elbow);
@@ -420,7 +449,7 @@ export class Character {
   stance: Stance = 'stand'; // 姿态: 站/蹲/趴
   stanceF = 0;         // 姿态插值 0站→1蹲→2趴(平滑过渡)
   groundH = 0;         // 脚下地面高(供贴地阴影)
-  airPose: 'fall' | 'canopy' | 'sit' | null = null; // 空降姿势/驾驶坐姿(驾驶时收枪)
+  airPose: 'fall' | 'canopy' | 'sit' | 'moto' | null = null; // 空降姿势/乘车坐姿(驾驶时收枪)
   airSteerRight = 0;   // 自由落体左右修正 -1..1
   airSteerForward = 0; // 自由落体前后修正 -1..1
   swimming = false;      // 深水游泳中(由 Game.updateSwim 维护)
@@ -442,12 +471,11 @@ export class Character {
   private swimF = 0;     // 游泳姿态混合 0..1(平滑进出)
   private knockF = 0;    // 击倒/起身姿态混合 0..1
   private airPoseF = 0;   // 空降/乘车姿态混合 0..1
-  private visualAirPose: 'fall' | 'canopy' | 'sit' | null = null;
+  private visualAirPose: 'fall' | 'canopy' | 'sit' | 'moto' | null = null;
   private deathPoseCaptured = false;
   private deathStartRotX = 0;
   private deathStartY = 0;
   canopyGroup: THREE.Group | null = null;   // 降落伞模型(开伞挂载, 落地卸载)
-  private lastLegSwing = 0; // 上帧腿摆角(疾跑摆臂用)
   lastAttackerId = 0;
   lastShotT = -100;    // 最近一次开枪时间(小地图红点)
   lastLoudShotT = -100; // 最近一次未消音开枪时间(敌人小地图暴露)
@@ -747,6 +775,7 @@ export class Character {
       if (Math.abs(this.stanceF - stTarget) < 0.03) this.stanceF = stTarget;
     }
     const p = this.parts;
+    p.inner.position.x = 0;
     this.idleT += dt;
     this.locomotionF = advancePoseBlend(
       this.locomotionF,
@@ -872,6 +901,27 @@ export class Character {
         p.elbowR.rotation.x = lerp(-0.35, -0.72, f);
         p.kneeL.rotation.x = 0.38 * f;
         p.kneeR.rotation.x = 0.5 * f;
+      } else if (this.visualAirPose === 'moto') {
+        // 摩托驾驶员前倾贴近车把，双手与握把同宽且肘部只保留自然微屈。
+        p.inner.rotation.x = lerp(p.inner.rotation.x, 0.2 * f, k);
+        p.inner.rotation.y = lerp(p.inner.rotation.y, 0, k);
+        p.inner.rotation.z = lerp(p.inner.rotation.z, 0, k);
+        p.inner.position.y = lerp(p.inner.position.y, 0, k);
+        p.inner.position.z = lerp(p.inner.position.z, 0, k);
+        p.armL.rotation.x = lerp(p.armL.rotation.x, -1 * f, k);
+        p.armL.rotation.z = lerp(p.armL.rotation.z, 0, k);
+        p.armR.rotation.x = lerp(p.armR.rotation.x, -1 * f, k);
+        p.armR.rotation.z = lerp(p.armR.rotation.z, 0, k);
+        p.armL.position.z = lerp(p.armL.position.z, 0, k);
+        p.armR.position.z = lerp(p.armR.position.z, 0, k);
+        p.elbowL.rotation.x = lerp(p.elbowL.rotation.x, -0.15 * f, k);
+        p.elbowR.rotation.x = lerp(p.elbowR.rotation.x, -0.15 * f, k);
+        p.legL.rotation.x = lerp(p.legL.rotation.x, -1.38 * f, k);
+        p.legL.rotation.z = lerp(p.legL.rotation.z, 0.12 * f, k);
+        p.legR.rotation.x = lerp(p.legR.rotation.x, -1.38 * f, k);
+        p.legR.rotation.z = lerp(p.legR.rotation.z, -0.12 * f, k);
+        p.kneeL.rotation.x = 1.28 * f;
+        p.kneeR.rotation.x = 1.28 * f;
       } else {
         // 驾驶/乘客坐姿平滑进入和离开, 避免上下车瞬间折叠.
         p.inner.rotation.x = lerp(p.inner.rotation.x, 0.05 * f, k);
@@ -1012,39 +1062,55 @@ export class Character {
     // 姿态混合: fC 蹲权重(0..1), fP 趴权重(0..1)
     const fC = Math.min(this.stanceF, 1);
     const fP = Math.max(0, this.stanceF - 1);
-    // 疾跑摆臂(不瞄准时, 与腿反相)
-    const sprintF = this.speed2d > 5 && this.aimPitch < 0.01 ? Math.min(1, (this.speed2d - 5) / 1.6) : 0;
-    // 挥击动画(快进慢回: 交替直拳 / 砍刀横斩; 命中时机不变)
+    let meleeBodyLean = 0;
+    let meleeBodyDip = 0;
+    // 挥击动画(预备→爆发→回收: 交替直拳 / 砍刀横斩; 命中时机不变)
     if (this.swingT > 0) {
-      this.swingT = Math.max(0, this.swingT - dt * 3.4);
+      this.swingT = Math.max(0, this.swingT - dt * 2.9);
       const prog = 1 - this.swingT; // 0→1
-      const ext = Math.sin(Math.min(1, prog * 1.9) * Math.PI); // 峰值偏前的出收曲线
+      const motion = meleeMotionPose(prog);
+      const ext = motion.extension;
       const side = this.swingSide;
       const arm = side > 0 ? p.armR : p.armL;
+      const offArm = side > 0 ? p.armL : p.armR;
+      const elbow = side > 0 ? p.elbowR : p.elbowL;
+      const offElbow = side > 0 ? p.elbowL : p.elbowR;
       if (this.melee.def.id !== 'fists') {
-        // 近战装备: 大幅度横斩或挥击(手臂横扫过身)
-        arm.rotation.x = -1.5;
-        arm.rotation.z = side * (0.95 - prog * 1.9);
-        arm.position.z = 0.1 + ext * 0.28;
+        // 近战装备: 先向持械侧蓄力，再横扫过身体并自然回收。
+        arm.rotation.x = -1.18 - ext * 0.42 - motion.windup * 0.18;
+        arm.rotation.z = side * (0.82 + motion.windup * 0.42 - ext * 1.65);
+        arm.position.z = 0.06 + ext * 0.3 - motion.windup * 0.05;
+        elbow.rotation.x = -0.38 + ext * 0.22;
+        offArm.rotation.x = -0.52 - ext * 0.28;
+        offArm.rotation.z = -side * 0.24;
+        offElbow.rotation.x = -0.62;
       } else {
-        // 交替直拳: 拳峰前送 + 躯干微转 + 小前冲
-        arm.rotation.x = -1.3 - ext * 0.55;
-        arm.rotation.z = (side > 0 ? -0.1 : 0.25) + side * -ext * 0.12;
-        arm.position.z = ext * 0.4;
+        // 交替直拳: 后撤蓄力、肩部送拳、肘部伸直，另一只手保持护脸。
+        arm.rotation.x = -0.42 - motion.windup * 0.34 - ext * 1.48;
+        arm.rotation.y = side * (motion.windup * 0.12 - ext * 0.09);
+        arm.rotation.z = -side * (0.11 + ext * 0.13);
+        arm.position.z = ext * 0.42 - motion.windup * 0.07;
+        elbow.rotation.x = -0.5 + ext * 0.43;
+        offArm.rotation.x = -0.62 - ext * 0.3;
+        offArm.rotation.y = -side * 0.08;
+        offArm.rotation.z = side * 0.22;
+        offArm.position.z = 0.08 + ext * 0.05;
+        offElbow.rotation.x = -0.72;
       }
-      p.inner.rotation.y = -side * ext * 0.3;
-      p.inner.position.z = ext * 0.07;
+      p.inner.rotation.y = side * (motion.windup * 0.16 - ext * 0.36);
+      p.inner.position.z = ext * 0.1 - motion.windup * 0.025;
+      meleeBodyLean = ext * 0.11;
+      meleeBodyDip = ext * 0.045;
     } else {
-      // 复位(挥臂基线; armL 的 z 由持枪姿态段每帧重写)
-      p.armR.rotation.x = -1.3 + this.lastLegSwing * sprintF;
+      // 复位。徒手步态会在下方把双臂放回身体两侧，持械姿态仍由武器段覆盖。
+      p.armR.rotation.x = -1.3;
       p.armR.rotation.z = -0.1;
       p.armR.position.z = 0;
       p.armL.position.z = 0;
+      p.armR.rotation.y = 0;
+      p.armL.rotation.y = 0;
       p.inner.rotation.y = 0;
       p.inner.position.z = 0;
-    }
-    if (sprintF > 0) {
-      p.armL.rotation.x = -1.5 - this.lastLegSwing * sprintF;
     }
     // 走路摆动(蹲/趴时幅度衰减)
     let legSwing = 0;
@@ -1055,9 +1121,6 @@ export class Character {
       gait = locomotionPose(this.walkPhase, this.speed2d, this.stanceF, this.locomotionF);
       legSwing = gait.legL;
       bob = gait.bob;
-      this.lastLegSwing = legSwing;
-    } else {
-      this.lastLegSwing *= 1 - Math.min(1, dt * 8);
     }
     // 蹲: 腿前弯; 趴: 腿顺直
     const legBend = -1.05 * fC * (1 - fP);
@@ -1067,15 +1130,26 @@ export class Character {
     p.kneeL.rotation.x = gait.kneeL + fC * 0.5 * (1 - fP);
     p.kneeR.rotation.x = gait.kneeR + fC * 0.5 * (1 - fP);
     // 身体下沉(蹲 -0.53 / 趴 +0.30 由旋转完成趴倒)与旋转(趴 = 面朝下平躺, 部分随瞄准俯仰)
-    p.inner.position.y = bob - 0.53 * fC + 0.83 * fP;
+    p.inner.position.x = gait.lateral * (1 - fP);
+    p.inner.position.y = bob - meleeBodyDip - 0.53 * fC + 0.83 * fP;
     // 移动前倾(速度越大越前倾, 趴下不再加)
     const lean = Math.min(1, this.speed2d / 6.6) * 0.18 * (1 - fP);
-    p.inner.rotation.x = 0.2 * fC + lean + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);
+    p.inner.rotation.x = 0.2 * fC + lean + meleeBodyLean + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);
     p.inner.rotation.y += gait.hipYaw * (wantId ? 0.45 : 1);
-    p.inner.rotation.z = this.moveLean * 0.075 * (1 - fP);
+    p.inner.rotation.z = (this.moveLean * 0.075 + gait.shoulderRoll * (wantId ? 0.35 : 1)) * (1 - fP);
     if (!wantId && this.swingT <= 0 && this.actionF <= 0.001) {
-      p.armL.rotation.x = -1.15 + gait.armSwing;
-      p.armR.rotation.x = -1.3 - gait.armSwing;
+      // 徒手跑步从身体两侧自然前后反摆，不再沿用持枪时的前伸基线。
+      p.armL.rotation.x = -0.08 + gait.armSwing;
+      p.armL.rotation.y = -gait.hipYaw * 0.45;
+      p.armL.rotation.z = 0.12;
+      p.armR.rotation.x = -0.08 - gait.armSwing;
+      p.armR.rotation.y = gait.hipYaw * 0.45;
+      p.armR.rotation.z = -0.12;
+      const runBend = clamp(this.speed2d / 6.9, 0, 1);
+      p.elbowL.rotation.x = -0.18 - Math.max(0, gait.armSwing) * 0.58 - runBend * 0.08;
+      p.elbowR.rotation.x = -0.18 - Math.max(0, -gait.armSwing) * 0.58 - runBend * 0.08;
+      p.head.rotation.y = -gait.hipYaw * 0.38;
+      p.head.rotation.z = -gait.shoulderRoll * 0.32;
     } else if (wantId) {
       p.elbowL.rotation.x = -0.58;
       p.elbowR.rotation.x = -0.46;

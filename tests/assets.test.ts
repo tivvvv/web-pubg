@@ -67,6 +67,20 @@ describe('美术与音效静态资产', () => {
     }
   });
 
+  it('入水音效使用柔和起音而不是枪声式瞬态', () => {
+    const wav = readFileSync(projectFile(AUDIO_ASSET_URLS['movement-splash']));
+    const peak = (startMs: number, endMs: number): number => {
+      const start = 44 + Math.floor(startMs * 22.05) * 2;
+      const end = Math.min(wav.length, 44 + Math.floor(endMs * 22.05) * 2);
+      let value = 0;
+      for (let offset = start; offset + 1 < end; offset += 2) {
+        value = Math.max(value, Math.abs(wav.readInt16LE(offset)));
+      }
+      return value;
+    };
+    expect(peak(0, 5)).toBeLessThan(peak(35, 90) * 0.45);
+  });
+
   it('六种落脚表面均提供两个独立声音变体', () => {
     expect(Object.keys(FOOTSTEP_ASSET_IDS)).toEqual([
       'grass', 'dirt', 'wood', 'stone', 'metal', 'water',
