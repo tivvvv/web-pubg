@@ -105,6 +105,27 @@ describe('地图与建筑终极几何巡检', () => {
           ));
           expect(overhead, `${tower.storeys} 层高楼第 ${level + 1} 跑楼梯头顶净空不足`).toBeUndefined();
         }
+
+        // 模拟角色沿梯段左中右三条路线连续行走。每一步都必须能吸附到下一踏步，
+        // 碰撞解析后也不能被楼板边缘或护栏横向夹出梯段。
+        const ordered = [...stairPlatforms].sort((a, b) => a.top - b.top);
+        expect(ordered.length).toBeGreaterThanOrEqual(10);
+        const stairMinX = Math.min(...ordered.map((platform) => platform.minX));
+        const stairMaxX = Math.max(...ordered.map((platform) => platform.maxX));
+        for (const lane of [0.24, 0.5, 0.76]) {
+          let feetY = fromY;
+          for (const platform of ordered) {
+            const x = stairMinX + (stairMaxX - stairMinX) * lane;
+            const z = (platform.minZ + platform.maxZ) * 0.5;
+            const point = new THREE.Vector3(x, feetY, z);
+            world.resolveCollision(point, 0.38);
+            const next = world.groundHeight(point.x, point.z, feetY + 0.1);
+            expect(next, `${tower.storeys} 层高楼第 ${level + 1} 跑楼梯无法连续抬步`).toBeGreaterThanOrEqual(feetY);
+            expect(Math.abs(point.x - x), `${tower.storeys} 层高楼第 ${level + 1} 跑楼梯侧向卡位`).toBeLessThan(0.08);
+            feetY = Math.max(feetY, next);
+          }
+          expect(feetY, `${tower.storeys} 层高楼第 ${level + 1} 跑楼梯未抵达上层`).toBeGreaterThan(toY - 0.36);
+        }
       }
     }
   });

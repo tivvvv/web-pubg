@@ -111,11 +111,13 @@ const SLAB_T = 0.24;        // 楼板厚
 const WALL_H = 2.9;         // 层高(地板面→墙顶)
 const DOOR_W = 1.3, DOOR_H = 2.2;
 const WIN_W = 1.15, WIN_SILL = 1.05, WIN_H = 1.05;
-const STAIR_STEPS = 9, STAIR_W = 1.8;
+const STAIR_STEPS = 10, STAIR_W = 2.1;
 const STAIR_LANDING = 1.6;         // 楼梯两端净空, 足够角色转身和交错通行
-const STAIR_EDGE_OVERLAP = 0.04;   // 仅保留遮缝所需的轻微搭接, 避免楼板压进首末踏步
+const STAIR_EDGE_OVERLAP = 0.015;  // 仅保留遮缝所需的轻微搭接, 避免楼板压进首末踏步
 const STAIR_RAIL_END_CLEARANCE = 0.16; // 斜扶手两端退让楼板和落脚平台, 避免插入楼层
 const STAIR_SIDE_CLEARANCE = 1.45; // 开放侧到室内隔墙的最小通道宽度
+const APARTMENT_STAIR_WELL_MARGIN = 0.24; // 高楼梯井额外容纳角色半径和斜向移动
+const APARTMENT_STAIR_END_MARGIN = 0.28;  // 首末踏步与楼板边缘保持可见净空
 const STOREY_JOINT_OVERLAP = 0.14; // 上下层墙跨过楼板边带互相搭接, 楼梯井侧也不会漏光
 const BOUND = 265;
 const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
@@ -2044,8 +2046,8 @@ export class Buildings {
     const f2 = wt1 + SLAB_T;
     const rise = (f2 - f1) / STAIR_STEPS;
     const stairX0 = ix0 + 0.14, stairX1 = stairX0 + STAIR_W;
-    const holeZ0 = iz0 + STAIR_LANDING;
-    const holeZ1 = iz1 - STAIR_LANDING;
+    const holeZ0 = iz0 + STAIR_LANDING - APARTMENT_STAIR_END_MARGIN;
+    const holeZ1 = iz1 - STAIR_LANDING + APARTMENT_STAIR_END_MARGIN;
     this.stairs(box, stairX0, stairX1, holeZ1, holeZ0, f1, rise, FLOOR2_C);
     this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, stairX1, holeZ0, holeZ1, wt1, f2, FLOOR2_C);
     this.lootSpots.push(
@@ -2191,12 +2193,14 @@ export class Buildings {
       if (stairOnWest) {
         const sx0 = ix0 + 0.14, sx1 = sx0 + STAIR_W;
         this.stairs(box, sx0, sx1, holeZ1, holeZ0, fy, rise, FLOOR2_C);
-        this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, sx1, holeZ0, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
+        this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, sx1 + APARTMENT_STAIR_WELL_MARGIN,
+          holeZ0, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
         this.stairGuard(box, sx1, holeZ0, holeZ1, nextFloor);
       } else {
         const sx1 = ix1 - 0.14, sx0 = sx1 - STAIR_W;
         this.stairs(box, sx0, sx1, holeZ0, holeZ1, fy, rise, FLOOR2_C, 'min');
-        this.stairSlab(box, ix0, ix1, iz0, iz1, sx0, ix1, holeZ0, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
+        this.stairSlab(box, ix0, ix1, iz0, iz1, sx0 - APARTMENT_STAIR_WELL_MARGIN, ix1,
+          holeZ0, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
         this.stairGuard(box, sx0, holeZ0, holeZ1, nextFloor);
       }
 
