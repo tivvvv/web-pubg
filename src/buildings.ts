@@ -2132,9 +2132,11 @@ export class Buildings {
     box('floor', ix0, f1 - 0.28, iz0, ix1, f1, iz1, FLOOR_C);
     const win = (a0: number, fy: number): Op => ({ a0, a1: a0 + WIN_W, y0: fy + WIN_SILL, y1: fy + WIN_SILL + WIN_H });
     const buried = f1 - 0.9;
-    const doorA0 = ix0 + w / 2 - DOOR_W / 2;
+    // 高层入口使用真正的双扇门。普通住宅的单扇宽度会让打开后的门板横扫
+    // 整条入口动线，角色从门框侧面经过时容易被夹住。
+    const doorA0 = ix0 + w / 2 - DOOR_W;
     this.skirt(box, ix0, iz0, ix1, iz1, f1 - 0.28);
-    this.entranceStep(world, box, 'x', iz0, doorA0, doorA0 + DOOR_W, f1, -1);
+    this.entranceStep(world, box, 'x', iz0, doorA0, doorA0 + DOOR_W * 2, f1, -1, 1.0);
 
     const holeZ0 = iz0 + STAIR_LANDING;
     const holeZ1 = iz1 - STAIR_LANDING;
@@ -2145,7 +2147,17 @@ export class Buildings {
       const wallThickness = level === 0 ? WT : WT2;
       const stairOnWest = level % 2 === 0;
       const frontOpenings: Op[] = level === 0
-        ? [{ a0: doorA0, a1: doorA0 + DOOR_W, y0: fy, y1: fy + DOOR_H, door: true }]
+        ? [
+            { a0: doorA0, a1: doorA0 + DOOR_W, y0: fy, y1: fy + DOOR_H, door: true },
+            {
+              a0: doorA0 + DOOR_W,
+              a1: doorA0 + DOOR_W * 2,
+              y0: fy,
+              y1: fy + DOOR_H,
+              door: true,
+              hingeEnd: true,
+            },
+          ]
         : [win(ix0 + w * 0.22, fy), win(ix0 + w * 0.64, fy)];
       this.wallRun(world, box, 'x', iz0, ix0, ix1, wallBottom, wallTop, frontOpenings, p.wall, wallThickness, 1);
       this.wallRun(world, box, 'x', iz1, ix0, ix1, wallBottom, wallTop,

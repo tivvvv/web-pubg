@@ -109,6 +109,24 @@ describe('地图与建筑终极几何巡检', () => {
     }
   });
 
+  it('高层正门使用宽双扇结构且铰链相向布置', () => {
+    const world = createWorld();
+    const towers = (world.buildings.plots as Plot[]).filter((plot) => plot.arch === 'apartment');
+    for (const tower of towers) {
+      const frontZ = tower.minZ + 2;
+      const centerX = (tower.minX + tower.maxX) * 0.5;
+      const doors = world.buildings.destructibles.filter((item) => (
+        item.kind === 'door' && item.doorAxis === 'x' &&
+        Math.abs(item.cz - frontZ) < 0.1 && Math.abs(item.cx - centerX) < 1.5
+      ));
+      expect(doors, `${tower.storeys} 层高楼正门不是双开门`).toHaveLength(2);
+      expect(doors.map((door) => door.doorHinge).sort()).toEqual([-1, 1]);
+      const openingWidth = Math.max(...doors.map((door) => door.collider.maxX)) -
+        Math.min(...doors.map((door) => door.collider.minX));
+      expect(openingWidth).toBeGreaterThanOrEqual(2.5);
+    }
+  });
+
   it('打开的真实门扇通过世界碰撞阻挡角色', () => {
     const world = createWorld();
     const door = world.buildings.destructibles.find((item) => (
