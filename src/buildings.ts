@@ -270,6 +270,15 @@ export interface StairHandrailTransform {
   pitch: number;
 }
 
+export type ApartmentFloorLayout = 'lobby' | 'residence' | 'office' | 'lounge' | 'utility';
+
+/** 高楼逐层功能分区。顶层固定为设备层，中间楼层循环但相邻层绝不相同。 */
+export function apartmentFloorLayout(level: number, storeys: number): ApartmentFloorLayout {
+  if (level <= 0) return 'lobby';
+  if (level >= storeys - 1) return 'utility';
+  return (['residence', 'office', 'lounge'] as const)[(level - 1) % 3] as ApartmentFloorLayout;
+}
+
 /** 计算贯穿整跑楼梯的斜扶手变换, 正反方向都保持与踏步坡度一致. */
 export function stairHandrailTransform(
   zFrom: number,
@@ -927,7 +936,7 @@ export class Buildings {
   // 房间隔断和家具都参与碰撞，既让室内更像正式空间，也形成可利用的近战掩体。
   private addInteriorDetails(world: World, plot: HousePlot, box: BoxFn, idx: number): void {
     const ix0 = plot.minX + 2, ix1 = plot.maxX - 2, iz0 = plot.minZ + 2, iz1 = plot.maxZ - 2;
-    const w = ix1 - ix0, d = iz1 - iz0;
+    const d = iz1 - iz0;
     const f1 = plot.flatH + 0.28;
     const household = plot.arch === 'cottage1' || plot.arch === 'cottage2' || plot.arch === 'terrace' || plot.arch === 'apartment';
     const multistory = plot.arch === 'cottage2' || plot.arch === 'terrace' || plot.arch === 'apartment';
@@ -945,13 +954,11 @@ export class Buildings {
     }
 
     // 多层建筑的箱堆按楼梯井方向分开放置，避免压住上下楼出口。
-    if (multistory) {
-      const floors = plot.arch === 'apartment' ? buildingStoreys(plot) - 1 : 1;
+    if (multistory && plot.arch !== 'apartment') {
+      const floors = 1;
       for (let floor = 1; floor <= floors; floor++) {
         const fy = f1 + floor * (WALL_H + SLAB_T);
-        const cx = plot.arch === 'apartment'
-          ? (floor % 2 === 1 ? ix0 + w * 0.48 : ix0 + w * 0.34)
-          : ix1 - 1.15;
+        const cx = ix1 - 1.15;
         const cz = iz0 + (floor === 1 ? 1.35 : 1.5);
         // 薄底座与楼板重叠，保证箱堆在所有楼层都有明确接触面和接触阴影。
         box('floor', cx - 0.5, fy - 0.025, cz - 0.5, cx + 0.5, fy + 0.055, cz + 0.5,
@@ -2169,15 +2176,62 @@ export class Buildings {
       this.wallRun(world, box, 'z', ix1, iz0, iz1, wallBottom, wallTop,
         stairOnWest ? [win(iz0 + d * 0.42, fy)] : [], p.wall, wallThickness, -1);
 
-      // 中央带门洞的短隔墙形成走廊和房间，不侵入两侧交替楼梯井。
+      // 每层按功能使用不同隔墙和动线，不侵入两侧交替楼梯井。
       if (level > 0) {
         const splitX0 = ix0 + STAIR_W + STAIR_SIDE_CLEARANCE;
         const splitX1 = ix1 - STAIR_W - STAIR_SIDE_CLEARANCE;
-        if (splitX1 - splitX0 > DOOR_W + 0.9) {
-          const innerDoor = (splitX0 + splitX1) * 0.5 - DOOR_W / 2;
-          this.wallRun(world, box, 'x', iz0 + d * 0.56, splitX0, splitX1, fy, fy + WALL_H - 0.22, [
+        const roomWidth = splitX1 - splitX0;
+        const layout = apartmentFloorLayout(level, storeys);
+        const roomMidX = (splitX0 + splitX1) * 0.5;
+        const roomMidZ = iz0 + d * 0.56;
+        if (roomWidth > DOOR_W + 0.9 && layout === 'residence') {
+          const innerDoor = roomMidX - DOOR_W / 2;
+          this.wallRun(world, box, 'x', roomMidZ, splitX0, splitX1, fy, fy + WALL_H - 0.22, [
             { a0: innerDoor, a1: innerDoor + DOOR_W, y0: fy, y1: fy + DOOR_H, door: true, doorless: true },
-          ], 0xb8b4aa, WT2, -1);
+          ], 0xc8c0b3, WT2, -1);
+          // 卧室床、床头板和衣柜。
+          box('wall', splitX0 + 0.35, fy, iz1 - 2.15, splitX0 + 1.75, fy + 0.46, iz1 - 0.7, 0x756b5a);
+          box('wall', splitX0 + 0.38, fy + 0.46, iz1 - 2.1, splitX0 + 1.72, fy + 0.59, iz1 - 0.75,
+            0xa79a81, { collider: false, detail: true, surface: 'fabric' });
+          box('wall', splitX1 - 0.62, fy, iz1 - 1.8, splitX1 - 0.2, fy + 1.82, iz1 - 0.5, 0x685744);
+        } else if (roomWidth > DOOR_W + 0.9 && layout === 'office') {
+          const officeDoorZ = roomMidZ - DOOR_W / 2;
+          this.wallRun(world, box, 'z', roomMidX, iz0 + 1.25, iz1 - 1.0, fy, fy + WALL_H - 0.22, [
+            { a0: officeDoorZ, a1: officeDoorZ + DOOR_W, y0: fy, y1: fy + DOOR_H, door: true, doorless: true },
+          ], 0xaaaead, WT2, 1);
+          // 两组错位办公桌形成中距离掩体。
+          for (const [x, z, turn] of [
+            [splitX0 + 1.0, iz0 + d * 0.34, 1],
+            [splitX1 - 1.0, iz1 - d * 0.25, -1],
+          ] as const) {
+            box('wall', x - 0.72, fy + 0.7, z - 0.36, x + 0.72, fy + 0.82, z + 0.36, 0x765d43);
+            this.addChair(box, x, z + turn * 0.72, fy, turn);
+            box('wall', x - 0.3, fy + 0.82, z - 0.08, x + 0.3, fy + 1.18, z + 0.08,
+              0x303a3d, { collider: false, detail: true, surface: 'paintedMetal' });
+          }
+        } else if (layout === 'lounge') {
+          // 开放公共层用矮隔断、沙发和茶几，保留环形走位。
+          box('wall', splitX0 + 0.4, fy, roomMidZ - 0.1, roomMidX - 0.65, fy + 1.02, roomMidZ + 0.1, 0xa59a88);
+          box('wall', roomMidX + 0.65, fy, roomMidZ - 0.1, splitX1 - 0.4, fy + 1.02, roomMidZ + 0.1, 0xa59a88);
+          box('wall', roomMidX - 1.35, fy, iz1 - 1.45, roomMidX + 1.35, fy + 0.72, iz1 - 0.75, 0x586b68);
+          box('wall', roomMidX - 0.7, fy + 0.42, iz1 - 2.35, roomMidX + 0.7, fy + 0.58, iz1 - 1.65, 0x806548);
+          box('floor', roomMidX - 1.55, fy + 0.02, iz1 - 2.65, roomMidX + 1.55, fy + 0.04, iz1 - 0.55,
+            0x6f554d, { collider: false, detail: true, surface: 'fabric' });
+        } else if (layout === 'utility') {
+          // 顶层设备间使用双门洞和成排柜体，与居住楼层明显区分。
+          const gap = 0.7;
+          this.wallRun(world, box, 'x', iz0 + d * 0.48, splitX0, splitX1, fy, fy + WALL_H - 0.18, [
+            { a0: roomMidX - gap - DOOR_W, a1: roomMidX - gap, y0: fy, y1: fy + DOOR_H, door: true, doorless: true },
+            { a0: roomMidX + gap, a1: roomMidX + gap + DOOR_W, y0: fy, y1: fy + DOOR_H, door: true, doorless: true },
+          ], 0x8e9694, WT2, -1);
+          for (let locker = 0; locker < 3; locker++) {
+            const x = splitX0 + 0.35 + locker * Math.max(0.75, (roomWidth - 1.4) / 3);
+            box('wall', x, fy, iz1 - 0.85, x + 0.55, fy + 1.72, iz1 - 0.3, 0x5c696a);
+            for (let vent = 0; vent < 3; vent++) {
+              box('wall', x + 0.1, fy + 0.45 + vent * 0.28, iz1 - 0.87, x + 0.45, fy + 0.5 + vent * 0.28, iz1 - 0.84,
+                0x303738, { collider: false, detail: true, surface: 'metal' });
+            }
+          }
         }
       }
 

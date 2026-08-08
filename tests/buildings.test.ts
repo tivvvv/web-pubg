@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  doorColliderDisabled, doorLeafSegment, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES,
+  apartmentFloorLayout, doorColliderDisabled, doorLeafSegment, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES,
   gableRoofPitch, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
   stairHandrailTransform, stairRailX,
 } from '../src/buildings';
@@ -8,6 +8,14 @@ import type { AabbCollider } from '../src/types';
 import { REGIONS } from '../src/regions';
 
 describe('建筑门交互方向', () => {
+  it('高楼楼层包含大厅住宅办公休息和设备五种格局', () => {
+    const layouts = Array.from({ length: 7 }, (_, level) => apartmentFloorLayout(level, 7));
+    expect(layouts).toEqual(['lobby', 'residence', 'office', 'lounge', 'residence', 'office', 'utility']);
+    expect(new Set(layouts).size).toBe(5);
+    for (let level = 1; level < layouts.length; level++) {
+      expect(layouts[level]).not.toBe(layouts[level - 1]);
+    }
+  });
   it('精细坡屋顶瓦层保持成对对称且高度逐级上升', () => {
     expect(GABLE_ROOF_COURSES).toHaveLength(6);
     for (let i = 0; i < GABLE_ROOF_COURSES.length; i += 2) {
