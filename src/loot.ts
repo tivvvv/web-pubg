@@ -1,6 +1,6 @@
 // 战利品: 漂浮旋转发光物; 枪械/护具/背包需按 F 拾取, 弹药/恢复品走近自动拾取
 import * as THREE from 'three';
-import type { AmmoType, LootKind, MeleeId, WeaponId } from './types';
+import type { AmmoType, AttachLootId, LootKind, MeleeId, WeaponId } from './types';
 import { rand } from './utils';
 import { AMMO_BOX, AMMO_CLASS_COLOR, AMMO_LOOT_KIND, WEAPONS } from './weapons';
 import { armorFromLoot, buildHelmetModel, buildVestModel, isArmorKind } from './armor';
@@ -81,7 +81,6 @@ const GEO = {
   drinkLid: new THREE.CylinderGeometry(0.065, 0.065, 0.012, 10),
   drinkBand: new THREE.CylinderGeometry(0.073, 0.073, 0.1, 10),
   pullTab: new THREE.BoxGeometry(0.03, 0.008, 0.05),
-  scopeMini: new THREE.CylinderGeometry(0.035, 0.035, 0.12, 8),
   ring: new THREE.TorusGeometry(0.42, 0.025, 6, 24),
 };
 const MAT = {
@@ -94,6 +93,98 @@ const MAT = {
   dark: new THREE.MeshBasicMaterial({ color: 0x3a3a34 }),
   label: new THREE.MeshBasicMaterial({ color: 0x35cfff }),
 };
+
+const ATT_LOOT_MAT = {
+  body: new THREE.MeshStandardMaterial({ color: 0x252b2d, roughness: 0.48, metalness: 0.58 }),
+  edge: new THREE.MeshStandardMaterial({ color: 0x677176, roughness: 0.38, metalness: 0.72 }),
+  rubber: new THREE.MeshStandardMaterial({ color: 0x111516, roughness: 0.86, metalness: 0.08 }),
+  lens: new THREE.MeshStandardMaterial({ color: 0x66bfe0, roughness: 0.12, metalness: 0.18, transparent: true, opacity: 0.72 }),
+  reticle: new THREE.MeshBasicMaterial({ color: 0xff3a30 }),
+  magazine: new THREE.MeshStandardMaterial({ color: 0x38473e, roughness: 0.62, metalness: 0.38 }),
+};
+
+function attPart(
+  group: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  name: string,
+  x: number, y: number, z: number,
+  rx = 0, ry = 0, rz = 0,
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = name;
+  mesh.position.set(x, y, z);
+  mesh.rotation.set(rx, ry, rz);
+  mesh.castShadow = true;
+  group.add(mesh);
+  return mesh;
+}
+
+/** 地面配件使用独立可辨识模型，而不是通用白色占位几何。 */
+export function buildAttachmentLootModel(kind: AttachLootId): THREE.Group {
+  const group = new THREE.Group();
+  group.name = `loot-model-${kind}`;
+  const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d, 2, 2, 2);
+  const cyl = (r: number, length: number, sides = 18) => new THREE.CylinderGeometry(r, r, length, sides, 2);
+  const lens = (r: number) => new THREE.CylinderGeometry(r, r, 0.018, 20);
+
+  if (kind === 'attReddot') {
+    attPart(group, box(0.32, 0.07, 0.2), ATT_LOOT_MAT.edge, 'mount-base', 0, -0.08, 0);
+    for (const x of [-0.115, 0.115]) {
+      attPart(group, box(0.055, 0.25, 0.18), ATT_LOOT_MAT.body, 'optic-guard', x, 0.055, 0);
+    }
+    attPart(group, new THREE.TorusGeometry(0.105, 0.025, 10, 24), ATT_LOOT_MAT.body, 'optic-hood', 0, 0.11, 0.012);
+    attPart(group, new THREE.CircleGeometry(0.093, 24), ATT_LOOT_MAT.lens, 'optic-lens', 0, 0.11, 0.006);
+    attPart(group, new THREE.SphereGeometry(0.009, 10, 8), ATT_LOOT_MAT.reticle, 'red-reticle', 0, 0.11, 0.018);
+    attPart(group, cyl(0.026, 0.07, 12), ATT_LOOT_MAT.edge, 'brightness-knob', 0.15, 0.03, 0, 0, 0, Math.PI / 2);
+  } else if (kind === 'attScope2' || kind === 'attScope4') {
+    const long = kind === 'attScope4';
+    const length = long ? 0.54 : 0.4;
+    const radius = long ? 0.078 : 0.066;
+    attPart(group, cyl(radius, length), ATT_LOOT_MAT.body, 'scope-tube', 0, 0, 0, Math.PI / 2);
+    for (const z of [-length * 0.34, length * 0.34]) {
+      attPart(group, new THREE.TorusGeometry(radius + 0.008, 0.012, 8, 22), ATT_LOOT_MAT.rubber,
+        'scope-ring', 0, 0, z, Math.PI / 2);
+    }
+    const bellRadius = long ? 0.12 : 0.09;
+    const bell = new THREE.CylinderGeometry(bellRadius, radius, 0.11, 20, 2);
+    attPart(group, bell, ATT_LOOT_MAT.body, 'objective-bell', 0, 0, length * 0.48, Math.PI / 2);
+    attPart(group, lens(bellRadius * 0.82), ATT_LOOT_MAT.lens, 'objective-lens', 0, 0, length * 0.55 + 0.01, Math.PI / 2);
+    attPart(group, lens(radius * 0.82), ATT_LOOT_MAT.lens, 'ocular-lens', 0, 0, -length * 0.5 - 0.01, Math.PI / 2);
+    attPart(group, cyl(0.035, 0.09, 14), ATT_LOOT_MAT.edge, 'elevation-turret', 0, radius + 0.045, 0.02);
+    if (long) attPart(group, cyl(0.03, 0.075, 14), ATT_LOOT_MAT.edge, 'windage-turret', radius + 0.04, 0, 0.02, 0, 0, Math.PI / 2);
+    for (const z of [-0.1, 0.1]) {
+      attPart(group, box(0.13, 0.07, 0.065), ATT_LOOT_MAT.edge, 'scope-mount', 0, -radius - 0.04, z);
+    }
+  } else if (kind === 'attExtmag') {
+    for (let segment = 0; segment < 3; segment++) {
+      const mesh = attPart(group, box(0.2, 0.19, 0.1), ATT_LOOT_MAT.magazine, 'magazine-segment',
+        segment * 0.035, 0.19 - segment * 0.18, 0, 0, 0, -0.08 * segment);
+      mesh.scale.x = 1 - segment * 0.08;
+    }
+    for (let rib = 0; rib < 5; rib++) {
+      attPart(group, box(0.215, 0.018, 0.112), ATT_LOOT_MAT.edge, 'magazine-rib', rib * 0.014, 0.31 - rib * 0.11, 0);
+    }
+    attPart(group, box(0.24, 0.055, 0.13), ATT_LOOT_MAT.rubber, 'magazine-baseplate', 0.08, -0.22, 0, 0, 0, -0.16);
+  } else if (kind === 'attSuppressor') {
+    attPart(group, cyl(0.075, 0.58, 24), ATT_LOOT_MAT.body, 'suppressor-body', 0, 0, 0, Math.PI / 2);
+    for (const z of [-0.22, -0.08, 0.12, 0.23]) {
+      attPart(group, new THREE.TorusGeometry(0.077, 0.008, 8, 24), ATT_LOOT_MAT.edge,
+        'suppressor-band', 0, 0, z, Math.PI / 2);
+    }
+    attPart(group, new THREE.TorusGeometry(0.055, 0.018, 10, 24), ATT_LOOT_MAT.rubber,
+      'suppressor-bore', 0, 0, 0.3, Math.PI / 2);
+  } else {
+    attPart(group, cyl(0.072, 0.28, 18), ATT_LOOT_MAT.edge, 'compensator-body', 0, 0, 0, Math.PI / 2);
+    for (const z of [-0.07, 0.02, 0.1]) {
+      attPart(group, box(0.105, 0.035, 0.045), ATT_LOOT_MAT.rubber, 'compensator-port', 0, 0.058, z);
+    }
+    attPart(group, new THREE.TorusGeometry(0.056, 0.014, 9, 20), ATT_LOOT_MAT.body,
+      'compensator-crown', 0, 0, 0.15, Math.PI / 2);
+  }
+  group.rotation.set(-0.24, 0.35, 0.2);
+  return group;
+}
 // 弹药色带材质(按枪种配色, 与武器光环同色)
 const BAND_MAT = new Map<AmmoType, THREE.MeshBasicMaterial>();
 function bandMat(t: AmmoType): THREE.MeshBasicMaterial {
@@ -183,23 +274,7 @@ function buildLootMesh(kind: LootKind): THREE.Group {
       holder.add(pm);
     }
   } else if (isAttachKind(kind)) {
-    // 配件: 瞄具小镜 / 弹匣盒 / 枪口小管
-    if (kind === 'attReddot') {
-      holder.add(new THREE.Mesh(GEO.latch, MAT.dark));
-    } else if (kind === 'attScope2' || kind === 'attScope4') {
-      const tube = new THREE.Mesh(GEO.scopeMini, MAT.dark);
-      tube.rotation.x = Math.PI / 2;
-      holder.add(tube);
-    } else if (kind === 'attExtmag') {
-      const m = new THREE.Mesh(GEO.medHandle, MAT.dark);
-      m.scale.set(0.6, 1.6, 1.2);
-      holder.add(m);
-    } else {
-      const tube = new THREE.Mesh(GEO.scopeMini, kind === 'attSuppressor' ? MAT.dark : MAT.silver);
-      tube.rotation.x = Math.PI / 2;
-      tube.scale.set(0.8, kind === 'attSuppressor' ? 1.6 : 0.9, 0.8);
-      holder.add(tube);
-    }
+    holder.add(buildAttachmentLootModel(kind));
   } else if (kind === 'bandage') {
     // 绷带卷(放倒的白色小卷) + 红十字绑带 + 散开的卷尾
     const m = new THREE.Mesh(GEO.bandageRoll, MAT.bandage);

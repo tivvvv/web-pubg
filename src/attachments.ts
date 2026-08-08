@@ -2,7 +2,7 @@
 // attachments.ts - 武器配件: 定义/兼容规则/弹容计算/loot 映射
 // 每枪 3 槽: 瞄具(sight) / 弹匣(mag) / 枪口(muzzle); S686 全禁, AWM 内置镜不可装瞄具
 // ─────────────────────────────────────────────────────────────────────────────
-import type { AttachmentId, AttSlot, GunAttachments, GunState, LootKind, WeaponId } from './types';
+import type { AttachmentId, AttachLootId, AttSlot, GunAttachments, GunState, LootKind, WeaponId } from './types';
 
 export interface AttachmentDef {
   id: AttachmentId;
@@ -42,7 +42,7 @@ const LOOT_TO_ATT: Partial<Record<LootKind, AttachmentId>> = {
   attExtmag: 'extmag', attComp: 'comp', attSuppressor: 'suppressor',
 };
 
-export function isAttachKind(kind: LootKind): boolean {
+export function isAttachKind(kind: LootKind): kind is AttachLootId {
   return kind in LOOT_TO_ATT;
 }
 
