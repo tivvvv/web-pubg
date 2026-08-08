@@ -81,6 +81,28 @@ export interface ShotAcousticMix {
   readonly tailGain: number;
   readonly mechanismGain: number;
   readonly playbackRate: number;
+  readonly lowpassHz: number;
+  readonly delaySeconds: number;
+}
+
+export interface GunDistanceProfile {
+  readonly gain: number;
+  readonly lowpassHz: number;
+  readonly delaySeconds: number;
+  readonly farBlend: number;
+}
+
+/** 枪声的距离声学曲线，组合声压衰减、高频空气吸收和声速传播延迟。 */
+export function gunDistanceProfile(distance: number, suppressed: boolean): GunDistanceProfile {
+  const safeDistance = Math.max(0, distance);
+  const farBlend = clamp(safeDistance / 190, 0, 1);
+  const rolloff = 1 / (1 + Math.pow(safeDistance / (suppressed ? 28 : 46), 1.48));
+  return {
+    gain: clamp(rolloff, suppressed ? 0.006 : 0.012, 1),
+    lowpassHz: Math.round((suppressed ? 9200 : 17500) * (1 - farBlend) + (suppressed ? 1350 : 2450) * farBlend),
+    delaySeconds: safeDistance <= 4 ? 0 : Math.min(0.68, (safeDistance - 4) / 343),
+    farBlend,
+  };
 }
 
 export function shotAcousticMix(
@@ -92,13 +114,15 @@ export function shotAcousticMix(
 ): ShotAcousticMix {
   const presentation = weaponPresentation(weapon, suppressed);
   const safeDistance = Math.max(0, distance);
-  const distanceAttenuation = clamp(1.35 / (1 + safeDistance * 0.028), 0.015, 1);
+  const profile = gunDistanceProfile(safeDistance, suppressed);
   const tailBase = space === 'indoor' ? 0.3 : space === 'forest' ? 0.16 : 0.22;
-  const distanceTail = clamp(0.62 + safeDistance / 180, 0.62, 1.08);
+  const distanceTail = 0.58 + profile.farBlend * 1.25;
   return {
-    bodyGain: distanceAttenuation * presentation.sampleGain,
-    tailGain: suppressed ? 0 : distanceAttenuation * tailBase * distanceTail,
-    mechanismGain: distanceAttenuation * presentation.mechanismGain * clamp(1 - safeDistance / 55, 0, 1),
+    bodyGain: profile.gain * presentation.sampleGain,
+    tailGain: suppressed ? 0 : profile.gain * tailBase * distanceTail,
+    mechanismGain: profile.gain * presentation.mechanismGain * clamp(1 - safeDistance / 32, 0, 1),
     playbackRate: clamp(1 + clamp(variation, -1, 1) * presentation.pitchVariation, 0.88, 1.12),
+    lowpassHz: profile.lowpassHz,
+    delaySeconds: profile.delaySeconds,
   };
 }

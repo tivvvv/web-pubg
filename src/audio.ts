@@ -20,6 +20,22 @@ export interface AmbienceMix {
   rain: number;
 }
 
+export interface FootstepDistanceProfile {
+  readonly gain: number;
+  readonly lowpassHz: number;
+  readonly delaySeconds: number;
+}
+
+export function footstepDistanceProfile(distance: number): FootstepDistanceProfile {
+  const d = Math.max(0, distance);
+  const far = clamp(d / 36, 0, 1);
+  return {
+    gain: clamp(1 / (1 + Math.pow(d / 8.5, 1.9)), 0.008, 1),
+    lowpassHz: Math.round(7200 * (1 - far) + 900 * far),
+    delaySeconds: d <= 2 ? 0 : Math.min(0.11, (d - 2) / 343),
+  };
+}
+
 export function ambienceMix(
   rain: number,
   daylight: number,
@@ -143,7 +159,13 @@ export class AudioSys {
     }
   }
 
-  private playAsset(id: AudioAssetId, volume: number, pan: number, rate = 1): boolean {
+  private playAsset(
+    id: AudioAssetId,
+    volume: number,
+    pan: number,
+    rate = 1,
+    spatial?: { lowpassHz: number; delaySeconds: number },
+  ): boolean {
     if (!this.ctx) return false;
     const buffer = this.samples.get(id);
     const dst = this.out(pan);
@@ -153,10 +175,22 @@ export class AudioSys {
     source.playbackRate.value = clamp(rate, 0.72, 1.28);
     const gain = this.ctx.createGain();
     gain.gain.value = Math.max(0.001, volume);
-    source.connect(gain).connect(dst);
-    source.start();
+    if (spatial && spatial.lowpassHz < 19000) {
+      const lowpass = this.ctx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.value = clamp(spatial.lowpassHz, 500, 19000);
+      lowpass.Q.value = 0.58;
+      source.connect(lowpass).connect(gain).connect(dst);
+    } else {
+      source.connect(gain).connect(dst);
+    }
+    source.start(this.ctx.currentTime + Math.max(0, spatial?.delaySeconds ?? 0));
     if (this.publishTestState) {
       document.body.dataset.lastAudioAsset = id;
+      if (spatial) {
+        document.body.dataset.lastAudioLowpass = String(Math.round(spatial.lowpassHz));
+        document.body.dataset.lastAudioDelayMs = String(Math.round(spatial.delaySeconds * 1000));
+      }
       document.body.dataset.audioAssetPlays = String(
         Number(document.body.dataset.audioAssetPlays ?? 0) + 1,
       );
@@ -257,11 +291,14 @@ export class AudioSys {
   }
 
   // 噪声爆发: 枪声主体
-  private noiseBurst(vol: number, pan: number, freq: number, q: number, dur: number): void {
+  private noiseBurst(
+    vol: number, pan: number, freq: number, q: number, dur: number,
+    spatial?: { lowpassHz: number; delaySeconds: number },
+  ): void {
     if (!this.ctx || !this.noiseBuf) return;
     const dst = this.out(pan);
     if (!dst) return;
-    const t = this.ctx.currentTime;
+    const t = this.ctx.currentTime + Math.max(0, spatial?.delaySeconds ?? 0);
     const src = this.ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.playbackRate.value = 0.9 + Math.random() * 0.2;
@@ -272,17 +309,28 @@ export class AudioSys {
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(bp).connect(g).connect(dst);
+    if (spatial && spatial.lowpassHz < 19000) {
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = clamp(spatial.lowpassHz, 500, 19000);
+      bp.connect(lp).connect(g).connect(dst);
+      src.connect(bp);
+    } else {
+      src.connect(bp).connect(g).connect(dst);
+    }
     src.start(t);
     src.stop(t + dur + 0.02);
   }
 
   // 低频体音: 枪声"砰"感
-  private thump(vol: number, pan: number, f0: number, f1: number, dur: number): void {
+  private thump(
+    vol: number, pan: number, f0: number, f1: number, dur: number,
+    spatial?: { lowpassHz: number; delaySeconds: number },
+  ): void {
     if (!this.ctx) return;
     const dst = this.out(pan);
     if (!dst) return;
-    const t = this.ctx.currentTime;
+    const t = this.ctx.currentTime + Math.max(0, spatial?.delaySeconds ?? 0);
     const o = this.ctx.createOscillator();
     o.type = 'triangle';
     o.frequency.setValueAtTime(f0, t);
@@ -290,7 +338,14 @@ export class AudioSys {
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(dst);
+    if (spatial && spatial.lowpassHz < 19000) {
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = clamp(spatial.lowpassHz, 500, 19000);
+      o.connect(lp).connect(g).connect(dst);
+    } else {
+      o.connect(g).connect(dst);
+    }
     o.start(t);
     o.stop(t + dur + 0.02);
   }
@@ -321,53 +376,60 @@ export class AudioSys {
     space: AcousticSpace = 'open',
   ): void {
     if (!this.ctx) return;
-    const distanceAtt = clamp(1.35 / (1 + dist * 0.028), 0.015, 1);
-    const att = distanceAtt * (suppressed ? 0.24 : 1);
     const mix = shotAcousticMix(kind, dist, suppressed, space, Math.random() * 2 - 1);
+    const distanceAtt = mix.bodyGain / Math.max(WEAPON_PRESENTATION[kind].sampleGain, 0.001);
+    const att = distanceAtt * (suppressed ? 0.24 : 1);
     const presentation = WEAPON_PRESENTATION[kind];
     if (mix.mechanismGain > 0.001) {
-      this.noiseBurst(mix.mechanismGain, pan, presentation.mechanismFrequency, 2.2, 0.032);
+      this.noiseBurst(mix.mechanismGain, pan, presentation.mechanismFrequency, 2.2, 0.032, {
+        lowpassHz: mix.lowpassHz,
+        delaySeconds: mix.delaySeconds,
+      });
     }
-    if (this.playAsset(shotAssetId(kind, suppressed), mix.bodyGain, pan, mix.playbackRate)) {
+    const spatial = { lowpassHz: mix.lowpassHz, delaySeconds: mix.delaySeconds };
+    if (this.playAsset(shotAssetId(kind, suppressed), mix.bodyGain, pan, mix.playbackRate, spatial)) {
       if (mix.tailGain > 0) {
-        this.playAsset(`shot-tail-${space}`, mix.tailGain, pan, 0.97 + Math.random() * 0.06);
+        this.playAsset(`shot-tail-${space}`, mix.tailGain, pan * 0.58, 0.97 + Math.random() * 0.06, {
+          lowpassHz: Math.min(10500, mix.lowpassHz * 1.45),
+          delaySeconds: mix.delaySeconds + (space === 'indoor' ? 0.035 : 0.075),
+        });
       }
       return;
     }
-    if (suppressed) this.noiseBurst(0.08 * distanceAtt, pan, 2400, 1.5, 0.045);
+    if (suppressed) this.noiseBurst(0.08 * distanceAtt, pan, 2400, 1.5, 0.045, spatial);
     switch (kind) {
       case 'pistol':
-        this.noiseBurst(0.5 * att, pan, 1100, 0.9, 0.11);
-        this.thump(0.35 * att, pan, 240, 70, 0.09);
+        this.noiseBurst(0.5 * att, pan, 1100, 0.9, 0.11, spatial);
+        this.thump(0.35 * att, pan, 240, 70, 0.09, spatial);
         break;
       case 'rifle':
-        this.noiseBurst(0.6 * att, pan, 750, 0.7, 0.15);
-        this.thump(0.45 * att, pan, 190, 55, 0.13);
+        this.noiseBurst(0.6 * att, pan, 750, 0.7, 0.15, spatial);
+        this.thump(0.45 * att, pan, 190, 55, 0.13, spatial);
         break;
       case 'akm':
-        this.noiseBurst(0.68 * att, pan, 620, 0.68, 0.18);
-        this.thump(0.52 * att, pan, 165, 48, 0.16);
+        this.noiseBurst(0.68 * att, pan, 620, 0.68, 0.18, spatial);
+        this.thump(0.52 * att, pan, 165, 48, 0.16, spatial);
         break;
       case 'lmg':
-        this.noiseBurst(0.72 * att, pan, 560, 0.62, 0.2);
-        this.thump(0.55 * att, pan, 150, 42, 0.18);
+        this.noiseBurst(0.72 * att, pan, 560, 0.62, 0.2, spatial);
+        this.thump(0.55 * att, pan, 150, 42, 0.18, spatial);
         break;
       case 'smg':
-        this.noiseBurst(0.42 * att, pan, 1400, 1.1, 0.08);
-        this.thump(0.25 * att, pan, 260, 90, 0.06);
+        this.noiseBurst(0.42 * att, pan, 1400, 1.1, 0.08, spatial);
+        this.thump(0.25 * att, pan, 260, 90, 0.06, spatial);
         break;
       case 'dmr':
-        this.noiseBurst(0.7 * att, pan, 560, 0.58, 0.22);
-        this.thump(0.52 * att, pan, 155, 44, 0.2);
+        this.noiseBurst(0.7 * att, pan, 560, 0.58, 0.22, spatial);
+        this.thump(0.52 * att, pan, 155, 44, 0.2, spatial);
         break;
       case 'sniper':
-        this.noiseBurst(0.85 * att, pan, 420, 0.5, 0.38);
-        this.thump(0.6 * att, pan, 130, 38, 0.32);
+        this.noiseBurst(0.85 * att, pan, 420, 0.5, 0.38, spatial);
+        this.thump(0.6 * att, pan, 130, 38, 0.32, spatial);
         break;
       case 'shotgun':
         // 霰弹: 低沉轰响(比步枪更低频更厚)
-        this.noiseBurst(0.75 * att, pan, 380, 0.6, 0.3);
-        this.thump(0.6 * att, pan, 120, 30, 0.3);
+        this.noiseBurst(0.75 * att, pan, 380, 0.6, 0.3, spatial);
+        this.thump(0.6 * att, pan, 120, 30, 0.3, spatial);
         break;
     }
   }
@@ -602,13 +664,13 @@ export class AudioSys {
   }
 
   stepAt(dist: number, pan: number, speed: number, surface: FootstepSurface = 'grass'): void {
-    const att = clamp(1.1 / (1 + dist * 0.11), 0.01, 1);
+    const profile = footstepDistanceProfile(dist);
     const pace = clamp((speed - 0.5) / 6.4, 0, 1);
     const choices = FOOTSTEP_ASSET_IDS[surface];
     const asset = choices[Math.random() < 0.5 ? 0 : 1];
-    if (this.playAsset(asset, (0.08 + pace * 0.05) * att, pan, 0.88 + pace * 0.16)) return;
-    if (this.playAsset('movement-footstep', (0.08 + pace * 0.05) * att, pan, 0.88 + pace * 0.16)) return;
-    this.noiseBurst((0.07 + pace * 0.055) * att, pan, 210 + pace * 90, 0.85, 0.045);
+    if (this.playAsset(asset, (0.1 + pace * 0.065) * profile.gain, pan, 0.88 + pace * 0.16, profile)) return;
+    if (this.playAsset('movement-footstep', (0.1 + pace * 0.065) * profile.gain, pan, 0.88 + pace * 0.16, profile)) return;
+    this.noiseBurst((0.085 + pace * 0.065) * profile.gain, pan, 210 + pace * 90, 0.85, 0.045, profile);
   }
 
   // 入水扑通(玩家)

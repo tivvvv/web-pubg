@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  gunDistanceProfile,
   shotAcousticMix,
   WEAPON_PRESENTATION,
   weaponPresentation,
@@ -44,6 +45,19 @@ describe('枪战表现配置', () => {
     expect(indoor.tailGain).toBeGreaterThan(nearOpen.tailGain);
     expect(suppressed.tailGain).toBe(0);
     expect(suppressed.bodyGain).toBeLessThan(nearOpen.bodyGain);
+    expect(farOpen.lowpassHz).toBeLessThan(nearOpen.lowpassHz * 0.35);
+    expect(farOpen.delaySeconds).toBeGreaterThan(0.45);
+  });
+
+  it('远距离枪声同时降低声压和高频并遵循声速延迟', () => {
+    const near = gunDistanceProfile(8, false);
+    const middle = gunDistanceProfile(80, false);
+    const far = gunDistanceProfile(200, false);
+    expect(near.gain).toBeGreaterThan(middle.gain);
+    expect(middle.gain).toBeGreaterThan(far.gain);
+    expect(near.lowpassHz).toBeGreaterThan(middle.lowpassHz);
+    expect(middle.lowpassHz).toBeGreaterThan(far.lowpassHz);
+    expect(far.delaySeconds).toBeCloseTo(196 / 343, 3);
   });
 
   it('随机音高始终被限制在自然变化范围内', () => {
