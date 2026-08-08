@@ -217,6 +217,13 @@ describe('地图与建筑终极几何巡检', () => {
     expect(regionAt((plot.minX + plot.maxX) * 0.5, (plot.minZ + plot.maxZ) * 0.5)?.id).toBe('stonegate');
   });
 
+  it('两栋高楼拥有高密度豪华立面细节', () => {
+    const world = createWorld();
+    const apartmentCount = (world.buildings.plots as Plot[]).filter((plot) => plot.arch === 'apartment').length;
+    expect(apartmentCount).toBe(2);
+    expect(world.buildings.europeanFacadeDetailsByArch.apartment).toBeGreaterThan(430);
+  });
+
   it('自然环境具备完整地表生态, 岸线和远景层次预算', () => {
     const world = createWorld();
     expect(world.grassPatchCount).toBeGreaterThanOrEqual(12000);

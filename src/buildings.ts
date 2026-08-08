@@ -1223,10 +1223,23 @@ export class Buildings {
     } else if (plot.arch === 'apartment') {
       // 城区公寓使用完整石质窗套、浅挑铁艺阳台和中央入口轴线，形成连续欧洲街墙而非高盒子。
       const windowCenters = [ix0 + w * 0.22 + WIN_W * 0.5, ix0 + w * 0.64 + WIN_W * 0.5];
-      // 一层入口采用成对壁柱和三角门楣，在远距离也能明确识别正立面。
-      for (const x of [cx - 0.9, cx + 0.9]) {
-        add('wall', x - 0.12, f1 + 0.04, iz0 - 0.28, x + 0.12, f1 + 2.42, iz0 - 0.06, lightStone, stone);
-        add('wall', x - 0.2, f1 + 2.26, iz0 - 0.34, x + 0.2, f1 + 2.48, iz0 - 0.02, stoneColor, stone);
+      // 双扇入口采用外移巨柱和加深门廊，柱体不再压进 2.6m 门洞。
+      const portalHalf = DOOR_W + 0.42;
+      for (const x of [cx - portalHalf, cx + portalHalf]) {
+        add('wall', x - 0.17, f1 + 0.04, iz0 - 0.42, x + 0.17, f1 + 2.55, iz0 - 0.08, lightStone, stone);
+        add('wall', x - 0.3, f1 - 0.02, iz0 - 0.5, x + 0.3, f1 + 0.22, iz0 - 0.02, stoneColor, stone);
+        add('wall', x - 0.29, f1 + 2.36, iz0 - 0.5, x + 0.29, f1 + 2.62, iz0 - 0.02, stoneColor, stone);
+      }
+      add('roof', cx - portalHalf - 0.34, f1 + 2.55, iz0 - 0.82,
+        cx + portalHalf + 0.34, f1 + 2.72, iz0 + 0.02, stoneColor, stone);
+      add('roof', cx - portalHalf - 0.16, f1 + 2.72, iz0 - 0.68,
+        cx + portalHalf + 0.16, f1 + 2.84, iz0 - 0.04, lightStone, stone);
+      // 黄铜壁灯与门牌使入口在雨夜也有明确视觉焦点。
+      for (const x of [cx - portalHalf + 0.32, cx + portalHalf - 0.32]) {
+        add('wall', x - 0.08, f1 + 1.72, iz0 - 0.55, x + 0.08, f1 + 2.03, iz0 - 0.39,
+          0xc59745, { ...metal, surface: 'metal' });
+        add('wall', x - 0.13, f1 + 1.8, iz0 - 0.62, x + 0.13, f1 + 1.96, iz0 - 0.5,
+          0xf0d58d, { ...metal, surface: 'paintedMetal' });
       }
       for (let layer = 0; layer < 7; layer++) {
         const half = 1.18 * (1 - layer / 8);
@@ -1237,6 +1250,26 @@ export class Buildings {
       // 中央竖向壁柱把多层窗格组织成左右两翼，减弱整块平墙的盒状感。
       for (const x of [cx - 0.12, cx + 0.12]) {
         add('wall', x - 0.075, f1 + 3.05, iz0 - 0.12, x + 0.075, wallTop - 0.26, iz0 + 0.02, stoneColor, stone);
+      }
+      // 首层石材横纹与四条通高壁柱形成基座、主体、冠部的古典三段式比例。
+      for (let course = 0; course < 7; course++) {
+        const y = f1 + 0.34 + course * 0.34;
+        for (const [x0, x1] of [[ix0 + 0.2, cx - portalHalf - 0.38], [cx + portalHalf + 0.38, ix1 - 0.2]] as const) {
+          if (x1 <= x0) continue;
+          add('wall', x0, y, iz0 - 0.12, x1, y + 0.08, iz0 + 0.01,
+            course % 2 === 0 ? stoneColor : lightStone, stone);
+        }
+      }
+      for (const x of [ix0 + 0.42, cx - w * 0.24, cx + w * 0.24, ix1 - 0.42]) {
+        add('wall', x - 0.085, f1 + 2.95, iz0 - 0.13, x + 0.085, wallTop - 0.24, iz0 + 0.025,
+          lightStone, stone);
+        for (let level = 1; level < storeys; level++) {
+          const baseY = f1 + level * (WALL_H + SLAB_T);
+          add('wall', x - 0.15, baseY + 0.2, iz0 - 0.16, x + 0.15, baseY + 0.42, iz0 + 0.03,
+            stoneColor, stone);
+          add('wall', x - 0.15, baseY + 2.36, iz0 - 0.16, x + 0.15, baseY + 2.58, iz0 + 0.03,
+            stoneColor, stone);
+        }
       }
       for (let level = 1; level < storeys; level++) {
         const fy = f1 + level * (WALL_H + SLAB_T);
@@ -1276,6 +1309,18 @@ export class Buildings {
         const y = roofY + 0.9 + layer * 0.13;
         add('wall', cx - half, y, iz0 - 0.31, cx + half, y + 0.12, iz0 + 0.02,
           layer % 2 === 0 ? p.roof : lightStone, layer % 2 === 0 ? roof : stone);
+      }
+      // 屋顶中央铜色徽章和两侧小尖顶强化两栋塔楼的城市地标感。
+      add('wall', cx - 0.62, roofY + 1.2, iz0 - 0.38, cx + 0.62, roofY + 2.12, iz0 - 0.18,
+        0x8c7044, metal);
+      add('wall', cx - 0.42, roofY + 1.38, iz0 - 0.41, cx + 0.42, roofY + 1.94, iz0 - 0.15,
+        0xd1b778, metal);
+      for (const x of [ix0 + 1.15, ix1 - 1.15]) {
+        for (let tier = 0; tier < 5; tier++) {
+          const half = 0.48 * (1 - tier / 6);
+          add('roof', x - half, roofY + 1.02 + tier * 0.16, iz0 - 0.25,
+            x + half, roofY + 1.16 + tier * 0.16, iz0 + 0.28, tier % 2 === 0 ? p.roof : stoneColor, roof);
+        }
       }
     } else if (plot.arch === 'barn') {
       // 半木构立柱、腰梁与交叉斜撑覆盖四面，木件贴墙而不挡大门和内部路线。
