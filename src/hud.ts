@@ -6,7 +6,7 @@ import type { HealId } from './heals';
 import type { WeatherKind } from './environment';
 import type { ScopeMode } from './gunplay';
 import { SQUAD_ORDER_LABELS, type SquadOrderKind } from './squadcommands';
-import type { PlayerFlowCue, PlayerFlowTone } from './playerflow';
+import type { PlayerFlowTone } from './playerflow';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -100,9 +100,6 @@ export class Hud {
   private blastFlash = el('blast-flash');
   private stunFlash = el('stun-flash');
   private toastEl = el('toast');
-  private flowCue = el('flow-cue');
-  private flowCueTitle = el('flow-cue-title');
-  private flowCueDetail = el('flow-cue-detail');
   private zoneTint = el('zone-tint');
   private hud = el('hud');
   private pickupPrompt = el('pickup-prompt');
@@ -164,7 +161,6 @@ export class Hud {
   private crosshairKey = '';
   private zoneTintKey: boolean | null = null;
   private squadOrderKey = '';
-  private flowCueKey = '';
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
@@ -296,21 +292,6 @@ export class Hud {
     this.countsKey = key;
     this.aliveEl.textContent = `剩余 ${alive}`;
     this.killsEl.textContent = `击杀 ${kills}`;
-  }
-
-  setFlowCue(cue: PlayerFlowCue | null): void {
-    const key = cue ? `${cue.tone}|${cue.title}|${cue.detail}` : 'hidden';
-    if (key === this.flowCueKey) return;
-    this.flowCueKey = key;
-    if (!cue) {
-      this.flowCue.classList.remove('show');
-      delete this.flowCue.dataset.tone;
-      return;
-    }
-    this.flowCueTitle.textContent = cue.title;
-    this.flowCueDetail.textContent = cue.detail;
-    this.flowCue.dataset.tone = cue.tone;
-    this.flowCue.classList.add('show');
   }
 
   setZoneStatus(text: string, urgent: boolean): void {
@@ -647,7 +628,6 @@ export class Hud {
     this.crosshair.classList.remove('interaction-confirm');
     this.crosshair.classList.remove('shot-pulse');
     delete this.crosshair.dataset.confirm;
-    this.setFlowCue(null);
   }
 
   setCrosshair(spreadPx: number, visible: boolean): void {

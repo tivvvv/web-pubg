@@ -24,6 +24,7 @@ import {
   type SquadMateOrderState,
 } from './squadcommands';
 import { reloadDuration } from './gunplay';
+import { REVIVE_INTERACTION_RANGE } from './interaction';
 
 const ENGAGE_RANGE = 60;
 const FOCUS_RANGE = 180;
@@ -123,6 +124,27 @@ export class TeammateController {
     if (!player) return;
     this.shoreCooldownT = Math.max(0, this.shoreCooldownT - dt);
     this.syncSquadOrder(game);
+
+    // 已经开始的救援是一个持续承诺。过去每帧仍会先评估乘车、轰炸、手雷、索敌和跟随，
+    // 任一分支产生位移后 KnockSys 都会把读条当成主动移动而取消，表现为救到一半突然跑开。
+    // 现在只允许受伤钩子、救援者失能、目标失效或真实超距打断；环境威胁只影响是否开始救援。
+    if (c.reviveTarget) {
+      const target = c.reviveTarget;
+      const distance = Math.hypot(target.pos.x - c.pos.x, target.pos.z - c.pos.z);
+      const valid = c.alive && !c.knocked && target.alive && target.knocked &&
+        distance <= REVIVE_INTERACTION_RANGE;
+      if (!valid) {
+        game.knock.cancelRevive(c);
+      } else {
+        this.cancelTransientActions();
+        this.navigator.reset(c);
+        c.speed2d = 0;
+        c.setStance('crouch');
+        c.yaw = turnToward(c.yaw, Math.atan2(target.pos.x - c.pos.x, target.pos.z - c.pos.z), 7 * dt);
+        this.commandState = 'reviving';
+        return;
+      }
+    }
 
     // ---- 空降 ----
     if (this.descent) {
@@ -813,7 +835,7 @@ export class TeammateController {
         if (probe.win?.alive) game.hitDestructible(probe.win, 999, c.pos);
         this.cancelTransientActions();
         startVault(c, probe);
-        game.soundAt(c.pos, (dd, p2) => game.audio.melee(dd, p2));
+        game.soundAt(c.pos, (dd, p2, occluded) => game.audio.motionWhoosh(dd, p2, 'vault', occluded), 8);
         return;
       }
     }
@@ -912,7 +934,7 @@ export class TeammateController {
               if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
               this.cancelTransientActions();
               startVault(c, probe);
-              game.soundAt(c.pos, (dd, p2) => game.audio.melee(dd, p2));
+              game.soundAt(c.pos, (dd, p2, occluded) => game.audio.motionWhoosh(dd, p2, 'vault', occluded), 8);
               return;
             }
           }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   apartmentFloorLayout, doorColliderDisabled, doorLeafSegment, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES,
+  GABLE_ROOF_RISE,
   gableRoofPitch, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
   stairHandrailTransform, stairRailX,
 } from '../src/buildings';
@@ -17,7 +18,7 @@ describe('建筑门交互方向', () => {
     }
   });
   it('精细坡屋顶瓦层保持成对对称且高度逐级上升', () => {
-    expect(GABLE_ROOF_COURSES).toHaveLength(6);
+    expect(GABLE_ROOF_COURSES).toHaveLength(10);
     for (let i = 0; i < GABLE_ROOF_COURSES.length; i += 2) {
       const left = GABLE_ROOF_COURSES[i];
       const right = GABLE_ROOF_COURSES[i + 1];
@@ -29,9 +30,9 @@ describe('建筑门交互方向', () => {
       if (i > 0) expect(left.y).toBeGreaterThan(GABLE_ROOF_COURSES[i - 2]?.y ?? 0);
     }
     expect(gableRoofPitch(8)).toBeGreaterThan(0.1);
-    expect(gableRoofPitch(8)).toBeLessThan(0.3);
+    expect(gableRoofPitch(8)).toBeLessThan(0.5);
     expect(gableRoofPitch(12)).toBeLessThan(gableRoofPitch(8));
-    expect(1.08 / GABLE_INFILL_LAYERS).toBeLessThanOrEqual(0.05);
+    expect(GABLE_ROOF_RISE / GABLE_INFILL_LAYERS).toBeLessThanOrEqual(0.08);
   });
 
   it('六个区域拥有独立建筑主色和完整立面风格', () => {

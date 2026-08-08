@@ -15,13 +15,14 @@ import { fireModeOf } from './gunplay';
 import type { HealId } from './heals';
 import { auditReleaseState } from './releaseaudit';
 import { ASSET_CATALOG_VERSION } from './assetcatalog';
+import type { WildlifeKind } from './wildlife';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
 } from './stability';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
+  'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'wildlife', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -68,9 +69,13 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=bombardment',
   'scenario=bombardment&phase=active',
   'scenario=revive&auto=1',
+  'scenario=revive&ai=1',
   'scenario=zone',
   'scenario=endgame&auto=1',
   'scenario=defeat',
+  'scenario=wildlife&kind=cow',
+  'scenario=wildlife&kind=fish',
+  'scenario=wildlife&kind=bird',
   'scenario=maptour&region=stonegate',
   'scenario=maptour&region=ironring',
   'scenario=maptour&region=sunfield',
@@ -108,6 +113,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   zone: '毒圈回归: 圈外持续受伤, 进入圈内后立即停止伤害',
   endgame: '结算回归: 淘汰最后一名敌人后进入胜利界面',
   defeat: '失败回归: 玩家被淘汰后进入失败界面并可重新开始',
+  wildlife: '生态回归: 检查牛羊, 水下鱼群和飞鸟的模型, 活动范围与命中死亡',
   maptour: '地图巡查: 使用 region=区域 id 依次检查六区主地标, 补给点和转移路线',
 };
 
@@ -191,6 +197,9 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.plazaDetails = String(game.world.plazaDetailCount);
   panel.dataset.fountainDetails = String(game.world.fountainDetailCount);
   panel.dataset.religiousCrosses = String(game.world.religiousCrossCount);
+  panel.dataset.wildlifeCounts = (['cow', 'sheep', 'fish', 'bird'] as const)
+    .map((kind) => `${kind}:${game.wildlife.count(kind, true)}/${game.wildlife.count(kind)}`)
+    .join(',');
   const churchSite = game.world.landmarks.find((site) => site.kind === 'church');
   panel.dataset.churchSite = churchSite
     ? `${churchSite.x.toFixed(2)},${churchSite.z.toFixed(2)}`
@@ -434,11 +443,27 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       ].map((value) => value.toFixed(2)).join(',');
       panel.dataset.characterKnocked = String(character.knocked);
       panel.dataset.characterHp = character.hp.toFixed(1);
+      const aiRescuer = game.squadMates.find((mate) => mate.char.reviveTarget === character);
+      panel.dataset.aiReviveState = aiRescuer
+        ? `${aiRescuer.char.name}:${aiRescuer.commandState}:${aiRescuer.char.reviveT.toFixed(2)}`
+        : character.knocked ? 'waiting' : 'complete';
+      panel.dataset.aiRevivePosition = aiRescuer
+        ? `${aiRescuer.char.pos.x.toFixed(2)},${aiRescuer.char.pos.z.toFixed(2)}`
+        : 'none';
       panel.dataset.characterFlash = character.flashT.toFixed(2);
       panel.dataset.characterGrounded = String(character.grounded);
       panel.dataset.inputKeys = [...game.input.keys].sort().join(',');
       panel.dataset.characterPosition = [character.pos.x, character.pos.y, character.pos.z]
         .map((value) => value.toFixed(2)).join(',');
+      const nearestWildlifeDistance = game.wildlife.entities
+        .filter((entity) => entity.alive && (entity.kind === 'cow' || entity.kind === 'sheep'))
+        .reduce((nearest, entity) => Math.min(
+          nearest,
+          Math.hypot(character.pos.x - entity.group.position.x, character.pos.z - entity.group.position.z),
+        ), Number.POSITIVE_INFINITY);
+      panel.dataset.nearestWildlifeDistance = Number.isFinite(nearestWildlifeDistance)
+        ? nearestWildlifeDistance.toFixed(3)
+        : 'none';
       panel.dataset.playerDescent = controller.descent ?? 'none';
       panel.dataset.characterDriving = String(controller.driving !== null);
       panel.dataset.cameraBlend = controller.cameraBlend.toFixed(3);
@@ -1693,6 +1718,7 @@ function setupRevive(game: Game): void {
   if (!player || !mate) return;
   const x = lane[0] + dir.x * 1.55;
   const z = lane[1] + dir.z * 1.55;
+  const params = new URLSearchParams(window.location.search);
   mate.descent = null;
   mate.char.alive = true;
   mate.char.airPose = null;
@@ -1700,9 +1726,12 @@ function setupRevive(game: Game): void {
   mate.char.groundH = mate.char.pos.y;
   mate.char.grounded = true;
   mate.char.group.visible = true;
-  game.knock.knockDown(mate.char, null, false);
-  if (new URLSearchParams(window.location.search).get('auto') === '1') {
-    game.knock.startRevive(player.char, mate.char);
+  if (params.get('ai') === '1') {
+    game.knock.knockDown(player.char, null, false);
+    game.knock.startRevive(mate.char, player.char);
+  } else {
+    game.knock.knockDown(mate.char, null, false);
+    if (params.get('auto') === '1') game.knock.startRevive(player.char, mate.char);
   }
   player.yaw = dir.yaw;
   player.pitch = 0.08;
@@ -1773,6 +1802,7 @@ function setupEndgame(game: Game): void {
   };
   player.char.ammo.rifle = 90;
   player.char.curSlot = 0;
+  game.viewFpp = true;
   player.yaw = Math.atan2(targetX - playerX, targetZ - playerZ);
   for (const bot of game.bots) {
     bot.char.alive = false;
@@ -1809,6 +1839,64 @@ function setupDefeat(game: Game): void {
   const player = game.playerCtl;
   if (!player) return;
   game.damageChar(player.char, 200, false, null, '测试伤害', true);
+}
+
+function setupWildlife(game: Game): void {
+  const params = new URLSearchParams(window.location.search);
+  const rawKind = params.get('kind');
+  const kind: WildlifeKind = rawKind === 'sheep' || rawKind === 'fish' || rawKind === 'bird' ? rawKind : 'cow';
+  const candidates = game.wildlife.entities.filter((entity) => entity.kind === kind && entity.alive);
+  const target = candidates[kind === 'bird' ? Math.min(4, candidates.length - 1) : 0];
+  const player = game.playerCtl;
+  if (!target || !player) return;
+  if (kind === 'bird') target.speed = 0;
+  const targetPosition = target.group.position;
+  const overlapTest = params.get('overlap') === '1' && (kind === 'cow' || kind === 'sheep');
+  let spawnX = targetPosition.x;
+  let spawnZ = overlapTest ? targetPosition.z : targetPosition.z - (kind === 'bird' ? 9 : 6.5);
+  let found = false;
+  const viewRadii = kind === 'bird' ? [17, 20, 23, 26] : [6.5, 8.5, 11.5, 14.5];
+  for (const radius of overlapTest ? [] : viewRadii) {
+    for (let step = 0; step < 16; step++) {
+      const angle = step / 16 * Math.PI * 2;
+      const x = targetPosition.x + Math.sin(angle) * radius;
+      const z = targetPosition.z + Math.cos(angle) * radius;
+      if (!game.world.pointFree(x, z, 0.65, WATER_Y + 0.2, 17)) continue;
+      spawnX = x;
+      spawnZ = z;
+      found = true;
+      break;
+    }
+    if (found) break;
+  }
+  setGroundPlayer(game, spawnX, spawnZ);
+  player.char.guns[0] = {
+    def: WEAPONS.rifle,
+    mag: 30,
+    att: { ...emptyAttachments(), sight: 'scope2' },
+  };
+  player.char.ammo.rifle = 90;
+  player.char.curSlot = 0;
+  player.yaw = Math.atan2(targetPosition.x - spawnX, targetPosition.z - spawnZ);
+  const horizontal = Math.hypot(targetPosition.x - spawnX, targetPosition.z - spawnZ);
+  const aimPitch = Math.atan2(
+    targetPosition.y + target.centerY - (player.char.pos.y + player.char.eyeHeight()),
+    Math.max(0.1, horizontal),
+  );
+  // 第三人称肩位对高空目标会放大仰角，测试镜头稍作补偿以把飞鸟留在画面中心。
+  player.pitch = kind === 'bird' ? aimPitch * 0.54 : aimPitch;
+  if (params.get('fire') === '1') {
+    const fireUntilDead = (): void => {
+      if (!target.alive || game.stateStr !== 'playing') {
+        game.input.lmb = false;
+        return;
+      }
+      game.input.lmb = true;
+      game.input.firePressed = true;
+      window.requestAnimationFrame(fireUntilDead);
+    };
+    window.setTimeout(() => window.requestAnimationFrame(fireUntilDead), 900);
+  }
 }
 
 function setupMapTour(game: Game): void {
@@ -1891,6 +1979,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'zone') setupZone(game);
   else if (id === 'endgame') setupEndgame(game);
   else if (id === 'defeat') setupDefeat(game);
+  else if (id === 'wildlife') setupWildlife(game);
   else setupMapTour(game);
   if (id === 'combat' && new URLSearchParams(window.location.search).get('ads') === '1') game.input.rmb = true;
   if (id === 'endgame') game.input.rmb = true;

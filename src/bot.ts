@@ -1462,7 +1462,7 @@ export class BotController {
             if (probe.win && probe.win.alive) game.hitDestructible(probe.win, 999, c.pos);
             this.cancelReload();
             startVault(c, probe);
-            game.soundAt(c.pos, (dd, p) => game.audio.melee(dd, p));
+            game.soundAt(c.pos, (dd, p, occluded) => game.audio.motionWhoosh(dd, p, 'vault', occluded), 8);
             return;
           }
         }
@@ -1903,7 +1903,7 @@ export class BotController {
           if (probe.win?.alive) game.hitDestructible(probe.win, 999, c.pos);
           this.cancelReload();
           startVault(c, probe);
-          game.soundAt(c.pos, (dd, p) => game.audio.melee(dd, p));
+          game.soundAt(c.pos, (dd, p, occluded) => game.audio.motionWhoosh(dd, p, 'vault', occluded), 8);
         }
       }
     } else {

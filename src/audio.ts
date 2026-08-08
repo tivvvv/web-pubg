@@ -26,13 +26,51 @@ export interface FootstepDistanceProfile {
   readonly delaySeconds: number;
 }
 
-export function footstepDistanceProfile(distance: number): FootstepDistanceProfile {
+export function footstepDistanceProfile(distance: number, occluded = false): FootstepDistanceProfile {
   const d = Math.max(0, distance);
   const far = clamp(d / 36, 0, 1);
+  const baseGain = clamp(1 / (1 + Math.pow(d / 8.5, 1.9)), 0.008, 1);
+  const baseLowpass = Math.round(7200 * (1 - far) + 900 * far);
   return {
-    gain: clamp(1 / (1 + Math.pow(d / 8.5, 1.9)), 0.008, 1),
-    lowpassHz: Math.round(7200 * (1 - far) + 900 * far),
+    gain: baseGain * (occluded ? 0.34 : 1),
+    lowpassHz: occluded ? Math.min(1250, baseLowpass) : baseLowpass,
     delaySeconds: d <= 2 ? 0 : Math.min(0.11, (d - 2) / 343),
+  };
+}
+
+export interface ShortRangeSoundProfile {
+  readonly gain: number;
+  readonly lowpassHz: number;
+  readonly delaySeconds: number;
+}
+
+export function meleeDistanceProfile(distance: number, occluded = false): ShortRangeSoundProfile {
+  const d = Math.max(0, distance);
+  const maxDistance = 11;
+  if (d >= maxDistance) return { gain: 0, lowpassHz: 700, delaySeconds: 0 };
+  const edge = Math.pow(1 - d / maxDistance, 1.55);
+  const gain = edge / (1 + Math.pow(d / 2.65, 2.15));
+  const far = d / maxDistance;
+  const lowpassHz = Math.round(5400 * (1 - far) + 850 * far);
+  return {
+    gain: gain * (occluded ? 0.28 : 1),
+    lowpassHz: occluded ? Math.min(1050, lowpassHz) : lowpassHz,
+    delaySeconds: d <= 1.5 ? 0 : Math.min(0.032, (d - 1.5) / 343),
+  };
+}
+
+export function motionWhooshDistanceProfile(distance: number, occluded = false): ShortRangeSoundProfile {
+  const d = Math.max(0, distance);
+  const maxDistance = 8;
+  if (d >= maxDistance) return { gain: 0, lowpassHz: 650, delaySeconds: 0 };
+  const edge = Math.pow(1 - d / maxDistance, 1.7);
+  const gain = edge / (1 + Math.pow(d / 2.2, 2.2));
+  const far = d / maxDistance;
+  const lowpassHz = Math.round(4600 * (1 - far) + 800 * far);
+  return {
+    gain: gain * (occluded ? 0.25 : 1),
+    lowpassHz: occluded ? Math.min(950, lowpassHz) : lowpassHz,
+    delaySeconds: d <= 1.5 ? 0 : Math.min(0.024, (d - 1.5) / 343),
   };
 }
 
@@ -374,23 +412,29 @@ export class AudioSys {
     pan: number,
     suppressed = false,
     space: AcousticSpace = 'open',
+    occluded = false,
   ): void {
     if (!this.ctx) return;
     const mix = shotAcousticMix(kind, dist, suppressed, space, Math.random() * 2 - 1);
-    const distanceAtt = mix.bodyGain / Math.max(WEAPON_PRESENTATION[kind].sampleGain, 0.001);
+    const occlusionGain = occluded ? (suppressed ? 0.24 : 0.36) : 1;
+    const bodyGain = mix.bodyGain * occlusionGain;
+    const mechanismGain = mix.mechanismGain * (occluded ? 0.22 : 1);
+    const tailGain = mix.tailGain * (occluded ? 0.18 : 1);
+    const lowpassHz = occluded ? Math.min(1250, mix.lowpassHz) : mix.lowpassHz;
+    const distanceAtt = bodyGain / Math.max(WEAPON_PRESENTATION[kind].sampleGain, 0.001);
     const att = distanceAtt * (suppressed ? 0.24 : 1);
     const presentation = WEAPON_PRESENTATION[kind];
-    if (mix.mechanismGain > 0.001) {
-      this.noiseBurst(mix.mechanismGain, pan, presentation.mechanismFrequency, 2.2, 0.032, {
-        lowpassHz: mix.lowpassHz,
+    if (mechanismGain > 0.001) {
+      this.noiseBurst(mechanismGain, pan, presentation.mechanismFrequency, 2.2, 0.032, {
+        lowpassHz,
         delaySeconds: mix.delaySeconds,
       });
     }
-    const spatial = { lowpassHz: mix.lowpassHz, delaySeconds: mix.delaySeconds };
-    if (this.playAsset(shotAssetId(kind, suppressed), mix.bodyGain, pan, mix.playbackRate, spatial)) {
-      if (mix.tailGain > 0) {
-        this.playAsset(`shot-tail-${space}`, mix.tailGain, pan * 0.58, 0.97 + Math.random() * 0.06, {
-          lowpassHz: Math.min(10500, mix.lowpassHz * 1.45),
+    const spatial = { lowpassHz, delaySeconds: mix.delaySeconds };
+    if (this.playAsset(shotAssetId(kind, suppressed), bodyGain, pan, mix.playbackRate, spatial)) {
+      if (tailGain > 0) {
+        this.playAsset(`shot-tail-${space}`, tailGain, pan * 0.58, 0.97 + Math.random() * 0.06, {
+          lowpassHz: Math.min(10500, lowpassHz * 1.45),
           delaySeconds: mix.delaySeconds + (space === 'indoor' ? 0.035 : 0.075),
         });
       }
@@ -490,12 +534,13 @@ export class AudioSys {
   }
 
   // 近战挥击(风声): 噪声经带通高频→低频快速下扫, 软起音 -- 与枪声的短促爆音区分
-  melee(dist: number, pan: number): void {
+  melee(dist: number, pan: number, occluded = false): void {
     if (!this.ctx || !this.noiseBuf) return;
+    const profile = meleeDistanceProfile(dist, occluded);
+    if (profile.gain <= 0.001) return;
     const dst = this.out(pan);
     if (!dst) return;
-    const att = clamp(1.2 / (1 + dist * 0.03), 0.02, 1);
-    const t = this.ctx.currentTime;
+    const t = this.ctx.currentTime + profile.delaySeconds;
     const src = this.ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.playbackRate.value = 0.7 + Math.random() * 0.15;
@@ -504,13 +549,35 @@ export class AudioSys {
     bp.Q.value = 1.1;
     bp.frequency.setValueAtTime(2600, t);
     bp.frequency.exponentialRampToValueAtTime(320, t + 0.16);
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = profile.lowpassHz;
+    lp.Q.value = 0.55;
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0.001, t);
-    g.gain.exponentialRampToValueAtTime(0.34 * att, t + 0.035);
+    g.gain.exponentialRampToValueAtTime(0.18 * profile.gain, t + 0.035);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.19);
-    src.connect(bp).connect(g).connect(dst);
+    src.connect(bp).connect(lp).connect(g).connect(dst);
     src.start(t);
     src.stop(t + 0.24);
+    if (this.publishTestState) {
+      document.body.dataset.lastSpatialSound = 'melee';
+      document.body.dataset.lastSpatialGain = profile.gain.toFixed(3);
+      document.body.dataset.lastSpatialLowpass = String(profile.lowpassHz);
+    }
+  }
+
+  motionWhoosh(dist: number, pan: number, kind: 'throw' | 'vault', occluded = false): void {
+    const profile = motionWhooshDistanceProfile(dist, occluded);
+    if (profile.gain <= 0.001) return;
+    const volume = kind === 'throw' ? 0.095 : 0.075;
+    const frequency = kind === 'throw' ? 1850 : 1250;
+    this.noiseBurst(volume * profile.gain, pan, frequency, 1.15, kind === 'throw' ? 0.13 : 0.1, profile);
+    if (this.publishTestState) {
+      document.body.dataset.lastSpatialSound = kind;
+      document.body.dataset.lastSpatialGain = profile.gain.toFixed(3);
+      document.body.dataset.lastSpatialLowpass = String(profile.lowpassHz);
+    }
   }
 
   // 木质命中(门未被打破)
@@ -663,8 +730,14 @@ export class AudioSys {
     this.noiseBurst(0.1 * vol, 0, 240, 0.8, 0.045);
   }
 
-  stepAt(dist: number, pan: number, speed: number, surface: FootstepSurface = 'grass'): void {
-    const profile = footstepDistanceProfile(dist);
+  stepAt(
+    dist: number,
+    pan: number,
+    speed: number,
+    surface: FootstepSurface = 'grass',
+    occluded = false,
+  ): void {
+    const profile = footstepDistanceProfile(dist, occluded);
     const pace = clamp((speed - 0.5) / 6.4, 0, 1);
     const choices = FOOTSTEP_ASSET_IDS[surface];
     const asset = choices[Math.random() < 0.5 ? 0 : 1];

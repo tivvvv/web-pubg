@@ -27,6 +27,90 @@ function colliderKey(collider: AabbCollider): string {
   ].join('|');
 }
 
+function interiorPointFree(
+  x: number,
+  z: number,
+  feetY: number,
+  colliders: AabbCollider[],
+  ignored: Set<AabbCollider>,
+): boolean {
+  const radius = 0.38;
+  return !colliders.some((collider) => {
+    if (
+      collider.off || ignored.has(collider) || collider.tag === 'floor' || collider.tag === 'roof' ||
+      feetY + 1.7 <= collider.minY || feetY + 0.04 >= collider.maxY
+    ) return false;
+    const dx = Math.max(collider.minX - x, 0, x - collider.maxX);
+    const dz = Math.max(collider.minZ - z, 0, z - collider.maxZ);
+    return dx * dx + dz * dz < radius * radius;
+  });
+}
+
+function interiorRouteExists(
+  plot: Plot,
+  feetY: number,
+  start: { x: number; z: number },
+  target: { x: number; z: number },
+  colliders: AabbCollider[],
+  ignored: Set<AabbCollider>,
+): boolean {
+  const step = 0.38;
+  const minX = plot.minX + 2 + 0.42;
+  const maxX = plot.maxX - 2 - 0.42;
+  const minZ = plot.minZ + 2 + 0.42;
+  const maxZ = plot.maxZ - 2 - 0.42;
+  const columns = Math.floor((maxX - minX) / step) + 1;
+  const rows = Math.floor((maxZ - minZ) / step) + 1;
+  const free = new Uint8Array(columns * rows);
+  const index = (column: number, row: number) => row * columns + column;
+  const point = (column: number, row: number) => ({ x: minX + column * step, z: minZ + row * step });
+  for (let row = 0; row < rows; row++) for (let column = 0; column < columns; column++) {
+    const p = point(column, row);
+    free[index(column, row)] = interiorPointFree(p.x, p.z, feetY, colliders, ignored) ? 1 : 0;
+  }
+  const nearest = (requested: { x: number; z: number }): number => {
+    let best = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (let row = 0; row < rows; row++) for (let column = 0; column < columns; column++) {
+      const i = index(column, row);
+      if (!free[i]) continue;
+      const p = point(column, row);
+      const distance = Math.hypot(p.x - requested.x, p.z - requested.z);
+      if (distance < bestDistance && distance <= 1.1) {
+        best = i;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  };
+  const startIndex = nearest(start);
+  const targetIndex = nearest(target);
+  if (startIndex < 0 || targetIndex < 0) return false;
+  const visited = new Uint8Array(free.length);
+  const queue = new Int32Array(free.length);
+  let head = 0;
+  let tail = 0;
+  queue[tail++] = startIndex;
+  visited[startIndex] = 1;
+  const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+  while (head < tail) {
+    const current = queue[head++] as number;
+    if (current === targetIndex) return true;
+    const column = current % columns;
+    const row = Math.floor(current / columns);
+    for (const [dx, dz] of directions) {
+      const nextColumn = column + dx;
+      const nextRow = row + dz;
+      if (nextColumn < 0 || nextColumn >= columns || nextRow < 0 || nextRow >= rows) continue;
+      const next = index(nextColumn, nextRow);
+      if (!free[next] || visited[next]) continue;
+      visited[next] = 1;
+      queue[tail++] = next;
+    }
+  }
+  return false;
+}
+
 describe('地图与建筑终极几何巡检', () => {
   it('全部建筑原型都有落位且建筑安全边界互不重叠', () => {
     const world = createWorld();
@@ -57,6 +141,62 @@ describe('地图与建筑终极几何巡检', () => {
       expect(collider.maxX).toBeGreaterThan(collider.minX);
       expect(collider.maxY).toBeGreaterThan(collider.minY);
       expect(collider.maxZ).toBeGreaterThan(collider.minZ);
+    }
+  });
+
+  it('每栋建筑的入口, 房间物资和楼梯落脚区保持连通', () => {
+    const world = createWorld();
+    const plots = world.buildings.plots as Plot[];
+    const ignoredDoors = new Set(world.buildings.destructibles
+      .filter((item) => item.kind === 'door')
+      .map((item) => item.collider));
+    const storeyStep = 2.9 + 0.24;
+    for (const plot of plots) {
+      const ix0 = plot.minX + 2;
+      const ix1 = plot.maxX - 2;
+      const iz0 = plot.minZ + 2;
+      const iz1 = plot.maxZ - 2;
+      const centerX = (ix0 + ix1) * 0.5;
+      const firstFloorY = plot.flatH + 0.28;
+      const plotColliders = world.aabbs.filter((collider) => (
+        collider.maxX > plot.minX && collider.minX < plot.maxX &&
+        collider.maxZ > plot.minZ && collider.minZ < plot.maxZ
+      ));
+      const floors = plot.arch === 'apartment' ? plot.storeys ?? 3
+        : plot.arch === 'cottage2' || plot.arch === 'terrace' ? 2 : 1;
+      for (let level = 0; level < floors; level++) {
+        const feetY = firstFloorY + level * storeyStep;
+        let start = { x: centerX, z: iz0 + 0.78 };
+        if (level > 0 && plot.arch === 'apartment') {
+          const incomingWest = (level - 1) % 2 === 0;
+          start = {
+            x: incomingWest ? ix0 + 0.14 + 2.1 * 0.5 : ix1 - 0.14 - 2.1 * 0.5,
+            z: incomingWest ? iz0 + 0.82 : iz1 - 0.82,
+          };
+        } else if (level > 0) {
+          start = { x: ix0 + 0.14 + 2.1 * 0.5, z: iz0 + 0.82 };
+        }
+        const targets = world.buildings.lootSpots.filter((spot) => (
+          spot.x > ix0 && spot.x < ix1 && spot.z > iz0 && spot.z < iz1 &&
+          Math.abs(spot.y - feetY) < 0.08
+        )).map((spot) => ({ x: spot.x, z: spot.z }));
+        if (level < floors - 1 && plot.arch === 'apartment') {
+          const outgoingWest = level % 2 === 0;
+          targets.push({
+            x: outgoingWest ? ix0 + 0.14 + 2.1 * 0.5 : ix1 - 0.14 - 2.1 * 0.5,
+            z: outgoingWest ? iz1 - 0.82 : iz0 + 0.82,
+          });
+        } else if (level === 0 && (plot.arch === 'cottage2' || plot.arch === 'terrace')) {
+          targets.push({ x: ix0 + 0.14 + 2.1 * 0.5, z: iz1 - 0.82 });
+        }
+        expect(targets.length, `${plot.arch} 第 ${level + 1} 层没有可验收目标`).toBeGreaterThan(0);
+        for (const target of targets) {
+          expect(
+            interiorRouteExists(plot, feetY, start, target, plotColliders, ignoredDoors),
+            `${plot.arch} 第 ${level + 1} 层从楼梯或入口无法到达 ${target.x.toFixed(1)},${target.z.toFixed(1)}`,
+          ).toBe(true);
+        }
+      }
     }
   });
 

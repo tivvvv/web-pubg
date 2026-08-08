@@ -103,6 +103,7 @@ import {
 import { MUZZLE_SCALE } from './weaponmodels';
 import { buildTransportPlane } from './planemodel';
 import { WATER_Y, World, type StaticHit } from './world';
+import { WildlifeSystem, wildlifeLabel } from './wildlife';
 import { Zone } from './zone';
 import { regionOrWilderness } from './regions';
 import {
@@ -124,7 +125,7 @@ import {
   squadAimScore, SquadCommandSystem, SquadIntelSystem, SQUAD_ORDER_LABELS, type SquadOrder,
   type SquadOrderKind,
 } from './squadcommands';
-import { playerDeathDetail, resolvePlayerFlowCue, shouldCelebrateFirstGun } from './playerflow';
+import { playerDeathDetail, shouldCelebrateFirstGun } from './playerflow';
 import { regionEventAt, selectRegionEvents, type RegionEvent } from './regionevents';
 import {
   DEFAULT_MATCH_VARIATION, matchVariationById, selectMatchVariation, type MatchVariation,
@@ -160,6 +161,7 @@ export function accumulatePlayerDamage(
 
 export class Game {
   readonly world: World;
+  readonly wildlife: WildlifeSystem;
   readonly effects: Effects;
   readonly zone: Zone;
   readonly bombardment: BombardmentSystem;
@@ -221,7 +223,6 @@ export class Game {
   private deathT = -1;
   private playerPlacement = TOTAL;
   private playerDeathDetailText = '你被淘汰';
-  private playerLandedAt = -1;
   private playerArmedAt = -1;
   private jumpReadyAnnounced = false;
   private zoneDmgT = 0;
@@ -266,6 +267,7 @@ export class Game {
     this.graphics = new GameRenderer(container);
 
     this.world = new World(this.scene);
+    this.wildlife = new WildlifeSystem(this.world, this.scene);
     this.scene.add(this.charsGroup);
     // 贴地阴影(单 InstancedMesh, 每帧跟随角色)
     const blobGeo = new THREE.CircleGeometry(1, 20);
@@ -785,7 +787,6 @@ export class Game {
   }
 
   onPlayerLanded(): void {
-    this.playerLandedAt = this.now;
     this.hud.toast('已着陆, 搜寻武器和护具', 'success');
   }
 
@@ -801,6 +802,7 @@ export class Game {
     this.audio.windStop(); // 上一局可能死在自由落体(风声未停)
     this.audio.planeDroneStop(); // 上一局可能死在舱内(引擎声未停)
     this.world.resetEnvironment();
+    this.wildlife.reset();
     // 清理旧角色
     this.charsGroup.clear();
     this.chars.length = 0;
@@ -991,7 +993,6 @@ export class Game {
     this.deathT = -1;
     this.playerPlacement = TOTAL;
     this.playerDeathDetailText = '你被淘汰';
-    this.playerLandedAt = -1;
     this.playerArmedAt = -1;
     this.jumpReadyAnnounced = false;
     this.zoneDmgT = 0;
@@ -1069,6 +1070,7 @@ export class Game {
         this.update(simulationDt);
       }
     } else if (this.state === 'menu') {
+      this.wildlife.update(dt);
       this.menuAngle += dt * 0.045;
       this.menuCam.position.set(Math.cos(this.menuAngle) * 240, 100, Math.sin(this.menuAngle) * 240);
       this.menuCam.lookAt(0, 4, 0);
@@ -1078,6 +1080,7 @@ export class Game {
     } else if (this.state === 'over' && this.player) {
       this.player.update(dt, this.input, this); // 仅相机
       this.effects.update(dt);
+      this.wildlife.update(dt);
       this.grenades.update(dt, this);
       this.world.buildings.update(dt); // 门扇动画收尾
       for (const c of this.chars) c.syncModel(dt, false);
@@ -1234,6 +1237,7 @@ export class Game {
     this.loot.update(dt);
     this.deathCrates.update(dt);
     this.effects.update(dt);
+    this.wildlife.update(dt);
     this.grenades.update(dt, this);
     this.vehicles.update(dt, this);
     this.world.buildings.update(dt); // 门扇开关动画
@@ -1263,6 +1267,7 @@ export class Game {
 
   private separateChars(): void {
     separateCharacterBodies(this.chars, (c) => this.world.resolveCollision(c.pos, c.radius));
+    this.wildlife.resolveCharacterCollisions(this.chars);
   }
 
   // ---- 游泳状态机(玩家/bot/队友共用, 各控制器每帧调用一次) ----
@@ -1421,7 +1426,13 @@ export class Game {
       let hitPlayer = false;
       // 载具命中判定: 命中比当前更近且非"打中该车司机"时, 视为车身中弹
       const vHit = this.vehicles.raycast(origin, this.tmpA, travelT);
-      if (vHit && (!res.hit || vHit.t < res.t) && !(res.char && res.char === vHit.v.driver && res.t < vHit.t + 0.6)) {
+      const wildlifeHit = this.wildlife.raycast(origin, this.tmpA, travelT);
+      const vehicleFirst = !!vHit && (!res.hit || vHit.t < res.t) &&
+        (!wildlifeHit || vHit.t < wildlifeHit.t) &&
+        !(res.char && res.char === vHit.v.driver && res.t < vHit.t + 0.6);
+      const wildlifeFirst = !!wildlifeHit && (!res.hit || wildlifeHit.t < res.t) &&
+        (!vHit || wildlifeHit.t < vHit.t);
+      if (vehicleFirst && vHit) {
         travelT = vHit.t;
         this.tmpEnd.copy(origin).addScaledVector(this.tmpA, vHit.t);
         if (pellets === 1) this.effects.tracer(
@@ -1429,6 +1440,25 @@ export class Game {
         );
         this.effects.impactSpark(this.tmpEnd);
         this.vehicles.damage(vHit.v, gun.def.damage * pelletFalloff(gun.def, vHit.t));
+      } else if (wildlifeFirst && wildlifeHit) {
+        travelT = wildlifeHit.t;
+        this.tmpEnd.copy(wildlifeHit.point);
+        if (pellets === 1) this.effects.tracer(
+          this.tmpMuzzle, this.tmpEnd, presentation.tracerColor, presentation.tracerWidth,
+        );
+        if (wildlifeHit.entity.kind === 'fish') this.effects.splash(this.tmpEnd);
+        else this.effects.impactBlood(this.tmpEnd);
+        const killed = this.wildlife.damage(
+          wildlifeHit.entity,
+          gun.def.damage * pelletFalloff(gun.def, wildlifeHit.t),
+        );
+        if (shooter.isPlayer) {
+          anyChar = true;
+          if (killed) {
+            anyKill = true;
+            this.hud.toast(`已猎杀${wildlifeLabel(wildlifeHit.entity.kind)}`, 'success');
+          }
+        }
       } else if (res.hit) {
         if (pellets === 1) this.effects.tracer(
           this.tmpMuzzle, res.point, presentation.tracerColor, presentation.tracerWidth,
@@ -1526,7 +1556,9 @@ export class Game {
         const e = cam.matrixWorld.elements;
         this.tmpRight.set(e[0] ?? 1, e[1] ?? 0, e[2] ?? 0);
         const pan = this.tmpRight.dot(this.tmpEnd);
-        this.audio.shot(gun.def.id, dist, pan, suppressed, acousticSpace);
+        shooter.chestPos(this.tmpP);
+        const occluded = this.world.isLOSBlocked(cam.position, this.tmpP, this.tmpA);
+        this.audio.shot(gun.def.id, dist, pan, suppressed, acousticSpace, occluded);
       }
     }
     return true;
@@ -1565,16 +1597,25 @@ export class Game {
     return regionOrWilderness(pos.x, pos.z).profile === 'forest' ? 'forest' : 'open';
   }
 
-  soundAt(pos: THREE.Vector3, fn: (dist: number, pan: number) => void): void {
+  soundAt(
+    pos: THREE.Vector3,
+    fn: (dist: number, pan: number, occluded: boolean) => void,
+    maxDistance = 120,
+  ): void {
     if (!this.player) return;
     const cam = this.player.camera;
-    this.tmpEnd.subVectors(pos, cam.position);
+    const soundX = pos.x;
+    const soundY = pos.y;
+    const soundZ = pos.z;
+    this.tmpEnd.set(soundX - cam.position.x, soundY - cam.position.y, soundZ - cam.position.z);
     const dist = this.tmpEnd.length();
-    if (dist > 120) return;
+    if (dist > maxDistance) return;
     this.tmpEnd.divideScalar(dist || 1);
     const e = cam.matrixWorld.elements;
     this.tmpRight.set(e[0] ?? 1, e[1] ?? 0, e[2] ?? 0);
-    fn(dist, this.tmpRight.dot(this.tmpEnd));
+    this.tmpP.set(soundX, soundY, soundZ);
+    const occluded = dist > 1.5 && this.world.isLOSBlocked(cam.position, this.tmpP, this.tmpA);
+    fn(dist, this.tmpRight.dot(this.tmpEnd), occluded);
   }
 
   private updateRemoteFootsteps(dt: number): void {
@@ -1587,10 +1628,10 @@ export class Game {
       const stride = c.speed2d > 5 ? 2.2 : c.stance === 'crouch' ? 2.05 : 2.5;
       if (c.stepAcc < stride) continue;
       c.stepAcc %= stride;
-      this.soundAt(c.pos, (dist, pan) => {
+      this.soundAt(c.pos, (dist, pan, occluded) => {
         if (dist <= 34) {
           const surface = this.world.footstepSurfaceAt(c.pos.x, c.pos.z, c.pos.y);
-          this.audio.stepAt(dist, pan, c.speed2d, surface);
+          this.audio.stepAt(dist, pan, c.speed2d, surface, occluded);
         }
       });
     }
@@ -1707,9 +1748,9 @@ export class Game {
   throwGrenade(thrower: Character, kind: ThrowableId, origin: THREE.Vector3, dir: THREE.Vector3, speed: number): void {
     this.grenades.spawn(thrower, kind, origin, dir, speed);
     if (thrower.isPlayer) {
-      this.audio.melee(0, 0);
+      this.audio.motionWhoosh(0, 0, 'throw');
     } else {
-      this.soundAt(thrower.pos, (d, p) => this.audio.melee(d, p));
+      this.soundAt(thrower.pos, (d, p, occluded) => this.audio.motionWhoosh(d, p, 'throw', occluded), 8);
     }
   }
 
@@ -1758,16 +1799,8 @@ export class Game {
     // 挥击音效(玩家原声, 他人按距离/方位)
     if (attacker.isPlayer) {
       this.audio.melee(0, 0);
-    } else if (this.player) {
-      const cam = this.player.camera;
-      this.tmpEnd.subVectors(attacker.pos, cam.position);
-      const dist = this.tmpEnd.length();
-      if (dist < 60) {
-        this.tmpEnd.divideScalar(dist || 1);
-        const e = cam.matrixWorld.elements;
-        this.tmpRight.set(e[0] ?? 1, e[1] ?? 0, e[2] ?? 0);
-        this.audio.melee(dist, this.tmpRight.dot(this.tmpEnd));
-      }
+    } else {
+      this.soundAt(attacker.pos, (dist, pan, occluded) => this.audio.melee(dist, pan, occluded), 11);
     }
     // 锥形近战判定
     const fx = Math.sin(attacker.yaw);
@@ -1785,7 +1818,24 @@ export class Game {
       best = c;
       bestD = d;
     }
-    if (best) {
+    const wildlifeTarget = this.wildlife.meleeTarget(
+      attacker.pos.x, attacker.pos.y, attacker.pos.z, fx, fz, bestD,
+    );
+    if (wildlifeTarget && wildlifeTarget.distance < bestD) {
+      this.tmpEnd.set(
+        wildlifeTarget.entity.group.position.x,
+        wildlifeTarget.entity.group.position.y + wildlifeTarget.entity.centerY,
+        wildlifeTarget.entity.group.position.z,
+      );
+      if (wildlifeTarget.entity.kind === 'fish') this.effects.splash(this.tmpEnd);
+      else this.effects.impactBlood(this.tmpEnd);
+      const killed = this.wildlife.damage(wildlifeTarget.entity, m.damage);
+      if (attacker.isPlayer) {
+        this.audio.hit(false);
+        this.hud.hitmarker(killed ? 'kill' : 'hit');
+        if (killed) this.hud.toast(`已猎杀${wildlifeLabel(wildlifeTarget.entity.kind)}`, 'success');
+      }
+    } else if (best) {
       best.chestPos(this.tmpEnd);
       this.effects.impactBlood(this.tmpEnd);
       const dmg = m.damage * combatDamageScale(attacker.team, best.team, best.isPlayer);
@@ -2486,19 +2536,6 @@ export class Game {
       this.hud.setZoneStatus(this.zone.statusText(), this.zone.state === 'shrink');
     }
     this.hud.setZoneTint(outside && c.alive);
-    this.hud.setFlowCue(this.state === 'playing' && c.alive
-      ? resolvePlayerFlowCue({
-        descent: player.descent,
-        jumpReady: flightJumpReady,
-        outsideZone: outside,
-        knocked: c.knocked,
-        hasGun: c.guns.some((gunState) => gunState !== null),
-        hp: c.hp,
-        healCount: c.heals.bandage + c.heals.medkit + c.heals.drink,
-        secondsSinceLanded: this.playerLandedAt < 0 ? -1 : this.now - this.playerLandedAt,
-        secondsSinceArmed: this.playerArmedAt < 0 ? -1 : this.now - this.playerArmedAt,
-      })
-      : null);
     this.hud.setBombardment(this.bombardment.hudText(), this.bombardment.state === 'active');
     const region = regionOrWilderness(c.pos.x, c.pos.z);
     const mapSite = this.world.mapSiteAt(c.pos.x, c.pos.z);

@@ -7,7 +7,7 @@ import {
 describe('固定回归场景入口', () => {
   it('所有正式场景 id 均能稳定解析', () => {
     expect(SCENARIO_IDS).toEqual([
-      'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'maptour',
+      'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'wildlife', 'maptour',
     ]);
     for (const id of SCENARIO_IDS) expect(parseScenarioId(id)).toBe(id);
   });
@@ -41,6 +41,7 @@ describe('固定回归场景入口', () => {
     }
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=combat&weapon=rifle&movement=run');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=combat&weapon=rifle&action=pickup&hold=1');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=revive&ai=1');
     expect(releaseScenarioHref(0)).toContain('release=1&case=0');
     expect(releaseScenarioHref(999)).toContain(`case=${RELEASE_SCENARIO_ROUTES.length - 1}`);
   });

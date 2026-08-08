@@ -186,10 +186,12 @@ export function applySurfaceAsset(
   id: SurfaceAssetId,
   scale: number,
   strength: number,
+  worldSpace = false,
 ): void {
   const texture = surfaceTexture(id);
   const previousCompile = material.onBeforeCompile;
   const previousCacheKey = material.customProgramCacheKey;
+  const assetPosition = worldSpace ? 'vAssetWorldPosition' : 'vAssetLocalPosition';
   material.onBeforeCompile = (shader, renderer) => {
     previousCompile.call(material, shader, renderer);
     shader.uniforms.uSurfaceAsset = { value: texture };
@@ -234,9 +236,9 @@ varying vec3 vAssetWorldPosition;`,
         `#include <color_fragment>
   vec3 assetWeights = abs(normalize(vAssetLocalNormal));
   assetWeights /= max(assetWeights.x + assetWeights.y + assetWeights.z, 0.0001);
-  float assetX = texture2D(uSurfaceAsset, vAssetLocalPosition.yz * uSurfaceScale).r;
-  float assetY = texture2D(uSurfaceAsset, vAssetLocalPosition.xz * uSurfaceScale).r;
-  float assetZ = texture2D(uSurfaceAsset, vAssetLocalPosition.xy * uSurfaceScale).r;
+  float assetX = texture2D(uSurfaceAsset, ${assetPosition}.yz * uSurfaceScale).r;
+  float assetY = texture2D(uSurfaceAsset, ${assetPosition}.xz * uSurfaceScale).r;
+  float assetZ = texture2D(uSurfaceAsset, ${assetPosition}.xy * uSurfaceScale).r;
   float assetDetail = assetX * assetWeights.x + assetY * assetWeights.y + assetZ * assetWeights.z;
   diffuseColor.rgb *= 1.0 + (assetDetail - 0.875) * uSurfaceStrength;
   float assetWetNoise = sin(vAssetWorldPosition.x * 0.63 + vAssetWorldPosition.z * 0.37)
@@ -258,7 +260,7 @@ varying vec3 vAssetWorldPosition;`,
   roughnessFactor = mix(roughnessFactor, max(0.28, roughnessFactor * 0.58), assetWet * 0.82);`,
       );
   };
-  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|asset-climate-v3:${id}:${scale}:${strength}`;
+  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|asset-climate-v4:${id}:${scale}:${strength}:${worldSpace ? 'world' : 'local'}`;
 }
 
 export function shotAssetId(kind: WeaponId, suppressed: boolean): AudioAssetId {
