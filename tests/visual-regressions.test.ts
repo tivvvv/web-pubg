@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { advancePoseBlend, Character, locomotionPose, meleeMotionPose, ownModelVisibility } from '../src/character';
@@ -13,12 +14,15 @@ describe('画面回归保护', () => {
   it('角色近景具有独立五官和衣物结构线', () => {
     const character = new Character('角色细节测试', false, 0x335577);
 
-    for (const name of ['eye-left', 'eye-right', 'brow-left', 'brow-right', 'mouth', 'shirt-placket']) {
+    for (const name of [
+      'eye-left', 'eye-right', 'brow-left', 'brow-right', 'mouth', 'shirt-placket',
+      'shirt-back-yoke', 'shirt-back-seam', 'arm-joint-left', 'boot-toe-right',
+    ]) {
       expect(character.group.getObjectByName(name), name).toBeTruthy();
     }
     expect(character.group.getObjectByName('head')?.children.length).toBeGreaterThanOrEqual(8);
     expect(character.parts.torso.geometry.type).toBe('CylinderGeometry');
-    expect(character.parts.head.geometry.type).toBe('DodecahedronGeometry');
+    expect(character.parts.head.geometry.type).toBe('IcosahedronGeometry');
     expect(character.parts.elbowL).toBeTruthy();
     expect(character.parts.kneeR).toBeTruthy();
   });
@@ -126,6 +130,28 @@ describe('画面回归保护', () => {
     expect(character.parts.legR.rotation.x).toBeCloseTo(0, 5);
     expect(character.parts.legR.rotation.y).toBeCloseTo(0, 5);
     expect(character.parts.legR.rotation.z).toBeCloseTo(0, 5);
+  });
+
+  it('多人同时开伞复用合批几何且卸伞不残留节点', () => {
+    const first = new Character('开伞资源甲', false, 0x335577);
+    const second = new Character('开伞资源乙', false, 0x668844);
+    first.attachCanopy(0xd8843c);
+    second.attachCanopy(0x9ab86a);
+
+    expect(first.canopyGroup?.children).toHaveLength(4);
+    expect(second.canopyGroup?.children).toHaveLength(4);
+    const firstMeshes = first.canopyGroup!.children.filter((child): child is THREE.Mesh => child instanceof THREE.Mesh);
+    const secondMeshes = second.canopyGroup!.children.filter((child): child is THREE.Mesh => child instanceof THREE.Mesh);
+    expect(firstMeshes).toHaveLength(3);
+    expect(secondMeshes).toHaveLength(3);
+    expect(firstMeshes[0].geometry).toBe(secondMeshes[0].geometry);
+    expect(firstMeshes[1].geometry).toBe(secondMeshes[1].geometry);
+    expect(firstMeshes[2].geometry).toBe(secondMeshes[2].geometry);
+
+    const firstGroup = first.canopyGroup;
+    first.removeCanopy();
+    expect(first.canopyGroup).toBeNull();
+    expect(first.parts.inner.children).not.toContain(firstGroup);
   });
 
   it('移动中执行短交互只覆盖上半身且结束后完整复位', () => {

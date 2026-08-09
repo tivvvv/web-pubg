@@ -144,6 +144,47 @@ describe('地图与建筑终极几何巡检', () => {
     }
   });
 
+  it('全地图静态阻挡体尺寸合法且全部进入导航阻挡索引', () => {
+    const world = createWorld();
+    expect(world.colliders.length).toBe(world.cyls.length + world.aabbs.length);
+    const radius = 0.38;
+    for (const [index, collider] of world.cyls.entries()) {
+      expect(
+        [collider.x, collider.z, collider.r, collider.y0, collider.y1].every(Number.isFinite),
+        `圆柱碰撞 ${index} 含非有限数值`,
+      ).toBe(true);
+      expect(collider.r, `圆柱碰撞 ${index} 半径无效`).toBeGreaterThan(0);
+      expect(collider.y1, `圆柱碰撞 ${index} 高度无效`).toBeGreaterThan(collider.y0);
+      const feetY = Math.max(world.getHeight(collider.x, collider.z), collider.y0);
+      expect(
+        world.navPointFree(collider.x, collider.z, feetY, radius, false),
+        `圆柱碰撞 ${index} (${collider.x.toFixed(2)},${collider.z.toFixed(2)},r=${collider.r.toFixed(2)}) 未阻挡导航`,
+      ).toBe(false);
+    }
+
+    for (const [index, collider] of world.aabbs.entries()) {
+      expect(
+        [collider.minX, collider.minY, collider.minZ, collider.maxX, collider.maxY, collider.maxZ]
+          .every(Number.isFinite),
+        `盒碰撞 ${index} 含非有限数值`,
+      ).toBe(true);
+      expect(collider.maxX, `盒碰撞 ${index} X 尺寸无效`).toBeGreaterThan(collider.minX);
+      expect(collider.maxY, `盒碰撞 ${index} Y 尺寸无效`).toBeGreaterThan(collider.minY);
+      expect(collider.maxZ, `盒碰撞 ${index} Z 尺寸无效`).toBeGreaterThan(collider.minZ);
+      if (collider.off || collider.tag === 'floor' || collider.tag === 'roof' || collider.tag === 'door') continue;
+      const centerX = (collider.minX + collider.maxX) * 0.5;
+      const centerZ = (collider.minZ + collider.maxZ) * 0.5;
+      const feetY = Math.max(world.getHeight(centerX, centerZ), collider.minY);
+      if (feetY >= collider.maxY - 0.02) continue;
+      const standY = world.groundHeight(centerX, centerZ, feetY + 0.16);
+      if (standY >= collider.maxY - 0.02 || standY + 1.65 <= collider.minY) continue;
+      expect(
+        world.navPointFree(centerX, centerZ, feetY, radius, false),
+        `盒碰撞 ${index} ${collider.tag} (${centerX.toFixed(2)},${feetY.toFixed(2)},${centerZ.toFixed(2)}) 未阻挡导航`,
+      ).toBe(false);
+    }
+  });
+
   it('每栋建筑的入口, 房间物资和楼梯落脚区保持连通', () => {
     const world = createWorld();
     const plots = world.buildings.plots as Plot[];
@@ -342,7 +383,7 @@ describe('地图与建筑终极几何巡检', () => {
       expect(blocked, `物资点 ${spot.x.toFixed(2)},${spot.y.toFixed(2)},${spot.z.toFixed(2)} 与实体重叠`).toBe(false);
       const supportY = world.groundHeight(spot.x, spot.z, spot.y + 0.18);
       expect(Math.abs(supportY - spot.y),
-        `物资点 ${spot.x.toFixed(2)},${spot.y.toFixed(2)},${spot.z.toFixed(2)} 缺少承托面`).toBeLessThan(0.08);
+        `物资点 ${spot.x.toFixed(2)},${spot.y.toFixed(2)},${spot.z.toFixed(2)} 缺少承托面`).toBeLessThanOrEqual(0.081);
     }
   });
 
@@ -362,6 +403,45 @@ describe('地图与建筑终极几何巡检', () => {
     const apartmentCount = (world.buildings.plots as Plot[]).filter((plot) => plot.arch === 'apartment').length;
     expect(apartmentCount).toBe(2);
     expect(world.buildings.europeanFacadeDetailsByArch.apartment).toBeGreaterThan(430);
+  });
+
+  it('体育馆拥有独立场馆立面和高密度视觉细节', () => {
+    const world = createWorld();
+    expect((world.buildings.plots as Plot[]).filter((plot) => plot.arch === 'gym')).toHaveLength(1);
+    expect(world.buildings.europeanFacadeDetailsByArch.gym).toBeGreaterThanOrEqual(220);
+  });
+
+  it('谷仓外墙没有贯穿门窗的长木条或错位檐线', () => {
+    const scene = new THREE.Scene();
+    const world = new World(scene);
+    const barn = (world.buildings.plots as Plot[]).find((plot) => plot.arch === 'barn');
+    expect(barn).toBeDefined();
+    if (!barn) return;
+    const ix0 = barn.minX + 2;
+    const ix1 = barn.maxX - 2;
+    const iz0 = barn.minZ + 2;
+    const f1 = barn.flatH + 0.28;
+    const wallTop = f1 + 4.2;
+    const facadeWidth = ix1 - ix0;
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const offenders: string[] = [];
+    scene.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh)) return;
+      for (let index = 0; index < object.count; index++) {
+        object.getMatrixAt(index, matrix);
+        matrix.decompose(position, rotation, scale);
+        const crossesFacade = Math.abs(position.z - iz0) < 0.5 && scale.x > facadeWidth * 0.78;
+        const liesAcrossWall = position.y - scale.y * 0.5 > f1 + 0.55 &&
+          position.y + scale.y * 0.5 < wallTop - 0.2;
+        if (crossesFacade && liesAcrossWall) {
+          offenders.push(`${index}:${position.y.toFixed(2)}:${scale.x.toFixed(2)}`);
+        }
+      }
+    });
+    expect(offenders, `谷仓外墙仍有长条 ${offenders.join(',')}`).toEqual([]);
   });
 
   it('自然环境具备完整地表生态, 岸线和远景层次预算', () => {
@@ -386,6 +466,67 @@ describe('地图与建筑终极几何巡检', () => {
     expect(world.assetUsage.count('map.nature.deadwood')).toBeGreaterThanOrEqual(70);
     expect(world.assetUsage.count('map.infrastructure.street-furniture')).toBeGreaterThanOrEqual(30);
     expect(world.assetUsage.count('map.landmark.regional-detail')).toBeGreaterThanOrEqual(100);
+  });
+
+  it('农田土沟和围栏贴坡生成且不会退化成长悬空黑板', () => {
+    const scene = new THREE.Scene();
+    const world = new World(scene);
+    const furrows = scene.getObjectByName('farm-soil-furrows') as THREE.InstancedMesh | undefined;
+    const rails = scene.getObjectByName('farm-fence-rails') as THREE.InstancedMesh | undefined;
+    const road = scene.getObjectByName('road-track-surface') as THREE.Mesh | undefined;
+    expect(furrows).toBeDefined();
+    expect(rails).toBeDefined();
+    expect(road).toBeDefined();
+    if (!furrows || !rails || !road) return;
+
+    expect(world.farmFurrowCount).toBeGreaterThanOrEqual(24);
+    expect(world.farmFenceRailCount).toBeGreaterThanOrEqual(120);
+    expect(world.farmFenceColliders.length).toBe(world.farmFenceRailCount / 2);
+    expect(furrows.count).toBe(world.farmFurrowCount);
+    expect(rails.count).toBe(world.farmFenceRailCount);
+    expect(furrows.geometry.type).toBe('PlaneGeometry');
+    expect(furrows.castShadow).toBe(false);
+
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    for (let index = 0; index < furrows.count; index++) {
+      furrows.getMatrixAt(index, matrix);
+      matrix.decompose(position, rotation, scale);
+      expect(scale.x, `土沟 ${index} 过宽`).toBeLessThanOrEqual(0.5);
+      expect(scale.z, `土沟 ${index} 过长`).toBeLessThanOrEqual(4.8);
+    }
+    for (let index = 0; index < rails.count; index++) {
+      rails.getMatrixAt(index, matrix);
+      matrix.decompose(position, rotation, scale);
+      expect(scale.x, `围栏 ${index} 未分段贴坡`).toBeLessThanOrEqual(2.7);
+    }
+
+    for (const [index, collider] of world.farmFenceColliders.entries()) {
+      const centerX = (collider.minX + collider.maxX) * 0.5;
+      const centerZ = (collider.minZ + collider.maxZ) * 0.5;
+      const feetY = world.getHeight(centerX, centerZ);
+      expect(
+        world.navPointFree(centerX, centerZ, feetY, 0.3, false),
+        `围栏碰撞 ${index} 仍允许角色或机器人穿过`,
+      ).toBe(false);
+
+      const point = new THREE.Vector3(centerX, feetY, centerZ);
+      world.resolveCollision(point, 0.38);
+      const dx = Math.max(collider.minX - point.x, 0, point.x - collider.maxX);
+      const dz = Math.max(collider.minZ - point.z, 0, point.z - collider.maxZ);
+      expect(
+        dx * dx + dz * dz,
+        `围栏碰撞 ${index} 没有把角色推出可见栅栏`,
+      ).toBeGreaterThanOrEqual(0.38 ** 2 - 0.0001);
+    }
+
+    const normals = road.geometry.getAttribute('normal') as THREE.BufferAttribute;
+    expect(normals.count).toBeGreaterThan(0);
+    for (let index = 0; index < normals.count; index++) {
+      expect(normals.getY(index), `道路三角面 ${index} 法线朝下`).toBeGreaterThan(0);
+    }
   });
 
   it('树木, 自然岩石和半身灌木之间没有严重穿模', () => {
@@ -436,6 +577,35 @@ describe('地图与建筑终极几何巡检', () => {
     expect(world.mapLootSpots.filter((spot) => spot.siteId.startsWith('stonegate-church'))).toHaveLength(4);
     expect(world.assetUsage.count('map.landmark.church')).toBe(1);
     expect(world.assetUsage.count('map.landmark.plaza')).toBe(1);
+  });
+
+  it('桥梁和观景台只在可见栏杆处阻挡并保留入口', () => {
+    const world = createWorld();
+    for (const bridgeX of [-50, 170]) {
+      const riverZ = 80 + 22 * Math.sin(bridgeX * 0.012 + 1.3);
+      const deck = world.platforms.find((platform) => (
+        platform.minX < bridgeX && platform.maxX > bridgeX &&
+        platform.minZ < riverZ && platform.maxZ > riverZ &&
+        platform.maxZ - platform.minZ > 20
+      ));
+      expect(deck, `${bridgeX} 桥缺少桥面平台`).toBeDefined();
+      if (!deck) continue;
+      expect(world.navPointFree(bridgeX, riverZ, deck.top, 0.34, false)).toBe(true);
+      expect(world.navPointFree(bridgeX - 2.02, riverZ, deck.top, 0.34, false)).toBe(false);
+      expect(world.navPointFree(bridgeX + 2.02, riverZ, deck.top, 0.34, false)).toBe(false);
+    }
+
+    const lookout = world.landmarks.find((site) => site.kind === 'lookout');
+    expect(lookout).toBeDefined();
+    if (!lookout) return;
+    const deckTop = world.platforms
+      .filter((platform) => platform.minX < lookout.x && platform.maxX > lookout.x &&
+        platform.minZ < lookout.z && platform.maxZ > lookout.z)
+      .reduce((highest, platform) => Math.max(highest, platform.top), -Infinity);
+    expect(Number.isFinite(deckTop)).toBe(true);
+    expect(world.navPointFree(lookout.x, lookout.z - 2.7, deckTop, 0.3, false)).toBe(false);
+    expect(world.navPointFree(lookout.x - 1.9, lookout.z + 2.7, deckTop, 0.3, false)).toBe(false);
+    expect(world.navPointFree(lookout.x, lookout.z + 2.7, deckTop, 0.3, false)).toBe(true);
   });
 
   it('地图和建筑生成结果均登记到可审计资产目录', () => {

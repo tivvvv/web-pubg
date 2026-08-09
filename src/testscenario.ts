@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { canAttach, emptyAttachments, magSizeOf } from './attachments';
 import { ARMORS } from './armor';
 import { findSwimBank } from './botnav';
+import { CANOPY_DEPLOY_VELOCITY, type Character } from './character';
 import { gunHasMatchingAmmoNearby, isGunKind, lootPointClear, LOOT_CAP } from './loot';
 import { buildingStoreys, isMultiStoreyArch, type ArchId } from './buildings';
 import type { Game } from './game';
@@ -34,6 +35,8 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=stairs&traverse=up&arch=apartment&plot=last',
   'scenario=stairs&traverse=up&arch=apartment&flight=2',
   'scenario=stairs&view=entrance&arch=cottage2',
+  'scenario=stairs&view=entrance&arch=apartment&plot=last&side=inside&open=both',
+  'scenario=stairs&view=entrance&arch=barn&side=inside',
   'scenario=stairs&view=facade&arch=apartment&plot=last',
   'scenario=stairs&view=interior&arch=cottage1&plot=last',
   'scenario=stairs&view=roof&arch=cottage1',
@@ -41,6 +44,10 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=stairs&view=facade&arch=barn',
   'scenario=stairs&view=facade&arch=shop',
   'scenario=stairs&view=facade&arch=gym',
+  'scenario=stairs&view=interior&arch=gym',
+  'scenario=stairs&view=entrance&arch=gym&face=front&side=outside&open=both',
+  'scenario=stairs&view=entrance&arch=gym&face=left&side=inside&open=both',
+  'scenario=stairs&view=entrance&arch=gym&face=right&side=inside&open=both',
   'scenario=swim&auto=1',
   'scenario=botswim',
   'scenario=combat&weapon=rifle&burst=8&ads=1',
@@ -64,6 +71,8 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=squadcommand&order=focus',
   'scenario=squadcommand&order=aim',
   'scenario=parachute',
+  'scenario=parachute&collision=apartment',
+  'scenario=parachute&stress=1',
   'scenario=vehicle&drive=1',
   'scenario=deathcrate',
   'scenario=bombardment',
@@ -703,6 +712,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
     window.requestAnimationFrame(publishVehicleTactics);
   }
   if (id === 'parachute') {
+    let enteredBuildingDuringDescent = false;
     const publishParachute = (): void => {
       if (!panel.isConnected) return;
       const controller = game.playerCtl;
@@ -712,6 +722,17 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
         panel.dataset.playerGrounded = String(character.grounded);
         panel.dataset.playerAirPose = character.airPose ?? 'none';
         panel.dataset.playerHeight = character.pos.y.toFixed(2);
+        panel.dataset.playerPosition = `${character.pos.x.toFixed(2)},${character.pos.z.toFixed(2)}`;
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('collision') === 'apartment') {
+          const plot = game.world.buildings.plots.find((candidate) => candidate.arch === 'apartment');
+          if (plot && controller.descent &&
+            character.pos.x > plot.minX + 2 && character.pos.x < plot.maxX - 2 &&
+            character.pos.z > plot.minZ + 2 && character.pos.z < plot.maxZ - 2) {
+            enteredBuildingDuringDescent = true;
+          }
+          panel.dataset.playerEnteredBuilding = String(enteredBuildingDuringDescent);
+        }
         panel.dataset.playerLegL = [
           character.parts.legL.rotation.x,
           character.parts.legL.rotation.y,
@@ -1076,18 +1097,39 @@ function setupStairs(game: Game): void {
     return;
   }
   if (params.get('view') === 'entrance') {
-    const x = (plot.minX + plot.maxX) / 2;
+    const ix0 = plot.minX + 2;
+    const ix1 = plot.maxX - 2;
+    const iz0 = plot.minZ + 2;
+    const iz1 = plot.maxZ - 2;
+    const face = params.get('face') ?? 'front';
     const inside = params.get('side') === 'inside';
-    const z = plot.minZ + 2 + (inside ? 2.1 : -2.1);
+    let targetX = (ix0 + ix1) / 2;
+    let targetZ = iz0;
+    let x = targetX;
+    let z = targetZ + (inside ? 2.1 : -2.1);
+    if (face === 'back') {
+      targetZ = iz1;
+      z = targetZ + (inside ? -2.1 : 2.1);
+    } else if (face === 'left') {
+      targetX = ix0;
+      targetZ = iz0 + (iz1 - iz0) * 0.5;
+      x = targetX + (inside ? 2.1 : -2.1);
+      z = targetZ;
+    } else if (face === 'right') {
+      targetX = ix1;
+      targetZ = iz0 + (iz1 - iz0) * 0.55 + 0.65;
+      x = targetX + (inside ? -2.1 : 2.1);
+      z = targetZ;
+    }
     setGroundPlayer(game, x, z);
     const player = game.playerCtl;
     if (player) {
-      player.yaw = inside ? Math.PI : 0;
+      player.yaw = Math.atan2(targetX - x, targetZ - z);
       player.pitch = 0.02;
       if (params.get('open') === '1' || params.get('open') === 'both') {
         const doors = game.world.buildings.destructibles.filter((candidate) =>
-          candidate.kind === 'door' && Math.abs(candidate.cz - (plot.minZ + 2)) < 0.25 &&
-          Math.abs(candidate.cx - x) < (params.get('open') === 'both' ? 2 : 1.2),
+          candidate.kind === 'door' && Math.hypot(candidate.cx - targetX, candidate.cz - targetZ) <
+          (params.get('open') === 'both' ? 2 : 1.2),
         );
         for (const door of doors) game.openDoor(door, player.char);
       }
@@ -1737,10 +1779,72 @@ function setupRevive(game: Game): void {
   player.pitch = 0.08;
 }
 
-function setupParachute(game: Game): void {
+function setupParachute(game: Game, params: URLSearchParams): void {
   parkEnemies(game);
   const player = game.playerCtl;
   if (!player) return;
+  if (params.get('stress') === '1') {
+    const lane = testLane(game);
+    const x = (lane[0] + lane[2]) * 0.5;
+    const z = (lane[1] + lane[3]) * 0.5;
+    const y = game.world.getHeight(x, z) + 58;
+    const canopyColors = [0xd8843c, 0x9ab86a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a] as const;
+    const configure = (character: Character, offsetX: number, offsetZ: number, color: number): void => {
+      character.alive = true;
+      character.hp = 100;
+      character.pos.set(x + offsetX, y, z + offsetZ);
+      character.swimming = false;
+      character.swimDip = 0;
+      character.grounded = false;
+      character.airPose = 'canopy';
+      character.group.visible = true;
+      character.attachCanopy(color);
+    };
+    player.descent = 'canopy';
+    player.vy = CANOPY_DEPLOY_VELOCITY;
+    configure(player.char, 0, 0, canopyColors[0]);
+    for (let i = 0; i < game.squadMates.length; i++) {
+      const mate = game.squadMates[i];
+      if (!mate) continue;
+      mate.descent = 'canopy';
+      mate.vy = CANOPY_DEPLOY_VELOCITY;
+      configure(mate.char, (i - 1) * 3.2, 4, canopyColors[(i + 1) % canopyColors.length]);
+    }
+    for (let i = 0; i < game.bots.length; i++) {
+      const bot = game.bots[i];
+      if (!bot) continue;
+      const column = i % 5;
+      const row = Math.floor(i / 5);
+      bot.trainingIdle = false;
+      bot.jumpS = -1;
+      bot.descent = 'canopy';
+      bot.vy = CANOPY_DEPLOY_VELOCITY;
+      bot.dropTarget.set(x + (column - 2) * 5, z + 9 + row * 4.5);
+      configure(bot.char, (column - 2) * 5, 9 + row * 4.5, canopyColors[i % canopyColors.length]);
+    }
+    return;
+  }
+  if (params.get('collision') === 'apartment') {
+    const plot = game.world.buildings.plots.find((candidate) => candidate.arch === 'apartment');
+    if (plot) {
+      const wallZ = plot.minZ + 2;
+      // 对准门洞左侧的实体墙段，而不是可合法穿行的正门。
+      const x = plot.minX + 2.35;
+      const y = plot.flatH + 0.28 + (2.9 + 0.24) * 2 + 1.2;
+      player.descent = 'canopy';
+      player.vy = CANOPY_DEPLOY_VELOCITY;
+      player.char.pos.set(x, y, wallZ - 6);
+      player.char.swimming = false;
+      player.char.swimDip = 0;
+      player.char.grounded = false;
+      player.char.airPose = 'canopy';
+      player.char.group.visible = true;
+      player.char.attachCanopy(0xd8843c);
+      player.yaw = 0;
+      game.input.keys.add('KeyW');
+      return;
+    }
+  }
   // 固定落在经过碰撞检查的旱地测试通道，避免落入河中后游泳姿态干扰落地动画验收。
   const lane = testLane(game);
   const x = (lane[0] + lane[2]) * 0.5;
@@ -1971,7 +2075,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'botvehicle') setupBotVehicle(game);
   else if (id === 'squadcommand') setupSquadCommand(game);
   else if (id === 'stability') setupStability(game);
-  else if (id === 'parachute') setupParachute(game);
+  else if (id === 'parachute') setupParachute(game, params);
   else if (id === 'vehicle') setupVehicle(game);
   else if (id === 'deathcrate') setupDeathCrate(game);
   else if (id === 'bombardment') setupBombardment(game);

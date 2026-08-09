@@ -67,7 +67,10 @@ describe('交互目标选择', () => {
   });
 
   it('自动拾取只包含消耗品且不自动装备武器护具和背包', () => {
-    for (const kind of ['ammoRifle', 'bandage', 'drink', 'frag', 'smoke', 'flash'] as const) {
+    for (const kind of [
+      'ammoRifle', 'ammoSmg', 'ammoSniper', 'ammoPistol', 'ammoShotgun',
+      'bandage', 'medkit', 'drink', 'frag', 'smoke', 'flash',
+    ] as const) {
       expect(isAutomaticPickupKind(kind)).toBe(true);
     }
     for (const kind of ['rifle', 'reddot', 'pack3', 'helmet3', 'vest3'] as const) {

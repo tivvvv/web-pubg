@@ -1,13 +1,14 @@
 // 玩家: 第一/第三人称可切换(V) + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力 + 投掷
 import * as THREE from 'three';
 import {
-  CANOPY_DEPLOY_VELOCITY, Character, stepAirDescentVelocity, SWIM_SPEED, SWIM_SPRINT_SPEED,
+  CANOPY_DEPLOY_VELOCITY, Character, moveAirDescentHorizontal, stepAirDescentVelocity, SWIM_SPEED, SWIM_SPRINT_SPEED,
 } from './character';
 import type { Input } from './input';
 import { isGunKind, isMeleeKind, isWeaponKind } from './loot';
 import { ARMORS, armorFromLoot } from './armor';
 import { PACKS, isPackKind, packLevelFromLoot } from './backpack';
-import { MELEE, THROWABLE_IDS, WEAPONS } from './weapons';
+import { AMMO_NAME, MELEE, THROWABLES, THROWABLE_IDS, WEAPONS, ammoTypeFromLoot } from './weapons';
+import { HEALS } from './heals';
 import { WATER_Y, WORLD_HALF } from './world';
 import { driveVehicleStep, VEHICLE_SPEC, seatWorld, vehicleExitCandidates, type Vehicle } from './vehicles';
 import { probeVault, startVault, updateVaultMotion } from './vault';
@@ -586,7 +587,7 @@ export class PlayerController {
     // 同一堆物资逐个参与统一评分, 让准星指向优先于单纯最近距离。
     for (const nearbyItem of game.loot.items) {
       if (!nearbyItem.active ||
-        (!isWeaponKind(nearbyItem.kind) && !isAttachKind(nearbyItem.kind) &&
+        (!isWeaponKind(nearbyItem.kind) && !isAutomaticPickupKind(nearbyItem.kind) && !isAttachKind(nearbyItem.kind) &&
           !isPackKind(nearbyItem.kind) && !armorFromLoot(nearbyItem.kind))) continue;
       pushTarget('item', nearbyItem);
     }
@@ -706,6 +707,19 @@ export class PlayerController {
         }
         const context = contextualDetail(detail, tone);
         game.hud.setPickupPrompt(`按 F 装配 ${ATTACHMENTS[id].name}`, 'item', context.detail, context.tone);
+      }
+    } else if (isAutomaticPickupKind(k)) {
+      const ammoType = ammoTypeFromLoot(k);
+      if (ammoType) {
+        const rounds = selectedItem.ammo > 0 ? selectedItem.ammo : 0;
+        const context = contextualDetail(rounds > 0 ? `${rounds} 发 · 走近也可自动拾取` : '走近也可自动拾取', 'positive');
+        game.hud.setPickupPrompt(`按 F 拾取 ${AMMO_NAME[ammoType]}`, 'item', context.detail, context.tone);
+      } else if (k === 'frag' || k === 'smoke' || k === 'flash') {
+        const context = contextualDetail('走近也可自动拾取', 'positive');
+        game.hud.setPickupPrompt(`按 F 拾取 ${THROWABLES[k].name}`, 'item', context.detail, context.tone);
+      } else if (k === 'bandage' || k === 'medkit' || k === 'drink') {
+        const context = contextualDetail('走近也可自动拾取', 'positive');
+        game.hud.setPickupPrompt(`按 F 拾取 ${HEALS[k].name}`, 'item', context.detail, context.tone);
       }
     } else if (isPackKind(k)) {
       const level = packLevelFromLoot(k);
@@ -946,8 +960,11 @@ export class PlayerController {
     }
     // 玩家与 AI 使用同一套自由落体/滑翔速度曲线。
     this.vy = stepAirDescentVelocity(this.vy, phase, dt);
-    c.pos.x += this.hv.x * dt;
-    c.pos.z += this.hv.y * dt;
+    const airCollisionRadius = phase === 'canopy' ? Math.max(c.radius, 0.72) : c.radius;
+    if (moveAirDescentHorizontal(c.pos, this.hv.x * dt, this.hv.y * dt, airCollisionRadius, game.world)) {
+      // 撞墙后迅速卸掉水平惯性，避免持续贴墙抖动或下一帧再次向墙内推进。
+      this.hv.multiplyScalar(0.22);
+    }
     c.pos.x = clamp(c.pos.x, -WORLD_HALF + 1, WORLD_HALF - 1);
     c.pos.z = clamp(c.pos.z, -WORLD_HALF + 1, WORLD_HALF - 1);
     c.pos.y += this.vy * dt;

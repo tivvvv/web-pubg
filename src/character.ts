@@ -1,5 +1,6 @@
 // 低多边形人形角色(玩家与 bot 共用) + 背包物品 + 命中体 + 姿态(站/蹲/趴)
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { applySurfaceAsset } from './assets';
 import type { AmmoType, ArmorState, GunAttachments, GunState, MeleeState, ThrowableId } from './types';
 import type { HealId } from './heals';
@@ -105,10 +106,105 @@ const CANOPY_TERMINAL_VELOCITY = -10;
 const FREEFALL_VELOCITY_RESPONSE = 1.1;
 const CANOPY_VELOCITY_RESPONSE = 2.2;
 
+interface SharedCanopyAssets {
+  lightPanels: THREE.BufferGeometry;
+  darkPanels: THREE.BufferGeometry;
+  lines: THREE.BufferGeometry;
+  trailing: THREE.BufferGeometry;
+  lineMaterial: THREE.LineBasicMaterial;
+  trailingMaterial: THREE.MeshBasicMaterial;
+}
+
+let sharedCanopyAssets: SharedCanopyAssets | null = null;
+const canopyMaterialCache = new Map<number, readonly [THREE.MeshStandardMaterial, THREE.MeshStandardMaterial]>();
+
+function canopyAssets(): SharedCanopyAssets {
+  if (sharedCanopyAssets) return sharedCanopyAssets;
+  const light: THREE.BufferGeometry[] = [];
+  const dark: THREE.BufferGeometry[] = [];
+  const panelCount = 9;
+  for (let i = 0; i < panelCount; i++) {
+    const geometry = new THREE.SphereGeometry(
+      1, 4, 3, (i / panelCount) * Math.PI * 2, Math.PI * 2 / panelCount, 0, Math.PI / 2,
+    );
+    geometry.scale(2.65, 0.74, 1.58);
+    geometry.translate(0, 0.22, 0);
+    (i % 2 === 0 ? light : dark).push(geometry);
+  }
+  const lightPanels = mergeGeometries(light, false);
+  const darkPanels = mergeGeometries(dark, false);
+  for (const geometry of [...light, ...dark]) geometry.dispose();
+  if (!lightPanels || !darkPanels) throw new Error('降落伞面板合批失败');
+
+  const linePos: number[] = [];
+  for (const [lx, lz] of [[-2.15, -0.82], [-2.15, 0.82], [-0.8, -1.28], [-0.8, 1.28], [0.8, -1.28], [0.8, 1.28], [2.15, -0.82], [2.15, 0.82]] as const) {
+    const harnessX = Math.sign(lx) * 0.3;
+    const harnessZ = Math.sign(lz) * 0.18;
+    linePos.push(lx, 0.2, lz, harnessX, -2.48, harnessZ);
+  }
+  const lines = new THREE.BufferGeometry();
+  lines.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
+  const trailing = new THREE.TorusGeometry(1, 0.025, 4, 24, Math.PI);
+  trailing.applyMatrix4(new THREE.Matrix4().compose(
+    new THREE.Vector3(0, 0.22, 0),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)),
+    new THREE.Vector3(2.62, 1.55, 1),
+  ));
+  sharedCanopyAssets = {
+    lightPanels,
+    darkPanels,
+    lines,
+    trailing,
+    lineMaterial: new THREE.LineBasicMaterial({ color: 0xe3ddd0, transparent: true, opacity: 0.92 }),
+    trailingMaterial: new THREE.MeshBasicMaterial({ color: 0x2d332c }),
+  };
+  return sharedCanopyAssets;
+}
+
+function canopyMaterials(color: number): readonly [THREE.MeshStandardMaterial, THREE.MeshStandardMaterial] {
+  const key = color >>> 0;
+  const cached = canopyMaterialCache.get(key);
+  if (cached) return cached;
+  const base = new THREE.Color(key);
+  const materials = [
+    new THREE.MeshStandardMaterial({ color: base.clone().multiplyScalar(1.08), roughness: 0.86, side: THREE.DoubleSide }),
+    new THREE.MeshStandardMaterial({ color: base.clone().multiplyScalar(0.82), roughness: 0.86, side: THREE.DoubleSide }),
+  ] as const;
+  canopyMaterialCache.set(key, materials);
+  return materials;
+}
+
 export function stepAirDescentVelocity(vy: number, phase: AirDescentPhase, dt: number): number {
   const terminal = phase === 'freefall' ? FREEFALL_TERMINAL_VELOCITY : CANOPY_TERMINAL_VELOCITY;
   const response = phase === 'freefall' ? FREEFALL_VELOCITY_RESPONSE : CANOPY_VELOCITY_RESPONSE;
   return vy + (terminal - vy) * (1 - Math.exp(-dt * response));
+}
+
+// 空降水平位移按角色半径细分并逐段解算。直接一次移动到终点会在卡顿帧跨过
+// 薄外墙，而且旧空降逻辑完全未调用静态碰撞，最终会把人送进建筑内部。
+export function moveAirDescentHorizontal(
+  position: THREE.Vector3,
+  deltaX: number,
+  deltaZ: number,
+  radius: number,
+  world: Pick<World, 'resolveCollision'>,
+): boolean {
+  if (![position.x, position.y, position.z, deltaX, deltaZ, radius].every(Number.isFinite) || radius <= 0) return false;
+  const distance = Math.hypot(deltaX, deltaZ);
+  if (distance <= 1e-7) return false;
+  const steps = Math.min(64, Math.max(1, Math.ceil(distance / Math.max(0.08, radius * 0.36))));
+  const stepX = deltaX / steps;
+  const stepZ = deltaZ / steps;
+  let collided = false;
+  for (let step = 0; step < steps; step++) {
+    const targetX = position.x + stepX;
+    const targetZ = position.z + stepZ;
+    position.x = targetX;
+    position.z = targetZ;
+    world.resolveCollision(position, radius);
+    if (Math.abs(position.x - targetX) > 1e-5 || Math.abs(position.z - targetZ) > 1e-5) collided = true;
+  }
+  return collided;
 }
 
 // 翻越状态(脚本化运动: 起跳点→顶点上弧→落点)
@@ -144,37 +240,42 @@ export interface HumanParts {
 
 // 共享几何体(跨对局复用, 重开不泄漏)
 const GEO = {
-  head: new THREE.DodecahedronGeometry(0.22, 0),
-  torso: new THREE.CylinderGeometry(0.205, 0.255, 0.58, 6, 2),
-  waist: new THREE.CylinderGeometry(0.205, 0.22, 0.16, 6, 1),
-  upperArm: new THREE.CapsuleGeometry(0.065, 0.17, 3, 6),
-  forearm: new THREE.CapsuleGeometry(0.0575, 0.185, 3, 6),
-  hand: new THREE.DodecahedronGeometry(0.085, 0),
-  thigh: new THREE.CapsuleGeometry(0.08, 0.22, 3, 6),
-  shin: new THREE.CapsuleGeometry(0.0725, 0.235, 3, 6),
+  head: new THREE.IcosahedronGeometry(0.22, 2),
+  torso: new THREE.CylinderGeometry(0.205, 0.255, 0.58, 12, 4),
+  waist: new THREE.CylinderGeometry(0.205, 0.22, 0.16, 12, 2),
+  upperArm: new THREE.CapsuleGeometry(0.068, 0.17, 6, 10),
+  forearm: new THREE.CapsuleGeometry(0.06, 0.185, 6, 10),
+  hand: new THREE.IcosahedronGeometry(0.085, 1),
+  thigh: new THREE.CapsuleGeometry(0.082, 0.22, 6, 10),
+  shin: new THREE.CapsuleGeometry(0.074, 0.235, 6, 10),
   boot: new THREE.BoxGeometry(0.16, 0.12, 0.26),
 };
 // 细节件共享几何(面部/领口/护具/鞋底等, 一次创建全局复用)
 const GEO_D = {
-  neck: new THREE.CylinderGeometry(0.07, 0.075, 0.1, 7),
+  neck: new THREE.CylinderGeometry(0.07, 0.075, 0.1, 12),
   eye: new THREE.BoxGeometry(0.052, 0.042, 0.018),
   brow: new THREE.BoxGeometry(0.068, 0.018, 0.016),
   mouth: new THREE.BoxGeometry(0.085, 0.016, 0.014),
   shirtPlacket: new THREE.BoxGeometry(0.026, 0.42, 0.018),
-  collar: new THREE.BoxGeometry(0.36, 0.06, 0.26),
-  shoulder: new THREE.BoxGeometry(0.15, 0.06, 0.17),
+  collar: new THREE.TorusGeometry(0.14, 0.026, 6, 14),
+  shoulder: new THREE.SphereGeometry(0.115, 12, 8),
   strap: new THREE.BoxGeometry(0.07, 0.5, 0.02),
-  belt: new THREE.BoxGeometry(0.42, 0.06, 0.28),
+  belt: new THREE.CylinderGeometry(0.225, 0.225, 0.06, 12),
   buckle: new THREE.BoxGeometry(0.08, 0.05, 0.02),
   cuff: new THREE.BoxGeometry(0.125, 0.055, 0.125),
   kneePad: new THREE.BoxGeometry(0.16, 0.11, 0.05),
   sole: new THREE.BoxGeometry(0.17, 0.035, 0.28),
   elbowPad: new THREE.BoxGeometry(0.13, 0.09, 0.045),
-  hair: new THREE.SphereGeometry(0.225, 7, 4, 0, Math.PI * 2, 0, Math.PI * 0.48),
-  ear: new THREE.CylinderGeometry(0.04, 0.045, 0.075, 6),
-  nose: new THREE.ConeGeometry(0.038, 0.075, 5),
+  hair: new THREE.SphereGeometry(0.225, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
+  ear: new THREE.CylinderGeometry(0.04, 0.045, 0.075, 10),
+  nose: new THREE.ConeGeometry(0.038, 0.075, 7),
   pocket: new THREE.BoxGeometry(0.13, 0.13, 0.025),
   cargo: new THREE.BoxGeometry(0.035, 0.14, 0.11),
+  backYoke: new THREE.BoxGeometry(0.34, 0.1, 0.022),
+  seam: new THREE.BoxGeometry(0.018, 0.34, 0.012),
+  beltPouch: new THREE.BoxGeometry(0.08, 0.1, 0.1),
+  sleeveBand: new THREE.CylinderGeometry(0.073, 0.073, 0.045, 10),
+  bootToe: new THREE.SphereGeometry(0.085, 10, 6),
 };
 
 const MAT = {
@@ -198,6 +299,7 @@ applySurfaceAsset(MAT.sole, 'fabric', 4.8, 0.36);
 const PANTS_COLORS = [0x3d4436, 0x37404a, 0x4a3f33, 0x2f3a2f, 0x46464e];
 
 const shirtCache = new Map<number, THREE.MeshStandardMaterial>();
+const shirtDetailCache = new Map<number, THREE.MeshStandardMaterial>();
 function shirtMat(color: number): THREE.MeshStandardMaterial {
   let m = shirtCache.get(color);
   if (!m) {
@@ -208,6 +310,17 @@ function shirtMat(color: number): THREE.MeshStandardMaterial {
   return m;
 }
 
+function shirtDetailMat(color: number): THREE.MeshStandardMaterial {
+  let material = shirtDetailCache.get(color);
+  if (!material) {
+    const detailColor = new THREE.Color(color).multiplyScalar(0.72);
+    material = new THREE.MeshStandardMaterial({ color: detailColor, roughness: 0.92, metalness: 0 });
+    applySurfaceAsset(material, 'fabric', 4.2, 0.6);
+    shirtDetailCache.set(color, material);
+  }
+  return material;
+}
+
 export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.Group; parts: HumanParts } {
   const group = new THREE.Group();
   const inner = new THREE.Group();
@@ -215,27 +328,28 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   const body = new THREE.Group();
   inner.add(body);
   const shirt = shirtMat(shirtColor);
+  const shirtDetail = shirtDetailMat(shirtColor);
   const pants = shirtMat(PANTS_COLORS[variant % PANTS_COLORS.length] as number);
 
   const torso = new THREE.Mesh(GEO.torso, shirt);
   torso.name = 'torso';
   torso.position.set(0, 1.05, 0);
-  torso.scale.z = 0.6;
+  torso.scale.z = 0.72;
   torso.castShadow = true;
   body.add(torso);
   for (const side of [-1, 1] as const) {
     const pocket = new THREE.Mesh(GEO_D.pocket, shirt);
-    pocket.position.set(0.11 * side, -0.02, 0.15);
+    pocket.position.set(0.11 * side, -0.02, 0.177);
     torso.add(pocket);
   }
   const placket = new THREE.Mesh(GEO_D.shirtPlacket, MAT.strap);
   placket.name = 'shirt-placket';
-  placket.position.set(0, 0, 0.151);
+  placket.position.set(0, 0, 0.178);
   torso.add(placket);
   // 腰带/裤腰色块
   const waist = new THREE.Mesh(GEO.waist, pants);
   waist.position.set(0, 0.79, 0);
-  waist.scale.z = 0.62;
+  waist.scale.z = 0.7;
   body.add(waist);
   // ---- 细节: 颈部/领口/肩垫/胸挂带/腰带扣 ----
   const neck = new THREE.Mesh(GEO_D.neck, MAT.skin);
@@ -243,55 +357,75 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   body.add(neck);
   const collar = new THREE.Mesh(GEO_D.collar, shirt);
   collar.position.set(0, 1.33, 0);
+  collar.rotation.x = Math.PI / 2;
+  collar.scale.z = 0.78;
   body.add(collar);
   for (const side of [-1, 1] as const) {
     const pad = new THREE.Mesh(GEO_D.shoulder, shirt);
-    pad.position.set(0.25 * side, 1.365, 0);
+    pad.name = side < 0 ? 'shoulder-left' : 'shoulder-right';
+    pad.position.set(0.245 * side, 1.315, 0);
+    pad.scale.set(0.96, 0.52, 0.82);
     pad.castShadow = true;
     body.add(pad);
   }
   const strap = new THREE.Mesh(GEO_D.strap, MAT.strap);
-  strap.position.set(0.09, 1.05, 0.15);
+  strap.position.set(0.09, 1.05, 0.178);
   body.add(strap);
   const belt = new THREE.Mesh(GEO_D.belt, MAT.strap);
   belt.position.set(0, 0.88, 0);
+  belt.scale.z = 0.72;
   body.add(belt);
   const buckle = new THREE.Mesh(GEO_D.buckle, MAT.dark);
-  buckle.position.set(0, 0.88, 0.15);
+  buckle.position.set(0, 0.88, 0.174);
   body.add(buckle);
+  const backYoke = new THREE.Mesh(GEO_D.backYoke, shirt);
+  backYoke.name = 'shirt-back-yoke';
+  backYoke.position.set(0, 1.235, -0.166);
+  body.add(backYoke);
+  const backSeam = new THREE.Mesh(GEO_D.seam, shirtDetail);
+  backSeam.name = 'shirt-back-seam';
+  backSeam.position.set(0, 1.045, -0.177);
+  body.add(backSeam);
+  for (const side of [-1, 1] as const) {
+    const pouch = new THREE.Mesh(GEO_D.beltPouch, MAT.strap);
+    pouch.name = side < 0 ? 'belt-pouch-left' : 'belt-pouch-right';
+    pouch.position.set(0.19 * side, 0.84, -0.015);
+    pouch.rotation.y = side * 0.18;
+    body.add(pouch);
+  }
 
   const head = new THREE.Mesh(GEO.head, MAT.skin);
   head.name = 'head';
   head.position.set(0, 1.53, 0);
-  head.scale.set(0.76, 0.8, 0.76);
+  head.scale.set(0.92, 0.96, 0.9);
   head.castShadow = true;
   // 独立眼睛、眉毛和嘴部让近景表情可读，仍保持低多边形块面风格。
   for (const side of [-1, 1] as const) {
     const eye = new THREE.Mesh(GEO_D.eye, MAT.face);
     eye.name = side < 0 ? 'eye-left' : 'eye-right';
-    eye.position.set(side * 0.072, 0.025, 0.166);
+    eye.position.set(side * 0.078, 0.025, 0.194);
     head.add(eye);
     const brow = new THREE.Mesh(GEO_D.brow, MAT.hair);
     brow.name = side < 0 ? 'brow-left' : 'brow-right';
-    brow.position.set(side * 0.072, 0.073, 0.164);
+    brow.position.set(side * 0.078, 0.075, 0.192);
     brow.rotation.z = side * -0.08;
     head.add(brow);
   }
   const mouth = new THREE.Mesh(GEO_D.mouth, MAT.lip);
   mouth.name = 'mouth';
-  mouth.position.set(0, -0.095, 0.166);
+  mouth.position.set(0, -0.095, 0.194);
   head.add(mouth);
   const hair = new THREE.Mesh(GEO_D.hair, MAT.hair);
   hair.position.set(0, 0.112, -0.005);
-  hair.scale.set(0.78, 0.58, 0.78);
+  hair.scale.set(0.94, 0.64, 0.92);
   head.add(hair);
   const nose = new THREE.Mesh(GEO_D.nose, MAT.skin);
-  nose.position.set(0, -0.035, 0.188);
+  nose.position.set(0, -0.035, 0.215);
   nose.rotation.x = Math.PI / 2;
   head.add(nose);
   for (const side of [-1, 1] as const) {
     const ear = new THREE.Mesh(GEO_D.ear, MAT.skin);
-    ear.position.set(0.17 * side, -0.01, 0);
+    ear.position.set(0.202 * side, -0.01, 0);
     ear.rotation.z = Math.PI / 2;
     head.add(ear);
   }
@@ -300,11 +434,18 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   // 手臂: 肩部枢轴 → 上臂 → 肘部枢轴 → 前臂 + 手(肘/手暗示)
   const mkArm = (side: 1 | -1): { root: THREE.Group; elbow: THREE.Group } => {
     const arm = new THREE.Group();
-    arm.position.set(0.31 * side, 1.32, 0);
+    arm.position.set(0.275 * side, 1.3, 0);
+    const shoulderJoint = new THREE.Mesh(GEO_D.shoulder, shirt);
+    shoulderJoint.name = side < 0 ? 'arm-joint-left' : 'arm-joint-right';
+    shoulderJoint.scale.set(0.72, 0.84, 0.72);
+    arm.add(shoulderJoint);
     const upper = new THREE.Mesh(GEO.upperArm, shirt);
     upper.position.set(0, -0.14, 0);
     upper.castShadow = true;
     arm.add(upper);
+    const sleeveBand = new THREE.Mesh(GEO_D.sleeveBand, MAT.strap);
+    sleeveBand.position.set(0, -0.245, 0);
+    arm.add(sleeveBand);
     const elbow = new THREE.Group();
     elbow.position.set(0, -0.3, 0);
     elbow.rotation.x = -0.35; // 肘部微屈
@@ -362,6 +503,11 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     const boot = new THREE.Mesh(GEO.boot, MAT.boot);
     boot.position.set(0, -0.42, 0.03);
     knee.add(boot);
+    const toe = new THREE.Mesh(GEO_D.bootToe, MAT.boot);
+    toe.name = side < 0 ? 'boot-toe-left' : 'boot-toe-right';
+    toe.position.set(0, -0.005, 0.125);
+    toe.scale.set(0.94, 0.62, 1.12);
+    boot.add(toe);
     // 鞋底(深色伪 AO 接地感)
     const sole = new THREE.Mesh(GEO_D.sole, MAT.sole);
     sole.position.set(0, -0.075, 0.01);
@@ -569,37 +715,16 @@ export class Character {
   attachCanopy(color: number): void {
     this.removeCanopy();
     const g = new THREE.Group();
-    const base = new THREE.Color(color);
-    const panelCount = 9;
-    for (let i = 0; i < panelCount; i++) {
-      const tint = base.clone().multiplyScalar(i % 2 === 0 ? 1.08 : 0.82);
-      const panel = new THREE.Mesh(
-        new THREE.SphereGeometry(1, 4, 3, (i / panelCount) * Math.PI * 2, Math.PI * 2 / panelCount, 0, Math.PI / 2),
-        new THREE.MeshStandardMaterial({ color: tint, roughness: 0.86, side: THREE.DoubleSide }),
-      );
-      panel.scale.set(2.65, 0.74, 1.58);
-      panel.position.y = 0.22;
-      panel.castShadow = true;
-      g.add(panel);
-    }
-    const linePos: number[] = [];
-    for (const [lx, lz] of [[-2.15, -0.82], [-2.15, 0.82], [-0.8, -1.28], [-0.8, 1.28], [0.8, -1.28], [0.8, 1.28], [2.15, -0.82], [2.15, 0.82]] as const) {
-      const harnessX = Math.sign(lx) * 0.3;
-      const harnessZ = Math.sign(lz) * 0.18;
-      linePos.push(lx, 0.2, lz, harnessX, -2.48, harnessZ);
-    }
-    const lineGeo = new THREE.BufferGeometry();
-    lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
-    g.add(new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ color: 0xe3ddd0, transparent: true, opacity: 0.92 })));
+    const assets = canopyAssets();
+    const materials = canopyMaterials(color);
+    const lightPanels = new THREE.Mesh(assets.lightPanels, materials[0]);
+    const darkPanels = new THREE.Mesh(assets.darkPanels, materials[1]);
+    lightPanels.castShadow = true;
+    darkPanels.castShadow = true;
+    g.add(lightPanels, darkPanels);
+    g.add(new THREE.LineSegments(assets.lines, assets.lineMaterial));
     // 伞盖后缘黑色导流带, 远距离也能读出伞面轮廓。
-    const trailing = new THREE.Mesh(
-      new THREE.TorusGeometry(1, 0.025, 4, 24, Math.PI),
-      new THREE.MeshBasicMaterial({ color: 0x2d332c }),
-    );
-    trailing.scale.set(2.62, 1.55, 1);
-    trailing.rotation.x = Math.PI / 2;
-    trailing.position.set(0, 0.22, 0);
-    g.add(trailing);
+    g.add(new THREE.Mesh(assets.trailing, assets.trailingMaterial));
     g.position.set(0, 2.72, 0);
     this.parts.inner.add(g);
     this.canopyGroup = g;

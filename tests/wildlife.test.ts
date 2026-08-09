@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { WildlifeSystem, WILDLIFE_COUNTS, type WildlifeKind } from '../src/wildlife';
 import { WATER_Y, World } from '../src/world';
+import { Vehicle, VEHICLE_SPEC } from '../src/vehicles';
 
 function createWildlife(): { world: World; wildlife: WildlifeSystem } {
   const scene = new THREE.Scene();
@@ -122,6 +123,29 @@ describe('环境动物系统', () => {
       a.group.position.x - b.group.position.x,
       a.group.position.z - b.group.position.z,
     )).toBeGreaterThan(1.2);
+  });
+
+  it('牛羊不会穿过停放载具', () => {
+    const { wildlife } = createWildlife();
+    const cow = wildlife.entities.find((entity) => entity.kind === 'cow');
+    expect(cow).toBeDefined();
+    if (!cow) return;
+    const vehicle = new Vehicle('car', cow.group.position.clone(), Math.PI / 5);
+    const before = cow.group.position.clone();
+
+    wildlife.resolveVehicleCollisions([vehicle]);
+
+    const dx = cow.group.position.x - vehicle.pos.x;
+    const dz = cow.group.position.z - vehicle.pos.z;
+    const cos = Math.cos(vehicle.yaw);
+    const sin = Math.sin(vehicle.yaw);
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
+    const half = VEHICLE_SPEC.car.half;
+    const closestX = Math.max(-half[0], Math.min(half[0], localX));
+    const closestZ = Math.max(-half[2], Math.min(half[2], localZ));
+    expect(cow.group.position.distanceTo(before)).toBeGreaterThan(0);
+    expect(Math.hypot(localX - closestX, localZ - closestZ)).toBeGreaterThanOrEqual(cow.radius * 0.7 - 0.0001);
   });
 
   it('近战锥形判定能找到最近的动物', () => {

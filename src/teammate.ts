@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import {
-  CANOPY_DEPLOY_VELOCITY, Character, moveChar, stepAirDescentVelocity, SWIM_SPRINT_SPEED,
+  CANOPY_DEPLOY_VELOCITY, Character, moveAirDescentHorizontal, moveChar, stepAirDescentVelocity, SWIM_SPRINT_SPEED,
 } from './character';
 import type { Game } from './game';
 import type { PlayerController } from './player';
@@ -510,8 +510,8 @@ export class TeammateController {
       const dl = Math.hypot(dx, dz);
       const hv = this.descent === 'freefall' ? 12 : 8;
       if (dl > 12) {
-        c.pos.x += (dx / dl) * hv * dt;
-        c.pos.z += (dz / dl) * hv * dt;
+        const radius = phase === 'canopy' ? Math.max(c.radius, 0.72) : c.radius;
+        moveAirDescentHorizontal(c.pos, (dx / dl) * hv * dt, (dz / dl) * hv * dt, radius, game.world);
       }
       if (dl > 2) c.yaw = Math.atan2(dx, dz);
     }

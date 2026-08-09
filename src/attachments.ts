@@ -13,8 +13,8 @@ export interface AttachmentDef {
 
 export const ATTACHMENTS: Record<AttachmentId, AttachmentDef> = {
   reddot: { id: 'reddot', name: '红点瞄准镜', short: '红', slot: 'sight' },
-  scope2: { id: 'scope2', name: '2倍镜', short: '2×', slot: 'sight' },
-  scope4: { id: 'scope4', name: '4倍镜', short: '4×', slot: 'sight' },
+  scope2: { id: 'scope2', name: '2倍镜', short: '2倍镜', slot: 'sight' },
+  scope4: { id: 'scope4', name: '4倍镜', short: '4倍镜', slot: 'sight' },
   extmag: { id: 'extmag', name: '扩容弹匣', short: '扩', slot: 'mag' },
   comp: { id: 'comp', name: '枪口补偿器', short: '补', slot: 'muzzle' },
   suppressor: { id: 'suppressor', name: '消音器', short: '消', slot: 'muzzle' },

@@ -2,13 +2,28 @@ import { describe, expect, it } from 'vitest';
 import {
   apartmentFloorLayout, doorColliderDisabled, doorLeafSegment, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES,
   GABLE_ROOF_RISE,
-  gableRoofPitch, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
+  facadeSegments, gableRoofPitch, mainEntranceHalfWidth, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
   stairHandrailTransform, stairRailX,
 } from '../src/buildings';
 import type { AabbCollider } from '../src/types';
 import { REGIONS } from '../src/regions';
 
 describe('建筑门交互方向', () => {
+  it('正立面装饰为不同原型保留完整主入口净宽', () => {
+    expect(mainEntranceHalfWidth('apartment')).toBeGreaterThan(mainEntranceHalfWidth('cottage2'));
+    expect(mainEntranceHalfWidth('gym')).toBe(mainEntranceHalfWidth('apartment'));
+    expect(mainEntranceHalfWidth('shop')).toBeGreaterThan(mainEntranceHalfWidth('cottage1'));
+  });
+
+  it('连续墙脚按多个真实门洞切段并保留安全余量', () => {
+    expect(facadeSegments(0, 12, [[4, 5], [7, 8]], 0.2)).toEqual([
+      [0, 3.8], [5.2, 6.8], [8.2, 12],
+    ]);
+    expect(facadeSegments(0, 12, [[4, 6], [5, 8]], 0.1)).toEqual([
+      [0, 3.9], [8.1, 12],
+    ]);
+  });
+
   it('高楼楼层包含大厅住宅办公休息和设备五种格局', () => {
     const layouts = Array.from({ length: 7 }, (_, level) => apartmentFloorLayout(level, 7));
     expect(layouts).toEqual(['lobby', 'residence', 'office', 'lounge', 'residence', 'office', 'utility']);

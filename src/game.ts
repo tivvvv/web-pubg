@@ -87,7 +87,7 @@ import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathc
 import { Hud, shouldShowSwimmingStatus, type BackpackData, type SquadHudRow } from './hud';
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
 import { Input, type Action } from './input';
-import { doorwayOccupied } from './interaction';
+import { doorwayOccupied, isAutomaticPickupKind } from './interaction';
 import { LootManager, isGunKind, isMeleeKind, lootPointClear, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
@@ -1238,6 +1238,7 @@ export class Game {
     this.deathCrates.update(dt);
     this.effects.update(dt);
     this.wildlife.update(dt);
+    this.wildlife.resolveVehicleCollisions(this.vehicles.list);
     this.grenades.update(dt, this);
     this.vehicles.update(dt, this);
     this.world.buildings.update(dt); // 门扇开关动画
@@ -1268,6 +1269,10 @@ export class Game {
   private separateChars(): void {
     separateCharacterBodies(this.chars, (c) => this.world.resolveCollision(c.pos, c.radius));
     this.wildlife.resolveCharacterCollisions(this.chars);
+    this.vehicles.resolveCharacterCollisions(
+      this.chars,
+      (c) => this.world.resolveCollision(c.pos, c.radius),
+    );
   }
 
   // ---- 游泳状态机(玩家/bot/队友共用, 各控制器每帧调用一次) ----
@@ -2126,6 +2131,7 @@ export class Game {
     if (isArmorKind(item.kind)) picked = this.tryPickupArmor(player.char, item);
     else if (isPackKind(item.kind)) picked = this.tryPickupPack(player.char, item);
     else if (isAttachKind(item.kind)) picked = this.tryPickupAttachment(player.char, item);
+    else if (isAutomaticPickupKind(item.kind)) picked = this.applyAutoPickup(player.char, item);
     else picked = this.tryPickupWeapon(player.char, item);
     if (picked) {
       player.beginInteractionFeedback(this, {
@@ -2499,7 +2505,7 @@ export class Game {
     } else if (gun) {
       const attachments = attachmentSummary(gun.att);
       this.hud.setWeapon(
-        `${gun.def.name}${attachments ? ` [${attachments}]` : ''}`,
+        `${gun.def.name}${attachments ? ` · 配件 ${attachments}` : ''}`,
         player.reloading ? '--' : String(gun.mag),
         noAmmo ? '无弹' : `/ ${c.ammo[gun.def.ammo]}`,
         player.reloading ? '换弹中…' : fireModeOf(gun) === 'auto' ? '全自动' : '单发',

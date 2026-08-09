@@ -1,7 +1,7 @@
 // Bot AI: 游走/拾取 ↔ 交战 状态机; 赤手空拳开局, 优先找枪, 近身用近战
 import * as THREE from 'three';
 import {
-  CANOPY_DEPLOY_VELOCITY, Character, moveChar, stepAirDescentVelocity, SWIM_EXIT_DEPTH, SWIM_SPRINT_SPEED,
+  CANOPY_DEPLOY_VELOCITY, Character, moveAirDescentHorizontal, moveChar, stepAirDescentVelocity, SWIM_EXIT_DEPTH, SWIM_SPRINT_SPEED,
 } from './character';
 import type { AmmoType, GunState, MeleeId, WeaponId } from './types';
 import { WEAPONS } from './weapons';
@@ -761,8 +761,8 @@ export class BotController {
     const hv = this.descent === 'freefall' ? 7 : 5;
     if (dl > 1) {
       const push = Math.min(hv, dl * 0.5) * dt;
-      c.pos.x += (dx / dl) * push;
-      c.pos.z += (dz / dl) * push;
+      const radius = phase === 'canopy' ? Math.max(c.radius, 0.72) : c.radius;
+      moveAirDescentHorizontal(c.pos, (dx / dl) * push, (dz / dl) * push, radius, game.world);
     }
     c.pos.y += this.vy * dt;
     if (dl > 2) c.yaw = Math.atan2(dx, dz);

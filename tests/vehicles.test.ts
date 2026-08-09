@@ -1,7 +1,14 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { Character } from '../src/character';
-import { seatWorldAt, vehicleExitCandidates, Vehicle, VehicleManager, VEHICLE_SPEC } from '../src/vehicles';
+import {
+  resolveBodyAgainstVehicle,
+  seatWorldAt,
+  vehicleExitCandidates,
+  Vehicle,
+  VehicleManager,
+  VEHICLE_SPEC,
+} from '../src/vehicles';
 
 describe('载具座位 命中和损毁状态', () => {
   it('三类载具保留近景机械和车身细节', () => {
@@ -39,6 +46,54 @@ describe('载具座位 命中和损毁状态', () => {
     expect(exits[2]?.z).toBeLessThan(20);
     expect(exits[3]?.z).toBeGreaterThan(20);
     expect(exits.every((candidate) => Math.hypot(candidate.x - 10, candidate.z - 20) > 1.5)).toBe(true);
+  });
+
+  it('人物不能穿过停放载具且旋转载具没有包围圆空气墙', () => {
+    const vehicle = new Vehicle('car', new THREE.Vector3(10, 0, 20), Math.PI / 4);
+    const inside = new THREE.Vector3(10, 0, 20);
+    expect(resolveBodyAgainstVehicle(vehicle, inside, 0.38)).toBe(true);
+
+    const cos = Math.cos(vehicle.yaw);
+    const sin = Math.sin(vehicle.yaw);
+    const localX = (inside.x - vehicle.pos.x) * cos - (inside.z - vehicle.pos.z) * sin;
+    const localZ = (inside.x - vehicle.pos.x) * sin + (inside.z - vehicle.pos.z) * cos;
+    const half = VEHICLE_SPEC.car.half;
+    const nearestX = Math.max(-half[0], Math.min(half[0], localX));
+    const nearestZ = Math.max(-half[2], Math.min(half[2], localZ));
+    expect(Math.hypot(localX - nearestX, localZ - nearestZ)).toBeGreaterThanOrEqual(0.38 - 0.00001);
+
+    // 位于保守包围圆内、但实际 OBB 车角外的点应保持可通行。
+    const clearLocalX = half[0] + 0.5;
+    const clearLocalZ = half[2] + 0.5;
+    const clear = new THREE.Vector3(
+      vehicle.pos.x + clearLocalX * cos + clearLocalZ * sin,
+      0,
+      vehicle.pos.z - clearLocalX * sin + clearLocalZ * cos,
+    );
+    const before = clear.clone();
+    expect(resolveBodyAgainstVehicle(vehicle, clear, 0.38)).toBe(false);
+    expect(clear.distanceTo(before)).toBe(0);
+  });
+
+  it('载具管理器跳过车内乘员并推出车外角色', () => {
+    const manager = new VehicleManager(new THREE.Scene());
+    const vehicle = new Vehicle('moto', new THREE.Vector3(0, 0, 0), 0);
+    const driver = new Character('司机', true, 0x3a6ea5);
+    const pedestrian = new Character('行人', false, 0x3a6ea5);
+    driver.pos.set(0, 0, 0);
+    pedestrian.pos.set(0, 0, 0);
+    vehicle.driver = driver;
+    manager.list.push(vehicle);
+    const resolveStatic = vi.fn();
+
+    manager.resolveCharacterCollisions([driver, pedestrian], resolveStatic);
+
+    expect(driver.pos.x).toBe(0);
+    expect(driver.pos.z).toBe(0);
+    expect(Math.hypot(pedestrian.pos.x, pedestrian.pos.z)).toBeGreaterThanOrEqual(
+      VEHICLE_SPEC.moto.half[0] + pedestrian.radius - 0.00001,
+    );
+    expect(resolveStatic).toHaveBeenCalledOnce();
   });
 
   it('三类载具都使用坐姿根节点且角色腿部进入坐姿', () => {

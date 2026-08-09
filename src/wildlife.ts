@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WATER_Y, riverZAt, type World } from './world';
+import { resolveBodyAgainstVehicle, VEHICLE_SPEC, type Vehicle } from './vehicles';
 
 export type WildlifeKind = 'cow' | 'sheep' | 'fish' | 'bird';
 
@@ -364,6 +365,34 @@ export class WildlifeSystem {
             entity.group.position.x - rnx * (minimum - remainDistance + 0.006),
             entity.group.position.z - rnz * (minimum - remainDistance + 0.006),
           );
+        }
+      }
+    }
+  }
+
+  // 牛羊与活动载具使用同一套朝向车身碰撞。鱼和飞鸟处于不同高度层，不参与。
+  resolveVehicleCollisions(vehicles: readonly Vehicle[]): void {
+    for (const entity of this.entities) {
+      if (!entity.alive || (entity.kind !== 'cow' && entity.kind !== 'sheep')) continue;
+      for (const vehicle of vehicles) {
+        if (vehicle.dead) continue;
+        const half = VEHICLE_SPEC[vehicle.kind].half;
+        if (entity.group.position.y >= vehicle.pos.y + 0.72 + half[1] ||
+          entity.group.position.y + entity.centerY * 2 <= vehicle.pos.y) continue;
+        const originalX = entity.group.position.x;
+        const originalZ = entity.group.position.z;
+        if (!resolveBodyAgainstVehicle(vehicle, entity.group.position, this.collisionRadius(entity))) continue;
+        if (!this.world.pointFree(
+          entity.group.position.x,
+          entity.group.position.z,
+          this.collisionRadius(entity),
+          WATER_Y + 0.25,
+          18,
+        )) {
+          entity.group.position.x = originalX;
+          entity.group.position.z = originalZ;
+        } else {
+          entity.group.position.y = this.world.getHeight(entity.group.position.x, entity.group.position.z);
         }
       }
     }

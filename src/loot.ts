@@ -494,25 +494,28 @@ export class LootManager {
     const x = gun.group.position.x;
     const z = gun.group.position.z;
     const y = gun.baseY - 1;
-    const sourceRegion = regionOrWilderness(x, z).id;
     const sourcePlot = sampleTerrain ? null : world.buildings.plots.find((plot) => (
       x > plot.minX + 1.7 && x < plot.maxX - 1.7 &&
       z > plot.minZ + 1.7 && z < plot.maxZ - 1.7
     ));
     const phase = ((Math.abs(x) * 0.754877666 + Math.abs(z) * 0.569840296) % 1) * Math.PI * 2;
-    const distances = [0.42, 0.56, 0.72, 0.94, 1.2, 1.52, 1.88, 2.24];
+    // 拾取光环直径约 0.84m，弹药至少离枪 0.88m，避免两种模型和提示圈叠成
+    // “同一武器位里有两把东西”的视觉误判。
+    const distances = [0.88, 1.02, 1.2, 1.42, 1.68, 1.94, 2.2, 2.36];
     for (let ring = 0; ring < distances.length; ring++) {
       const distance = distances[ring] as number;
       for (let step = 0; step < 16; step++) {
         const angle = phase + step * (Math.PI * 2 / 16) + ring * 0.19635;
         const ax = x + Math.cos(angle) * distance;
         const az = z + Math.sin(angle) * distance;
-        if (regionOrWilderness(ax, az).id !== sourceRegion) continue;
+        // 保底配弹只关心与枪的真实空间关系。建筑恰好跨区域边界时，不应因为
+        // 1m 外的弹药被归到相邻区域而让枪成为无弹孤品。
         if (sourcePlot && (
-          ax <= sourcePlot.minX + 1.55 || ax >= sourcePlot.maxX - 1.55 ||
-          az <= sourcePlot.minZ + 1.55 || az >= sourcePlot.maxZ - 1.55
+          ax <= sourcePlot.minX + 1.3 || ax >= sourcePlot.maxX - 1.3 ||
+          az <= sourcePlot.minZ + 1.3 || az >= sourcePlot.maxZ - 1.3
         )) continue;
         const ay = sampleTerrain ? world.getHeight(ax, az) : y;
+        if (Math.abs((ay + 1) - gun.baseY) > 0.68) continue;
         if (sampleTerrain && !world.pointFree(
           ax,
           az,
@@ -524,7 +527,7 @@ export class LootManager {
         if (Math.abs(support - ay) > 0.34 || !lootPointClear(world, ax, ay, az, 0.14)) continue;
         if (this.items.some((item) => item.active &&
           Math.abs(item.baseY - (ay + 1)) < 0.9 &&
-          Math.hypot(item.group.position.x - ax, item.group.position.z - az) < 0.34)) continue;
+          Math.hypot(item.group.position.x - ax, item.group.position.z - az) < 0.74)) continue;
         const ammo = this.spawn(AMMO_LOOT_KIND[WEAPONS[gun.kind].ammo], ax, ay, az);
         if (ammo) return 1;
       }
@@ -616,7 +619,7 @@ export class LootManager {
     const phase = random() * Math.PI * 2;
     for (let attempt = 0; attempt < 42; attempt++) {
       const a = phase + attempt * 2.399963;
-      const d = 0.72 + ((attempt * 0.37 + random() * 0.24) % 1.68);
+      const d = 1.02 + ((attempt * 0.37 + random() * 0.24) % 1.3);
       const ax = x + Math.cos(a) * d;
       const az = z + Math.sin(a) * d;
       if (regionOrWilderness(ax, az).id !== sourceRegion) continue;
@@ -641,7 +644,7 @@ export class LootManager {
       if (Math.abs(support - ay) > 0.34 || !lootPointClear(world, ax, ay, az)) continue;
       if (this.items.some((item) => item.active &&
         Math.abs(item.baseY - (ay + 1)) < 0.9 &&
-        Math.hypot(item.group.position.x - ax, item.group.position.z - az) < 0.52)) continue;
+        Math.hypot(item.group.position.x - ax, item.group.position.z - az) < 0.86)) continue;
       const it = this.spawn(AMMO_LOOT_KIND[WEAPONS[kind].ammo], ax, ay, az);
       return it ? 1 : 0;
     }

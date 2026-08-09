@@ -91,6 +91,49 @@ export interface VehicleExitPoint {
   side: 'driver' | 'passenger' | 'rear' | 'front';
 }
 
+export interface VehicleCollisionBody {
+  readonly pos: THREE.Vector3;
+  readonly radius: number;
+  readonly alive: boolean;
+}
+
+// 角色脚底圆与载具水平 OBB 的精确推出。碰撞跟随车身朝向，避免用包围圆时
+// 在车头/车尾两侧产生明显空气墙，也避免停放载具只有射线命中却能被人物穿过。
+export function resolveBodyAgainstVehicle(
+  v: Pick<Vehicle, 'kind' | 'pos' | 'yaw'>,
+  bodyPos: THREE.Vector3,
+  radius: number,
+): boolean {
+  const half = VEHICLE_SPEC[v.kind].half;
+  const cos = Math.cos(v.yaw);
+  const sin = Math.sin(v.yaw);
+  const worldX = bodyPos.x - v.pos.x;
+  const worldZ = bodyPos.z - v.pos.z;
+  let localX = worldX * cos - worldZ * sin;
+  let localZ = worldX * sin + worldZ * cos;
+  const closestX = clamp(localX, -half[0], half[0]);
+  const closestZ = clamp(localZ, -half[2], half[2]);
+  const dx = localX - closestX;
+  const dz = localZ - closestZ;
+  const distanceSq = dx * dx + dz * dz;
+  if (distanceSq >= radius * radius) return false;
+
+  if (distanceSq > 0.000001) {
+    const distance = Math.sqrt(distanceSq);
+    localX = closestX + dx / distance * radius;
+    localZ = closestZ + dz / distance * radius;
+  } else {
+    // 圆心在车体投影内时沿最近车身边推出，保证不会在车中心来回抖动。
+    const exitX = half[0] - Math.abs(localX);
+    const exitZ = half[2] - Math.abs(localZ);
+    if (exitX < exitZ) localX = (localX < 0 ? -1 : 1) * (half[0] + radius);
+    else localZ = (localZ < 0 ? -1 : 1) * (half[2] + radius);
+  }
+  bodyPos.x = v.pos.x + localX * cos + localZ * sin;
+  bodyPos.z = v.pos.z - localX * sin + localZ * cos;
+  return true;
+}
+
 // 按驾驶侧, 副驾侧, 车尾, 车头依次给出下车候选点。调用方负责检查地形和碰撞。
 export function vehicleExitCandidates(v: Pick<Vehicle, 'kind' | 'pos' | 'yaw'>): VehicleExitPoint[] {
   const half = VEHICLE_SPEC[v.kind].half;
@@ -555,6 +598,27 @@ export class VehicleManager {
       best = v;
     }
     return best;
+  }
+
+  // 活载具不会登记成世界静态碰撞体，否则车辆移动后空间索引会失效。
+  // 因此每帧用朝向 OBB 对未乘车角色做动态推出；残骸由 world collider 负责。
+  resolveCharacterCollisions(
+    characters: readonly VehicleCollisionBody[],
+    resolveStatic: (body: VehicleCollisionBody) => void,
+  ): void {
+    for (const body of characters) {
+      if (!body.alive) continue;
+      for (const vehicle of this.list) {
+        if (vehicle.dead || vehicle.driver === body || vehicle.passengers.includes(body as Character)) continue;
+        const half = VEHICLE_SPEC[vehicle.kind].half;
+        const bodyBottom = body.pos.y;
+        const bodyTop = bodyBottom + 1.7;
+        const vehicleBottom = vehicle.pos.y;
+        const vehicleTop = vehicle.pos.y + 0.72 + half[1];
+        if (bodyBottom >= vehicleTop - 0.02 || bodyTop <= vehicleBottom + 0.02) continue;
+        if (resolveBodyAgainstVehicle(vehicle, body.pos, body.radius)) resolveStatic(body);
+      }
+    }
   }
 
   // 射线 vs 载具 OBB(最近命中), 返回载具与 t

@@ -27,10 +27,17 @@ describe('固定回归场景入口', () => {
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&slice=1&view=interior');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=interior&arch=cottage1&plot=last');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=roof&arch=cottage1');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=entrance&arch=apartment&plot=last&side=inside&open=both');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=entrance&arch=barn&side=inside');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&traverse=up&arch=terrace');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&traverse=up&arch=apartment&plot=last');
     for (const arch of ['terrace', 'barn', 'shop', 'gym']) {
       expect(RELEASE_SCENARIO_ROUTES).toContain(`scenario=stairs&view=facade&arch=${arch}`);
+    }
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=interior&arch=gym');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=entrance&arch=gym&face=front&side=outside&open=both');
+    for (const face of ['left', 'right']) {
+      expect(RELEASE_SCENARIO_ROUTES).toContain(`scenario=stairs&view=entrance&arch=gym&face=${face}&side=inside&open=both`);
     }
     for (const sight of ['scope2', 'scope4', 'reddot']) {
       const route = RELEASE_SCENARIO_ROUTES.find((candidate) =>
@@ -42,6 +49,7 @@ describe('固定回归场景入口', () => {
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=combat&weapon=rifle&movement=run');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=combat&weapon=rifle&action=pickup&hold=1');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=revive&ai=1');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=parachute&stress=1');
     expect(releaseScenarioHref(0)).toContain('release=1&case=0');
     expect(releaseScenarioHref(999)).toContain(`case=${RELEASE_SCENARIO_ROUTES.length - 1}`);
   });

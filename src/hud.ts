@@ -280,7 +280,13 @@ export class Hud {
     for (let i = 0; i < this.slotEls.length; i++) {
       const e = this.slotEls[i] as HTMLElement;
       const label = names[i];
-      e.textContent = `${i + 1} ${label ?? '空'}`;
+      const key = document.createElement('span');
+      key.className = 'slot-key';
+      key.textContent = String(i + 1);
+      const name = document.createElement('span');
+      name.className = 'slot-name';
+      name.textContent = label ?? '空';
+      e.replaceChildren(key, name);
       e.classList.toggle('active', i === active);
       e.classList.toggle('empty', label === null);
     }

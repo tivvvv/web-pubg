@@ -94,6 +94,7 @@ export class World {
   readonly buildings = new Buildings();
   readonly bushes: { x: number; z: number; r: number }[] = []; // 灌木足迹(隐蔽判定)
   readonly naturalRocks: { x: number; z: number; r: number }[] = []; // 自然岩石足迹(穿模审计)
+  readonly farmFenceColliders: BoxCollider[] = []; // 与可见短围栏逐段对应, 保留真实缺口
   readonly treeVisualSamples: { kind: TreeVisualKind; x: number; z: number }[] = []; // 实机视觉巡检锚点
   readonly environment: EnvironmentSystem;
   readonly tacticalRoutes = TACTICAL_ROUTES;
@@ -107,6 +108,8 @@ export class World {
   naturalStoryPropCount = 0;
   humanDetailPropCount = 0;
   regionalIdentityDetailCount = 0;
+  farmFurrowCount = 0;
+  farmFenceRailCount = 0;
   shorelineDetailCount = 0;
   distantLandformCount = 0;
   verticalSliceDetailCount = 0;
@@ -1230,7 +1233,7 @@ varying vec3 vTerrainWorld;`,
   }
 
   private addRoadNetwork(scene: THREE.Scene): void {
-    const makeLayer = (width: number, lift: number, color: number, roughness: number): THREE.Mesh => {
+    const makeLayer = (width: number, lift: number, color: number, roughness: number, name: string): THREE.Mesh => {
       const vertices: number[] = [];
       for (const path of ROAD_PATHS) {
         for (let i = 0; i < path.length - 1; i++) {
@@ -1260,9 +1263,10 @@ varying vec3 vTerrainWorld;`,
             const y0r = this.getHeight(x0r, z0r) + lift;
             const y1l = this.getHeight(x1l, z1l) + lift;
             const y1r = this.getHeight(x1r, z1r) + lift;
+            // 从上方观察保持逆时针绕序。旧顺序的法线朝下，路面在坡地上只剩零散黑色背面。
             vertices.push(
-              x0l, y0l, z0l, x0r, y0r, z0r, x1r, y1r, z1r,
-              x0l, y0l, z0l, x1r, y1r, z1r, x1l, y1l, z1l,
+              x0l, y0l, z0l, x1r, y1r, z1r, x0r, y0r, z0r,
+              x0l, y0l, z0l, x1l, y1l, z1l, x1r, y1r, z1r,
             );
           }
         }
@@ -1279,11 +1283,13 @@ varying vec3 vTerrainWorld;`,
         polygonOffsetUnits: -2,
       });
       const mesh = new THREE.Mesh(geo, mat);
+      mesh.name = name;
       mesh.receiveShadow = true;
+      mesh.renderOrder = 0;
       return mesh;
     };
-    scene.add(makeLayer(7.2, 0.035, 0x796d56, 1));
-    scene.add(makeLayer(5.1, 0.065, 0xa48d66, 0.98));
+    scene.add(makeLayer(7.2, 0.065, 0x796d56, 1, 'road-verge-surface'));
+    scene.add(makeLayer(5.1, 0.105, 0xa48d66, 0.98, 'road-track-surface'));
   }
 
   private addScenicLandmarks(scene: THREE.Scene): void {
@@ -1329,6 +1335,14 @@ varying vec3 vTerrainWorld;`,
       box(0.12, 0.12, 5.4, x, 6.4, 0, woodDark);
       for (const z of [-1.5, 1.5]) box(0.12, 0.9, 0.12, x, 6.0, z, woodDark);
     }
+    // 开放式细栏杆使用连续窄碰撞面，南侧中央保留与可见楼梯一致的入口缺口。
+    const railY0 = h + deckTop;
+    const railY1 = railY0 + 0.9;
+    this.addCollider({ kind: 'aabb', minX: site.x - 2.9, minY: railY0, minZ: site.z - 2.82, maxX: site.x + 2.9, maxY: railY1, maxZ: site.z - 2.58, tag: 'wall' });
+    this.addCollider({ kind: 'aabb', minX: site.x - 2.9, minY: railY0, minZ: site.z + 2.58, maxX: site.x - 0.9, maxY: railY1, maxZ: site.z + 2.82, tag: 'wall' });
+    this.addCollider({ kind: 'aabb', minX: site.x + 0.9, minY: railY0, minZ: site.z + 2.58, maxX: site.x + 2.9, maxY: railY1, maxZ: site.z + 2.82, tag: 'wall' });
+    this.addCollider({ kind: 'aabb', minX: site.x - 2.82, minY: railY0, minZ: site.z - 2.7, maxX: site.x - 2.58, maxY: railY1, maxZ: site.z + 2.7, tag: 'wall' });
+    this.addCollider({ kind: 'aabb', minX: site.x + 2.58, minY: railY0, minZ: site.z - 2.7, maxX: site.x + 2.82, maxY: railY1, maxZ: site.z + 2.7, tag: 'wall' });
     for (const x of [-2.45, 2.45]) box(0.22, 2.6, 0.22, x, 7.0, 0, woodDark);
     for (const z of [-2.45, 2.45]) box(0.22, 2.6, 0.22, 0, 7.0, z, woodDark);
     const roof = new THREE.Mesh(new THREE.ConeGeometry(4.3, 1.35, 4), roofMat);
@@ -1911,13 +1925,22 @@ varying vec3 vTerrainWorld;`,
     scene.add(new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0x302d29, transparent: true, opacity: 0.72 })));
 
     // 农场外圈木围栏, 用实例化保留大范围细节而不增加 draw call。
-    const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.16, 1.25, 0.16), poleMat, 110);
-    const railMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.12, 0.12), poleMat, 220);
+    const fenceMaterial = new THREE.MeshStandardMaterial({ color: 0x795b3c, roughness: 0.96 });
+    applySurfaceAsset(fenceMaterial, 'wood', 3.2, 0.7);
+    const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.16, 1.25, 0.16), fenceMaterial, 110);
+    const railMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.12, 0.12), fenceMaterial, 660);
+    postMesh.name = 'farm-fence-posts';
+    railMesh.name = 'farm-fence-rails';
     const fenceEdges = [
       [-122, 126, 40, 126], [40, 126, 40, 282], [40, 282, -122, 282], [-122, 282, -122, 126],
     ] as const;
     let postCount = 0;
     let railCount = 0;
+    q.identity();
+    s.set(1, 1, 1);
+    const railAxis = new THREE.Vector3(1, 0, 0);
+    const railDelta = new THREE.Vector3();
+    const railRotation = new THREE.Quaternion();
     for (const [x0, z0, x1, z1] of fenceEdges) {
       const dx = x1 - x0;
       const dz = z1 - z0;
@@ -1928,28 +1951,67 @@ varying vec3 vTerrainWorld;`,
         const x = x0 + dx * t;
         const z = z0 + dz * t;
         const h = this.getHeight(x, z);
-        if (h < WATER_Y + 0.3) continue;
+        if (h < WATER_Y + 0.3 || this.inPlot(x, z, 0.5) || this.inScenicSite(x, z, 0.35)) continue;
         m.compose(new THREE.Vector3(x, h + 0.625, z), q, s);
         postMesh.setMatrixAt(postCount++, m);
-        if (i === steps || railCount + 1 >= 220) continue;
+        if (i === steps || railCount + 6 > 660) continue;
         const nx = x0 + dx * ((i + 1) / steps);
         const nz = z0 + dz * ((i + 1) / steps);
-        const nh = this.getHeight(nx, nz);
-        const segLen = Math.hypot(nx - x, nz - z);
-        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.atan2(nz - z, nx - x));
-        for (const ry of [0.48, 0.94]) {
-          m.compose(new THREE.Vector3((x + nx) * 0.5, (h + nh) * 0.5 + ry, (z + nz) * 0.5), q, new THREE.Vector3(segLen, 1, 1));
-          railMesh.setMatrixAt(railCount++, m);
+        // 每跨拆成三段并按两端地表高度倾斜，避免长横杆在起伏地形上变成悬空黑板。
+        const subdivisions = 3;
+        for (let segment = 0; segment < subdivisions; segment++) {
+          const st0 = segment / subdivisions;
+          const st1 = (segment + 1) / subdivisions;
+          const sx0 = x + (nx - x) * st0;
+          const sz0 = z + (nz - z) * st0;
+          const sx1 = x + (nx - x) * st1;
+          const sz1 = z + (nz - z) * st1;
+          const sh0 = this.getHeight(sx0, sz0);
+          const sh1 = this.getHeight(sx1, sz1);
+          const smx = (sx0 + sx1) * 0.5;
+          const smz = (sz0 + sz1) * 0.5;
+          if (
+            sh0 < WATER_Y + 0.3 || sh1 < WATER_Y + 0.3 ||
+            Math.abs(sh1 - sh0) > 0.9 || this.slopeAt(smx, smz) > 0.58 ||
+            this.inPlot(smx, smz, 0.45) || this.inScenicSite(smx, smz, 0.3)
+          ) continue;
+          // 只给实际生成出来的短围栏增加阻挡，避免用一整圈隐形墙封死因水面、
+          // 建筑或坡度而保留的通行缺口。碰撞体覆盖两根横杆之间的空间，角色不能钻入。
+          const fenceCollider: BoxCollider = {
+            kind: 'aabb',
+            minX: Math.min(sx0, sx1) - 0.09,
+            minY: Math.min(sh0, sh1) - 0.05,
+            minZ: Math.min(sz0, sz1) - 0.09,
+            maxX: Math.max(sx0, sx1) + 0.09,
+            maxY: Math.max(sh0, sh1) + 1.12,
+            maxZ: Math.max(sz0, sz1) + 0.09,
+            tag: 'wall',
+          };
+          this.farmFenceColliders.push(fenceCollider);
+          this.addCollider(fenceCollider);
+          for (const ry of [0.48, 0.94]) {
+            railDelta.set(sx1 - sx0, sh1 - sh0, sz1 - sz0);
+            const railLength = railDelta.length();
+            railRotation.setFromUnitVectors(railAxis, railDelta.normalize());
+            m.compose(
+              new THREE.Vector3(smx, (sh0 + sh1) * 0.5 + ry, smz),
+              railRotation,
+              new THREE.Vector3(railLength, 1, 1),
+            );
+            railMesh.setMatrixAt(railCount++, m);
+          }
         }
-        q.identity();
       }
     }
     postMesh.count = postCount;
     railMesh.count = railCount;
+    this.farmFenceRailCount = railCount;
     postMesh.instanceMatrix.needsUpdate = true;
     railMesh.instanceMatrix.needsUpdate = true;
     postMesh.castShadow = true;
     railMesh.castShadow = true;
+    postMesh.receiveShadow = true;
+    railMesh.receiveShadow = true;
     scene.add(postMesh, railMesh);
 
     const streetMetal = new THREE.MeshStandardMaterial({ color: 0x343b3d, roughness: 0.7, metalness: 0.3 });
@@ -2160,6 +2222,31 @@ varying vec3 vTerrainWorld;`,
       }),
       86,
     );
+    // 农田浅沟使用贴地平面而不是细长实体盒。实体盒在坡地上只采样中心高度，
+    // 两端会悬空并在远处显示成黑色木板。
+    const furrowCap = 63;
+    const furrowGeometry = new THREE.PlaneGeometry(1, 1);
+    furrowGeometry.rotateX(-Math.PI / 2);
+    const farmFurrows = new THREE.InstancedMesh(
+      furrowGeometry,
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        roughness: 1,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.74,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      }),
+      furrowCap,
+    );
+    farmFurrows.name = 'farm-soil-furrows';
+    farmFurrows.renderOrder = 1;
+    farmFurrows.castShadow = false;
+    farmFurrows.receiveShadow = false;
     let boxCount = 0;
     let cylinderCount = 0;
     let sphereCount = 0;
@@ -2229,15 +2316,30 @@ varying vec3 vTerrainWorld;`,
       mushroomClusters++;
     }
 
-    // 丰禾农场: 灌溉土沟, 稻草人和手推木车。
+    // 丰禾农场: 贴坡浅土沟, 稻草人和手推木车。
     let farmChannels = 0;
+    const furrowNormal = new THREE.Vector3();
+    const furrowAlign = new THREE.Quaternion();
     for (let row = -3; row <= 3; row++) {
       for (let segment = -4; segment <= 4; segment++) {
         const x = -40 + row * 8.5;
         const z = 200 + segment * 6.1;
         const h = this.getHeight(x, z);
-        if (h < WATER_Y + 0.35 || this.inPlot(x, z, 0.4)) continue;
-        addBox(x, h + 0.018, z, 0.5, 0.036, 5.3, row % 2 === 0 ? 0x66533a : 0x765e3d);
+        if (
+          h < WATER_Y + 0.35 || this.slopeAt(x, z) > 0.34 ||
+          this.inPlot(x, z, 0.75) || this.inScenicSite(x, z, 0.4) || this.nearRoad(x, z, 0.25)
+        ) continue;
+        furrowNormal.set(
+          this.getHeight(x - 0.7, z) - this.getHeight(x + 0.7, z),
+          1.4,
+          this.getHeight(x, z - 0.7) - this.getHeight(x, z + 0.7),
+        ).normalize();
+        furrowAlign.setFromUnitVectors(up, furrowNormal);
+        position.set(x, h + 0.032, z);
+        scale.set(0.46, 1, 4.75);
+        matrix.compose(position, furrowAlign, scale);
+        farmFurrows.setMatrixAt(farmChannels, matrix);
+        farmFurrows.setColorAt(farmChannels, color.setHex(row % 2 === 0 ? 0x806a48 : 0x92764e));
         farmChannels++;
       }
     }
@@ -2357,7 +2459,13 @@ varying vec3 vTerrainWorld;`,
     mushroomStems.castShadow = true;
     mushroomCaps.castShadow = true;
     scene.add(mushroomStems, mushroomCaps);
-    this.regionalIdentityDetailCount = boxCount + cylinderCount + sphereCount + netCount + mushroomClusters * 2;
+    farmFurrows.count = farmChannels;
+    this.farmFurrowCount = farmChannels;
+    farmFurrows.instanceMatrix.needsUpdate = true;
+    if (farmFurrows.instanceColor) farmFurrows.instanceColor.needsUpdate = true;
+    farmFurrows.computeBoundingSphere();
+    scene.add(farmFurrows);
+    this.regionalIdentityDetailCount = boxCount + cylinderCount + sphereCount + netCount + mushroomClusters * 2 + farmChannels;
     this.environmentDetailInstanceCount += this.regionalIdentityDetailCount;
     this.assetUsage.add(
       'map.landmark.regional-detail',
@@ -3179,6 +3287,7 @@ varying vec3 vTerrainWorld;`,
       new THREE.MeshStandardMaterial({ color: 0x5a432d, roughness: 1, flatShading: true }),
       deadwoodCap,
     );
+    const deadwoodAxis = new THREE.Vector3();
     let deadwoodCount = 0;
     for (let t = 0; t < deadwoodCap * 14 && deadwoodCount < deadwoodCap; t++) {
       const x = (rng() * 2 - 1) * 320;
@@ -3186,12 +3295,22 @@ varying vec3 vTerrainWorld;`,
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.8 || h > 12 || this.slopeAt(x, z) > 0.42) continue;
       if (this.inPlot(x, z, 2) || this.inScenicSite(x, z, 1) || this.nearRoad(x, z, 0.8)) continue;
+      const length = 0.7 + rng() * 1.1;
+      if (!this.pointFree(x, z, length * 0.92, WATER_Y + 0.5, 14)) continue;
+      if (this.bushes.some((bush) => Math.hypot(x - bush.x, z - bush.z) < bush.r / 1.5 + length * 0.92)) continue;
       position.set(x, h + 0.12, z);
       rotation.setFromEuler(new THREE.Euler(0, rng() * Math.PI * 2, Math.PI / 2 + (rng() - 0.5) * 0.16));
-      const length = 0.7 + rng() * 1.1;
       scale.set(length, length, length);
       matrix.compose(position, rotation, scale);
       deadwood.setMatrixAt(deadwoodCount++, matrix);
+      deadwoodAxis.set(0, 1, 0).applyQuaternion(rotation);
+      const halfLength = 0.8 * length;
+      const halfX = Math.abs(deadwoodAxis.x) * halfLength + 0.13 * length;
+      const halfZ = Math.abs(deadwoodAxis.z) * halfLength + 0.13 * length;
+      this.addCollider({
+        kind: 'aabb', minX: x - halfX, minY: h - 0.03, minZ: z - halfZ,
+        maxX: x + halfX, maxY: h + 0.3 * length, maxZ: z + halfZ, tag: 'wall',
+      });
     }
     deadwood.count = deadwoodCount;
     deadwood.instanceMatrix.needsUpdate = true;
@@ -3217,18 +3336,30 @@ varying vec3 vTerrainWorld;`,
       }),
       soilCap,
     );
+    soil.name = 'ground-soil-patches';
     soil.renderOrder = 1;
+    const groundNormal = new THREE.Vector3();
+    const groundAlign = new THREE.Quaternion();
     let soilCount = 0;
     for (let t = 0; t < soilCap * 12 && soilCount < soilCap; t++) {
       const x = (rng() * 2 - 1) * 326;
       const z = (rng() * 2 - 1) * 326;
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.55 || h > 13.5 || this.slopeAt(x, z) > 0.36) continue;
+      if (h < WATER_Y + 0.55 || h > 13.5 || this.slopeAt(x, z) > 0.28) continue;
       if (this.inPlot(x, z, 1.1) || this.inScenicSite(x, z, 0.25) || this.nearRoad(x, z, 0.08)) continue;
-      const size = 0.42 + rng() * 1.15;
-      position.set(x, h + 0.014, z);
+      const size = 0.38 + rng() * 0.72;
+      position.set(x, h + 0.032, z);
+      groundNormal.set(
+        this.getHeight(x - 0.55, z) - this.getHeight(x + 0.55, z),
+        1.1,
+        this.getHeight(x, z - 0.55) - this.getHeight(x, z + 0.55),
+      ).normalize();
       rotation.setFromAxisAngle(up, rng() * Math.PI * 2);
-      scale.set(size * (1.2 + rng() * 1.35), size * (0.52 + rng() * 0.42), 1);
+      groundAlign.setFromUnitVectors(up, groundNormal);
+      rotation.premultiply(groundAlign);
+      // CircleGeometry 旋转后位于 XZ 平面，扁率必须写入 Z 轴；旧代码误缩放 Y 轴，
+      // 导致贴片在坡地上被拉成长条并穿入地形。
+      scale.set(size * (1.05 + rng() * 0.75), 1, size * (0.62 + rng() * 0.32));
       matrix.compose(position, rotation, scale);
       soil.setMatrixAt(soilCount, matrix);
       tint.setHex(rng() < 0.45 ? 0x806a48 : rng() < 0.72 ? 0x695b43 : 0x92734c);
@@ -3391,11 +3522,21 @@ varying vec3 vTerrainWorld;`,
       if (shorelineSuitability(h, WATER_Y, this.slopeAt(x, z)) < 0.42) continue;
       if (this.inPlot(x, z, 1.3) || this.nearRoad(x, z, 0.4)) continue;
       const size = 0.65 + rng() * 0.75;
+      if (!this.pointFree(x, z, size * 0.82, WATER_Y - 0.7, 14)) continue;
+      if (this.bushes.some((bush) => Math.hypot(x - bush.x, z - bush.z) < bush.r / 1.5 + size * 0.82)) continue;
       rotation.setFromEuler(new THREE.Euler(Math.PI / 2 + (rng() - 0.5) * 0.08, rng() * Math.PI * 2, 0));
       scale.set(size, size, size);
       position.set(x, h + 0.07, z);
       matrix.compose(position, rotation, scale);
       driftwood.setMatrixAt(driftwoodCount++, matrix);
+      axis.set(0, 1, 0).applyQuaternion(rotation);
+      const halfLength = 0.72 * size;
+      const halfX = Math.abs(axis.x) * halfLength + 0.08 * size;
+      const halfZ = Math.abs(axis.z) * halfLength + 0.08 * size;
+      this.addCollider({
+        kind: 'aabb', minX: x - halfX, minY: h - 0.03, minZ: z - halfZ,
+        maxX: x + halfX, maxY: h + 0.2 * size, maxZ: z + halfZ, tag: 'wall',
+      });
     }
     driftwood.count = driftwoodCount;
     driftwood.instanceMatrix.needsUpdate = true;
