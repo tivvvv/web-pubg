@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import type { AabbCollider, DestructibleLike } from './types';
-import { riverZAt, type World } from './world';
+import { riverZAt, roadIntersectsRect, type World } from './world';
 import { random } from './random';
 import { applySurfaceAsset, type SurfaceAssetId } from './assets';
 import { AssetUsageRegistry, buildingAssetPack, SURFACE_MATERIAL_PRESETS } from './assetcatalog';
@@ -40,8 +40,9 @@ const ARCHS: Record<ArchId, { w: [number, number]; d: [number, number]; weight: 
 const WALL_COLORS = [0xe8e4da, 0xd8cbb0, 0xc08a6e, 0xa8bcc8, 0x9aa88e, 0xc9b18a, 0xd3b9a0, 0xc7c3b5];
 const ROOF_COLORS = [0xa05545, 0x8a8f96, 0x8a5f3c, 0x9a6a4f];
 const FLOOR_C = 0xa3906e;
-const FLOOR2_C = 0x96835f;
-const RAIL_C = 0x77664c;
+const FLOOR2_C = 0xb3a78f;
+const RAIL_C = 0x8b7759;
+const STAIR_RAIL_C = 0xa58d6d;
 const DOOR_C = 0x7a5c38;
 const PANE_C = 0xbfe0ea;
 const TRIM_C = 0xefe6d0;  // 统一装饰: 窗框/门框/檐口
@@ -121,6 +122,7 @@ const STAIR_RAIL_END_CLEARANCE = 0.16; // 斜扶手两端退让楼板和落脚�
 const STAIR_SIDE_CLEARANCE = 1.45; // 开放侧到室内隔墙的最小通道宽度
 const APARTMENT_STAIR_WELL_MARGIN = 0.24; // 高楼梯井额外容纳角色半径和斜向移动
 const APARTMENT_STAIR_END_MARGIN = 0.28;  // 首末踏步外再留转身余量, 防止角色在墙前被迫原地转向
+const STAIR_LOWER_RUN_EXTENSION = 0.42; // 梯段向低处落脚区延伸, 让首级完全离开楼板下缘并增加头顶净空
 const STOREY_JOINT_OVERLAP = 0.14; // 上下层墙跨过楼板边带互相搭接, 楼梯井侧也不会漏光
 const BOUND = 265;
 const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
@@ -336,15 +338,38 @@ export function stairHandrailTransform(
   steps = STAIR_STEPS,
 ): StairHandrailTransform {
   const run = zTo - zFrom;
-  const totalRise = rise * steps;
-  const fullLength = Math.hypot(run, totalRise);
+  // 立柱落在各踏步中心，扶手也只能覆盖首末立柱之间的有效跨度。
+  // 旧实现使用整个梯井边界，导致扶手两端越过立柱并伸进楼层落脚区，看起来像穿楼黑梁。
+  const postSpanRatio = Math.max(0, steps - 1) / Math.max(1, steps);
+  const railRun = run * postSpanRatio;
+  const railRise = rise * Math.max(0, steps - 1);
+  const fullLength = Math.hypot(railRun, railRise);
   const endClearance = Math.min(STAIR_RAIL_END_CLEARANCE, fullLength * 0.12);
   return {
     centerY: floorY + rise * ((steps + 1) / 2) + 0.83,
     centerZ: (zFrom + zTo) / 2,
     length: Math.max(0.2, fullLength - endClearance * 2),
-    pitch: -Math.sign(run || 1) * Math.atan2(totalRise, Math.abs(run)),
+    pitch: -Math.sign(run || 1) * Math.atan2(railRise, Math.abs(railRun)),
   };
+}
+
+export interface EntranceStepProfile {
+  count: number;
+  depth: number;
+  tops: number[];
+}
+
+// 门廊台阶按地基高差动态细分。每级抬升不超过 0.3m，低处地形也无需跳跃。
+export function entranceStepProfile(floorY: number, groundY: number, baseDepth = 0.78): EntranceStepProfile {
+  const climb = Math.max(0, floorY - groundY);
+  const count = Math.max(3, Math.min(8, Math.ceil(climb / 0.28)));
+  const depth = Math.max(baseDepth, count * 0.3);
+  const lowTop = Math.min(floorY - 0.16, groundY + 0.08);
+  const tops = Array.from({ length: count }, (_, step) => {
+    const progress = (count - step) / count;
+    return lowTop + (floorY - 0.035 - lowTop) * progress;
+  });
+  return { count, depth, tops };
 }
 
 function mulberry32(seed: number) {
@@ -369,6 +394,8 @@ type BoxFn = (
     rotateX?: number;
     rotateY?: number;
     rotateZ?: number;
+    roundedRail?: boolean;
+    interiorCeiling?: boolean;
     surface?: SurfaceAssetId;
   },
 ) => void;
@@ -507,6 +534,9 @@ export class Buildings {
       if (rd < 15 + d / 2) return null;
       // 平整高度: 内区五角均值
       const ix0 = cx - w / 2, ix1 = cx + w / 2, iz0 = cz - d / 2, iz1 = cz + d / 2;
+      // 7.2m 路肩宽度的一半为 3.6m，再保留 0.55m 门阶/墙脚净距。
+      // 旧规划只检查建筑互相避让，曾让道路中心线直接穿过 13 栋建筑。
+      if (roadIntersectsRect(ix0, iz0, ix1, iz1, 4.15)) return null;
       const hs = [
         world.getHeight(cx, cz),
         world.getHeight(ix0 + 0.5, iz0 + 0.5), world.getHeight(ix1 - 0.5, iz0 + 0.5),
@@ -548,7 +578,8 @@ export class Buildings {
     });
 
     // 东部竞技场 (+180,-40): 体育馆地标 + 2 民居
-    tryPlace('gym', 180, -40, 18, 5.5, 13);
+    // 主干道在竞技场中心形成换乘节点，体育馆退到道路外侧并保留开阔前广场。
+    tryPlace('gym', 180, -40, 44, 5.5, 13);
     tryPlace('cottage1', 180 + 30, -40 + 22, 16, 4.5, 8);
     tryPlace('cottage2', 180 - 28, -40 - 20, 16, 4.5, 8);
 
@@ -559,9 +590,11 @@ export class Buildings {
     tryPlace('cottage1', -40, 200, 70);
     tryPlace('cottage2', -40, 200, 70);
 
-    // 北境密林 (z<-150): 仅 1 谷仓 + 1 民居
+    // 北境密林 (z<-150): 木场仓房、护林住宅和猎人小屋形成疏落林间聚落。
     tryPlace('barn', 0, -170, 80);
     tryPlace('cottage1', 30, -180, 80);
+    tryPlace('cottage1', -42, -208, 34, 5.2, 9);
+    tryPlace('cottage2', 42, -218, 36, 5.2, 9);
 
     // 西部山地 (-220,+20): 1 民居(狙击高地)
     tryPlace('cottage1', -220, 20, 50, 6);
@@ -590,6 +623,8 @@ export class Buildings {
       rotateX: number;
       rotateY: number;
       rotateZ: number;
+      roundedRail: boolean;
+      interiorCeiling: boolean;
       surface: SurfaceAssetId;
     }
     const insts: Inst[] = [];
@@ -605,6 +640,8 @@ export class Buildings {
           rotateX: opts.rotateX ?? 0,
           rotateY: opts.rotateY ?? 0,
           rotateZ: opts.rotateZ ?? 0,
+          roundedRail: opts.roundedRail === true,
+          interiorCeiling: opts.interiorCeiling === true,
           surface: opts.surface ?? (tag === 'wall' ? 'plaster' : tag === 'floor' ? 'concrete' : 'roof'),
         });
       }
@@ -700,40 +737,52 @@ export class Buildings {
     this.modelDetailInstanceCount = insts.filter((item) => item.detail).length;
 
     // 按表面资产合并实例。旧城砖、木作和布艺保留各自纹理，同时维持固定数量绘制调用。
-    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+    const railGeo = new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
+    railGeo.rotateX(Math.PI / 2);
     this.root = new THREE.Group();
     for (const surface of [...new Set(insts.map((item) => item.surface))]) {
-      const items = insts.filter((item) => item.surface === surface);
-      if (items.length === 0) continue;
-      const spec = SURFACE_MATERIAL_PRESETS[surface];
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        roughness: spec.roughness,
-        metalness: spec.metalness,
-      });
-      enhanceStructureMaterial(mat);
-      // 建筑由大量缩放后的单位盒组成。使用世界坐标采样，避免每块大墙都把同一小块
-      // 纹理拉满整面立面，近看可以保持统一且稳定的砖石/灰泥颗粒密度。
-      applySurfaceAsset(mat, surface, spec.scale * 0.52, spec.strength, true);
-      const mesh = new THREE.InstancedMesh(geo, mat, items.length);
-      const m = new THREE.Matrix4();
-      const q = new THREE.Quaternion();
-      const s = new THREE.Vector3();
-      const t = new THREE.Vector3();
-      items.forEach((b, i) => {
-        t.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
-        s.set(Math.max(0.02, b.x1 - b.x0), Math.max(0.02, b.y1 - b.y0), Math.max(0.02, b.z1 - b.z0));
-        if (b.rotateX === 0 && b.rotateY === 0 && b.rotateZ === 0) q.identity();
-        else q.setFromEuler(new THREE.Euler(b.rotateX, b.rotateY, b.rotateZ));
-        m.compose(t, q, s);
-        mesh.setMatrixAt(i, m);
-        mesh.setColorAt(i, b.c);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.root.add(mesh);
+      for (const roundedRail of [false, true]) {
+        for (const interiorCeiling of [false, true]) {
+          const items = insts.filter((item) => (
+            item.surface === surface && item.roundedRail === roundedRail &&
+            item.interiorCeiling === interiorCeiling
+          ));
+          if (items.length === 0) continue;
+          const spec = SURFACE_MATERIAL_PRESETS[surface];
+          const mat = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            roughness: spec.roughness,
+            metalness: spec.metalness,
+          });
+          enhanceStructureMaterial(mat);
+          // 建筑由大量缩放后的单位盒组成。使用世界坐标采样，避免每块大墙都把同一小块
+          // 纹理拉满整面立面，近看可以保持统一且稳定的砖石/灰泥颗粒密度。
+          applySurfaceAsset(mat, surface, spec.scale * 0.52, spec.strength, true);
+          const mesh = new THREE.InstancedMesh(roundedRail ? railGeo : boxGeo, mat, items.length);
+          if (roundedRail) mesh.name = 'building-stair-handrails';
+          if (interiorCeiling) mesh.name = 'building-interior-ceilings';
+          const m = new THREE.Matrix4();
+          const q = new THREE.Quaternion();
+          const s = new THREE.Vector3();
+          const t = new THREE.Vector3();
+          items.forEach((b, i) => {
+            t.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
+            s.set(Math.max(0.02, b.x1 - b.x0), Math.max(0.02, b.y1 - b.y0), Math.max(0.02, b.z1 - b.z0));
+            if (b.rotateX === 0 && b.rotateY === 0 && b.rotateZ === 0) q.identity();
+            else q.setFromEuler(new THREE.Euler(b.rotateX, b.rotateY, b.rotateZ));
+            m.compose(t, q, s);
+            mesh.setMatrixAt(i, m);
+            mesh.setColorAt(i, b.c);
+          });
+          mesh.instanceMatrix.needsUpdate = true;
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+          // 细扶手不投射长硬影，室内天花也不接收屋外屋面构件的穿透阴影。
+          mesh.castShadow = !roundedRail && !interiorCeiling;
+          mesh.receiveShadow = !interiorCeiling;
+          this.root.add(mesh);
+        }
+      }
     }
     if (this.verticalSlicePlotIndex >= 0) {
       const plot = this.plots[this.verticalSlicePlotIndex] as HousePlot;
@@ -840,20 +889,23 @@ export class Buildings {
       // 立柱从对应踏步生根, 顶部与整跑斜扶手重叠连接。
       if (i === 0 || i === 3 || i === 6 || i === STAIR_STEPS - 1) {
         const postZ = (z0 + z1) / 2;
-        box('wall', railX - 0.055, top, postZ - 0.055, railX + 0.055, top + 0.88, postZ + 0.055, RAIL_C, { collider: false });
+        box(
+          'wall', railX - 0.05, top, postZ - 0.05, railX + 0.05, top + 0.88, postZ + 0.05,
+          STAIR_RAIL_C, { collider: false, detail: true, surface: 'wood' },
+        );
       }
     }
-    // 单根连续斜杆取代逐级水平短杆, 消除断裂和悬空观感。
+    // 细木扶手严格收在首末立柱之间，不再伸入楼层落脚区形成悬空黑梁。
     box(
       'wall',
-      railX - 0.055,
-      handrail.centerY - 0.05,
+      railX - 0.045,
+      handrail.centerY - 0.045,
       handrail.centerZ - handrail.length / 2,
-      railX + 0.055,
-      handrail.centerY + 0.05,
+      railX + 0.045,
+      handrail.centerY + 0.045,
       handrail.centerZ + handrail.length / 2,
-      RAIL_C,
-      { collider: false, rotateX: handrail.pitch },
+      STAIR_RAIL_C,
+      { collider: false, detail: true, rotateX: handrail.pitch, roundedRail: true, surface: 'wood' },
     );
     // 扶手虽然由细杆表现，但游戏碰撞使用贴边的窄竖面覆盖整跑梯段。
     // 这样角色不能横向穿过可见扶手，也不会用斜杆的大包围盒挤压有效梯宽。
@@ -884,17 +936,18 @@ export class Buildings {
     depth = 0.78,
   ): void {
     const mid = (a0 + a1) / 2;
-    const sampleX = axis === 'x' ? mid : fixed + outward * depth * 0.7;
-    const sampleZ = axis === 'x' ? fixed + outward * depth * 0.7 : mid;
-    const ground = world.getHeight(sampleX, sampleZ);
-    const stepCount = 3;
-    const treadDepth = depth / stepCount;
-    const lowTop = Math.min(floorY - 0.16, ground + 0.1);
-    for (let step = 0; step < stepCount; step++) {
+    const sampleGround = (sampleDepth: number): number => world.getHeight(
+      axis === 'x' ? mid : fixed + outward * sampleDepth * 0.78,
+      axis === 'x' ? fixed + outward * sampleDepth * 0.78 : mid,
+    );
+    let profile = entranceStepProfile(floorY, sampleGround(depth), depth);
+    // 延长后的最外一级可能处在更低的坡面，再采样一次确保真实首级仍可直接迈上。
+    profile = entranceStepProfile(floorY, sampleGround(profile.depth), profile.depth);
+    const treadDepth = profile.depth / profile.count;
+    for (let step = 0; step < profile.count; step++) {
       const near = fixed + outward * treadDepth * step;
       const far = fixed + outward * treadDepth * (step + 1);
-      const progress = (stepCount - step) / stepCount;
-      const top = lowTop + (floorY - 0.035 - lowTop) * progress;
+      const top = profile.tops[step] as number;
       const bottom = top - 0.12;
       if (axis === 'x') {
         box(
@@ -918,12 +971,13 @@ export class Buildings {
     ceilingY: number, floorY: number, c: number,
   ): void {
     const edge = WT / 2 + 0.02;
-    const y0 = ceilingY - STOREY_JOINT_OVERLAP;
+    // 楼板只保持自身厚度。旧实现向下额外加厚 0.14m，梯井边缘近看像悬空黑梁。
+    const y0 = ceilingY;
     if (openX0 > ix0 + 0.02) {
-      box('floor', ix0 - edge, y0, iz0 - edge, openX0 + STOREY_JOINT_OVERLAP, floorY, iz1 + edge, c);
+      box('floor', ix0 - edge, y0, iz0 - edge, openX0 + STAIR_EDGE_OVERLAP, floorY, iz1 + edge, c);
     }
     if (openX1 < ix1 - 0.02) {
-      box('floor', openX1 - STOREY_JOINT_OVERLAP, y0, iz0 - edge, ix1 + edge, floorY, iz1 + edge, c);
+      box('floor', openX1 - STAIR_EDGE_OVERLAP, y0, iz0 - edge, ix1 + edge, floorY, iz1 + edge, c);
     }
     box('floor', openX0 - edge, y0, iz0 - edge, openX1 + edge, floorY, holeZ0 + STAIR_EDGE_OVERLAP, c);
     box('floor', openX0 - edge, y0, holeZ1 - STAIR_EDGE_OVERLAP, openX1 + edge, floorY, iz1 + edge, c);
@@ -2197,6 +2251,7 @@ export class Buildings {
     yBase: number,
     c: number,
     wallC: number,
+    interiorCeiling = true,
   ): void {
     const dz = iz1 - iz0;
     const zm = (iz0 + iz1) / 2;
@@ -2208,6 +2263,16 @@ export class Buildings {
     const northCenterZ = (iz0 - overhang + zm) * 0.5;
     const southCenterZ = (zm + iz1 + overhang) * 0.5;
     const panelCenterY = yBase + rise * 0.5 + 0.06;
+
+    // 住宅室内使用独立浅色天花遮住斜屋面薄板的侧边和瓦层压条。
+    // 谷仓可显式关闭，保留挑高开放屋架。
+    if (interiorCeiling) {
+      box(
+        'roof', ix0 - WT, yBase - 0.18, iz0 - WT,
+        ix1 + WT, yBase - 0.11, iz1 + WT,
+        0xd7d2c6, { detail: true, interiorCeiling: true, surface: 'plaster' },
+      );
+    }
 
     // 用细分山墙封住水平墙顶与双坡屋面之间的三角区域.
     // 细分盒完全藏在屋面包边内, 从室内和侧立面都不会再透出天空.
@@ -2266,11 +2331,8 @@ export class Buildings {
         0x765044, { collider: false, detail: true, rotateX, surface: 'roof' },
       );
     }
-    // 山墙两端以同角度深色封边，远处轮廓连续且没有矩形挡板。
-    for (const x of [ix0 - 0.22, ix1 + 0.12]) {
-      box('roof', x, panelCenterY - 0.075, northCenterZ - panelLength / 2, x + 0.1, panelCenterY + 0.075, northCenterZ + panelLength / 2, FRAME_C, panelOptsNorth);
-      box('roof', x, panelCenterY - 0.075, southCenterZ - panelLength / 2, x + 0.1, panelCenterY + 0.075, southCenterZ + panelLength / 2, FRAME_C, panelOptsSouth);
-    }
+    // 山墙填充和屋面悬挑已经完整收边。旧版额外添加的两条深色长盒会穿过屋坡，
+    // 从室内仰视时变成悬空黑梁，因此不再生成这组重复封边。
   }
 
   private exteriorDoorOpenings(plot: HousePlot): ExteriorDoorOpenings {
@@ -2567,7 +2629,7 @@ export class Buildings {
     const stairX0 = ix0 + 0.14, stairX1 = stairX0 + STAIR_W;
     // 扩大首末落脚平台。旧写法反向侵占了 0.28m 转身空间，角色上楼后会正贴外墙。
     const holeZ0 = iz0 + STAIR_LANDING + APARTMENT_STAIR_END_MARGIN;
-    const holeZ1 = iz1 - STAIR_LANDING - APARTMENT_STAIR_END_MARGIN;
+    const holeZ1 = iz1 - STAIR_LANDING - APARTMENT_STAIR_END_MARGIN + STAIR_LOWER_RUN_EXTENSION;
     this.stairs(box, stairX0, stairX1, holeZ1, holeZ0, f1, rise, FLOOR2_C);
     this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, stairX1, holeZ0, holeZ1, wt1, f2, FLOOR2_C);
     this.lootSpots.push(
@@ -2620,7 +2682,7 @@ export class Buildings {
     const rise = (f2 - f1) / STAIR_STEPS;
     const stairX0 = ix0 + 0.14, stairX1 = stairX0 + STAIR_W;
     const holeZ0 = iz0 + STAIR_LANDING + APARTMENT_STAIR_END_MARGIN;
-    const holeZ1 = iz1 - STAIR_LANDING - APARTMENT_STAIR_END_MARGIN;
+    const holeZ1 = iz1 - STAIR_LANDING - APARTMENT_STAIR_END_MARGIN + STAIR_LOWER_RUN_EXTENSION;
     this.stairs(box, stairX0, stairX1, holeZ1, holeZ0, f1, rise, FLOOR2_C);
     this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, stairX1, holeZ0, holeZ1, wt1, f2, FLOOR2_C);
     this.stairGuard(box, stairX1, holeZ0, holeZ1, f2);
@@ -2634,7 +2696,12 @@ export class Buildings {
     this.wallRun(world, box, 'x', iz0, ix0, ix1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP,
       [win2(ix0 + w * 0.2), win2(ix1 - w * 0.2 - WIN_W)], p.wall, WT2, 1);
     const roomDoorA0 = ix0 + w * 0.55;
-    this.wallRun(world, box, 'x', zRoom, ix0, ix1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [{ a0: roomDoorA0, a1: roomDoorA0 + DOOR_W, y0: f2, y1: f2 + DOOR_H, door: true }], p.wall, WT2, -1);
+    // 西侧梯段会穿过房间南边界进入二层。隔墙从梯井开放侧之后才起墙，
+    // 避免整高墙横跨踏步形成不足 1.7m 的净空；东侧仍保留独立房门。
+    const stairRoomOpeningX1 = stairX1 + 0.32;
+    this.wallRun(world, box, 'x', zRoom, stairRoomOpeningX1, ix1, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [
+      { a0: roomDoorA0, a1: roomDoorA0 + DOOR_W, y0: f2, y1: f2 + DOOR_H, door: true },
+    ], p.wall, WT2, -1);
     this.wallRun(world, box, 'z', ix0, iz0, zRoom, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.25)], p.wall, WT2, 1);
     this.wallRun(world, box, 'z', ix1, iz0, zRoom, upperWallBottom, uwt + STOREY_JOINT_OVERLAP, [win2(iz0 + d * 0.3)], p.wall, WT2, -1);
     // 房间顶(小坡屋顶)
@@ -2786,16 +2853,18 @@ export class Buildings {
       const rise = storeyStep / STAIR_STEPS;
       if (stairOnWest) {
         const sx0 = ix0 + 0.14, sx1 = sx0 + STAIR_W;
-        this.stairs(box, sx0, sx1, holeZ1, holeZ0, fy, rise, FLOOR2_C);
+        const lowerZ = holeZ1 + STAIR_LOWER_RUN_EXTENSION;
+        this.stairs(box, sx0, sx1, lowerZ, holeZ0, fy, rise, FLOOR2_C);
         this.stairSlab(box, ix0, ix1, iz0, iz1, ix0, sx1 + APARTMENT_STAIR_WELL_MARGIN,
-          holeZ0, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
-        this.stairGuard(box, sx1, holeZ0, holeZ1, nextFloor);
+          holeZ0, lowerZ, fy + WALL_H, nextFloor, FLOOR2_C);
+        this.stairGuard(box, sx1, holeZ0, lowerZ, nextFloor);
       } else {
         const sx1 = ix1 - 0.14, sx0 = sx1 - STAIR_W;
-        this.stairs(box, sx0, sx1, holeZ0, holeZ1, fy, rise, FLOOR2_C, 'min');
+        const lowerZ = holeZ0 - STAIR_LOWER_RUN_EXTENSION;
+        this.stairs(box, sx0, sx1, lowerZ, holeZ1, fy, rise, FLOOR2_C, 'min');
         this.stairSlab(box, ix0, ix1, iz0, iz1, sx0 - APARTMENT_STAIR_WELL_MARGIN, ix1,
-          holeZ0, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
-        this.stairGuard(box, sx0, holeZ0, holeZ1, nextFloor);
+          lowerZ, holeZ1, fy + WALL_H, nextFloor, FLOOR2_C);
+        this.stairGuard(box, sx0, lowerZ, holeZ1, nextFloor);
       }
 
       // 浅阳台和竖向立面构件打破高盒子轮廓，同时保持室内与导航碰撞不变。
@@ -2891,7 +2960,7 @@ export class Buildings {
     box('wall', ix0 + w * 0.6, f1, iz1 - d * 0.35, ix0 + w * 0.9, f1 + 0.55, iz1 - d * 0.1, 0xc2a54e);
     box('wall', ix0 + w * 0.68, f1 + 0.55, iz1 - d * 0.32, ix0 + w * 0.86, f1 + 1.0, iz1 - d * 0.14, 0xc2a54e);
     // 欧式谷仓使用真实双坡瓦顶，替代原先层叠平台式屋盖。
-    this.gableRoof(box, ix0, iz0, ix1, iz1, wallTop, p.roof, p.wall);
+    this.gableRoof(box, ix0, iz0, ix1, iz1, wallTop, p.roof, p.wall, false);
     this.lootSpots.push(
       { x: ix0 + w * 0.25, y: f1, z: iz0 + d * 0.4, premium: false },
       { x: ix1 - w * 0.25, y: f1, z: iz1 - d * 0.3, premium: false },

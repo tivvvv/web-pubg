@@ -1015,7 +1015,10 @@ function setupStairs(game: Game): void {
       c.guns[1] = { def: WEAPONS.akm, mag: WEAPONS.akm.magSize, att: emptyAttachments() };
       c.curSlot = 0;
       player.yaw = Math.PI;
-      player.pitch = -0.04;
+      const requestedPitch = Number(params.get('pitch'));
+      player.pitch = Number.isFinite(requestedPitch) && params.has('pitch')
+        ? Math.max(-1.25, Math.min(1.35, requestedPitch))
+        : -0.04;
       if (params.get('pickup') === 'replace') {
         const replacement = game.loot.spawn('sniper', x, floorY, z, WEAPONS.sniper.magSize);
         if (replacement) window.setTimeout(() => game.tryPickupWeapon(c, replacement), 360);
@@ -1126,12 +1129,17 @@ function setupStairs(game: Game): void {
     if (player) {
       player.yaw = Math.atan2(targetX - x, targetZ - z);
       player.pitch = 0.02;
-      if (params.get('open') === '1' || params.get('open') === 'both') {
+      const autoEnter = params.get('traverse') === 'entry';
+      if (params.get('open') === '1' || params.get('open') === 'both' || autoEnter) {
         const doors = game.world.buildings.destructibles.filter((candidate) =>
           candidate.kind === 'door' && Math.hypot(candidate.cx - targetX, candidate.cz - targetZ) <
           (params.get('open') === 'both' ? 2 : 1.2),
         );
         for (const door of doors) game.openDoor(door, player.char);
+      }
+      if (autoEnter) {
+        game.input.keys.add('KeyW');
+        window.setTimeout(() => game.input.keys.delete('KeyW'), 1500);
       }
     }
     return;
@@ -2011,6 +2019,18 @@ function setupMapTour(game: Game): void {
     setGroundPlayer(game, inspectX, inspectZ);
     const player = game.playerCtl;
     if (player) {
+      if (params.get('aerial') === '1') {
+        const terrainY = game.world.getHeight(inspectX, inspectZ);
+        const requestedHeight = Number(params.get('height'));
+        const height = Number.isFinite(requestedHeight) ? Math.max(18, Math.min(160, requestedHeight)) : 72;
+        player.char.pos.y = terrainY + height;
+        player.char.groundH = terrainY;
+        player.char.grounded = false;
+        player.char.airPose = 'fall';
+        player.char.vy = -2;
+        player.descent = 'freefall';
+        player.vy = -2;
+      }
       const inspectYaw = Number(params.get('yaw'));
       const inspectPitch = Number(params.get('pitch'));
       player.yaw = Number.isFinite(inspectYaw) && params.has('yaw') ? inspectYaw : 0;

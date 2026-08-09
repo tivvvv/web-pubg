@@ -40,7 +40,7 @@ describe('毒圈完整阶段流程', () => {
     expect(zone.state).toBe('done');
     expect(zone.phase).toBe(ZONE_PHASES.length);
     expect(zone.radius).toBe(9);
-    expect(zone.statusText()).toBe('最终圈');
+    expect(zone.statusText()).toBe('决赛圈');
   });
 
   it('单次大步推进和小步推进得到相同阶段结果', () => {

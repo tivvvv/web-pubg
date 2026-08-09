@@ -191,9 +191,9 @@ export class Zone {
 
   // HUD 状态文案
   statusText(): string {
-    if (this.state === 'wait') return `距离缩圈还有 ${Math.ceil(this.timer)}s`;
-    if (this.state === 'shrink') return '正在缩圈！';
-    return '最终圈';
+    if (this.state === 'wait') return `缩圈 ${Math.ceil(this.timer)}s`;
+    if (this.state === 'shrink') return '缩圈中';
+    return '决赛圈';
   }
 
   // 随机圈内点(bots 用)

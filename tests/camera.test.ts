@@ -27,9 +27,14 @@ describe('镜头过渡', () => {
   it('遮挡时快速拉近且解除遮挡后平滑恢复', () => {
     const pulled = smoothCameraDistance(3.4, 0.8, 3.4, 1 / 60);
     const restored = smoothCameraDistance(pulled, 3.4, 3.4, 1 / 60);
-    expect(pulled).toBeLessThan(2.5);
+    expect(pulled).toBe(0.8);
     expect(restored).toBeGreaterThan(pulled);
     expect(restored).toBeLessThan(3.4);
+  });
+
+  it('新遮挡出现时不保留任何会穿到楼板外的镜头余量', () => {
+    expect(smoothCameraDistance(3.4, 0.42, 3.4, 1 / 240)).toBe(0.42);
+    expect(smoothCameraDistance(2.2, 0.2, 3.4, 0)).toBe(0.25);
   });
 
   it('震动采样确定且幅度受控', () => {

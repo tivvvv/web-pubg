@@ -92,7 +92,8 @@ export function cameraFovTarget(
   return (baseFov + movementFov + kickFov) / Math.max(1, zoom);
 }
 
-// 遮挡时快速收近, 遮挡解除后缓慢放远, 避免墙角和楼梯处来回弹镜头。
+// 遮挡出现时必须当帧收进安全距离，否则镜头会短暂穿过屋顶或墙面并闪出室外。
+// 遮挡解除后仍缓慢放远，避免墙角和楼梯处来回弹镜头。
 export function smoothCameraDistance(
   current: number,
   allowed: number,
@@ -100,7 +101,8 @@ export function smoothCameraDistance(
   dt: number,
 ): number {
   const target = clamp(Math.min(allowed, desired), 0.25, Math.max(0.25, desired));
-  const rate = target < current ? 30 : 8.5;
+  if (target < current) return target;
+  const rate = 8.5;
   const next = lerp(current, target, 1 - Math.exp(-rate * Math.max(0, dt)));
   return Math.abs(next - target) < 0.001 ? target : next;
 }

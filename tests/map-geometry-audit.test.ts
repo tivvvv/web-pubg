@@ -311,6 +311,86 @@ describe('地图与建筑终极几何巡检', () => {
     }
   });
 
+  it('所有双层住宅和排屋的楼梯在三条行走线上都有连续净空', () => {
+    const scene = new THREE.Scene();
+    const world = new World(scene);
+    const handrails = scene.getObjectByName('building-stair-handrails') as THREE.InstancedMesh | undefined;
+    const ceilings = scene.getObjectByName('building-interior-ceilings') as THREE.InstancedMesh | undefined;
+    expect(handrails).toBeDefined();
+    expect(handrails?.geometry.type).toBe('CylinderGeometry');
+    expect(handrails?.count).toBeGreaterThanOrEqual(4);
+    expect(handrails?.castShadow).toBe(false);
+    expect(ceilings).toBeDefined();
+    expect(ceilings?.geometry.type).toBe('BoxGeometry');
+    expect(ceilings?.count).toBeGreaterThanOrEqual(12);
+    expect(ceilings?.castShadow).toBe(false);
+    expect(ceilings?.receiveShadow).toBe(false);
+    if (ceilings) {
+      const matrix = new THREE.Matrix4();
+      const position = new THREE.Vector3();
+      const rotation = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      for (let index = 0; index < ceilings.count; index++) {
+        ceilings.getMatrixAt(index, matrix);
+        matrix.decompose(position, rotation, scale);
+        expect(world.aabbs.some((box) => (
+          box.tag === 'roof' &&
+          Math.abs((box.minX + box.maxX) * 0.5 - position.x) < 0.01 &&
+          Math.abs((box.minY + box.maxY) * 0.5 - position.y) < 0.01 &&
+          Math.abs((box.minZ + box.maxZ) * 0.5 - position.z) < 0.01 &&
+          Math.abs(box.maxX - box.minX - scale.x) < 0.01 &&
+          Math.abs(box.maxZ - box.minZ - scale.z) < 0.01
+        )), `住宅天花 ${index} 没有镜头碰撞体`).toBe(true);
+      }
+    }
+    const multiStoreyHomes = (world.buildings.plots as Plot[]).filter((plot) => (
+      plot.arch === 'cottage2' || plot.arch === 'terrace'
+    ));
+    expect(multiStoreyHomes.length).toBeGreaterThanOrEqual(4);
+    for (const home of multiStoreyHomes) {
+      const ix0 = home.minX + 2;
+      const ix1 = home.maxX - 2;
+      const iz0 = home.minZ + 2;
+      const iz1 = home.maxZ - 2;
+      const fromY = home.flatH + 0.28;
+      const toY = fromY + 2.9 + 0.24;
+      const platforms = world.platforms.filter((platform) => (
+        platform.minX >= ix0 && platform.maxX <= ix1 &&
+        platform.minZ >= iz0 && platform.maxZ <= iz1 &&
+        platform.top > fromY + 0.02 && platform.top <= toY + 0.02
+      )).sort((a, b) => a.top - b.top);
+      expect(platforms.length, `${home.arch} 楼梯踏步不完整`).toBeGreaterThanOrEqual(10);
+
+      for (const platform of platforms) {
+        const x = (platform.minX + platform.maxX) * 0.5;
+        const z = (platform.minZ + platform.maxZ) * 0.5;
+        const overhead = world.aabbs.find((collider) => (
+          !collider.off && collider.minX < x && collider.maxX > x &&
+          collider.minZ < z && collider.maxZ > z &&
+          collider.minY > platform.top + 0.02 && collider.minY < platform.top + 1.7
+        ));
+        expect(overhead, `${home.arch} 楼梯在 ${platform.top.toFixed(2)}m 处被楼板或墙封堵`).toBeUndefined();
+      }
+
+      const stairMinX = Math.min(...platforms.map((platform) => platform.minX));
+      const stairMaxX = Math.max(...platforms.map((platform) => platform.maxX));
+      for (const lane of [0.24, 0.5, 0.76]) {
+        let feetY = fromY;
+        for (const platform of platforms) {
+          const x = stairMinX + (stairMaxX - stairMinX) * lane;
+          const z = (platform.minZ + platform.maxZ) * 0.5;
+          const point = new THREE.Vector3(x, feetY, z);
+          world.resolveCollision(point, 0.38);
+          const next = world.groundHeight(point.x, point.z, feetY + 0.1);
+          expect(next, `${home.arch} 楼梯无法连续抬步`).toBeGreaterThanOrEqual(feetY);
+          expect(Math.abs(point.x - x), `${home.arch} 楼梯侧向卡位`).toBeLessThan(0.08);
+          feetY = Math.max(feetY, next);
+        }
+        expect(feetY, `${home.arch} 楼梯未抵达二层`).toBeGreaterThan(toY - 0.36);
+      }
+    }
+  });
+
   it('高层正门使用宽双扇结构且铰链相向布置', () => {
     const world = createWorld();
     const towers = (world.buildings.plots as Plot[]).filter((plot) => plot.arch === 'apartment');
@@ -468,6 +548,36 @@ describe('地图与建筑终极几何巡检', () => {
     expect(world.assetUsage.count('map.landmark.regional-detail')).toBeGreaterThanOrEqual(100);
   });
 
+  it('城区花箱使用可辨识的石材植被配色而不是黑色占位块', () => {
+    const scene = new THREE.Scene();
+    new World(scene);
+    const boxes = scene.getObjectByName('regional-identity-boxes') as THREE.InstancedMesh | undefined;
+    const spheres = scene.getObjectByName('regional-identity-spheres') as THREE.InstancedMesh | undefined;
+    expect(boxes).toBeDefined();
+    expect(spheres).toBeDefined();
+    if (!boxes || !spheres) return;
+
+    const boxRange = boxes.userData.cityPlanterRange as [number, number] | undefined;
+    const sphereRange = spheres.userData.cityPlanterRange as [number, number] | undefined;
+    expect(boxRange).toBeDefined();
+    expect(sphereRange).toBeDefined();
+    if (!boxRange || !sphereRange) return;
+    expect(boxRange[1] - boxRange[0]).toBeGreaterThanOrEqual(30);
+    expect(sphereRange[1] - sphereRange[0]).toBeGreaterThanOrEqual(70);
+
+    const color = new THREE.Color();
+    for (let index = boxRange[0]; index < boxRange[1]; index++) {
+      boxes.getColorAt(index, color);
+      expect(color.r + color.g + color.b, `花箱石盆 ${index} 颜色过暗`).toBeGreaterThan(0.9);
+    }
+    for (let index = sphereRange[0]; index < sphereRange[1]; index++) {
+      spheres.getColorAt(index, color);
+      expect(color.r + color.g + color.b, `花箱植被 ${index} 颜色过暗`).toBeGreaterThan(0.4);
+    }
+    expect((boxes.material as THREE.MeshStandardMaterial).emissiveIntensity).toBeGreaterThan(0.1);
+    expect((spheres.material as THREE.MeshStandardMaterial).emissiveIntensity).toBeGreaterThan(0.2);
+  });
+
   it('农田土沟和围栏贴坡生成且不会退化成长悬空黑板', () => {
     const scene = new THREE.Scene();
     const world = new World(scene);
@@ -526,6 +636,22 @@ describe('地图与建筑终极几何巡检', () => {
     expect(normals.count).toBeGreaterThan(0);
     for (let index = 0; index < normals.count; index++) {
       expect(normals.getY(index), `道路三角面 ${index} 法线朝下`).toBeGreaterThan(0);
+    }
+
+    const patchCenters = road.userData.roadPatchCenters as Array<readonly [number, number]> | undefined;
+    const patchSegments = road.userData.roadPatchSegments as number | undefined;
+    expect(patchCenters).toBeDefined();
+    expect(patchCenters?.length).toBeGreaterThanOrEqual(28);
+    expect(patchSegments).toBeGreaterThanOrEqual(16);
+    const positions = road.geometry.getAttribute('position') as THREE.BufferAttribute;
+    for (const [patchIndex, center] of (patchCenters ?? []).entries()) {
+      let centerVertices = 0;
+      for (let index = 0; index < positions.count; index++) {
+        if (Math.hypot(positions.getX(index) - center[0], positions.getZ(index) - center[1]) < 0.01) {
+          centerVertices++;
+        }
+      }
+      expect(centerVertices, `道路节点 ${patchIndex} 没有完整交叉口补片`).toBeGreaterThanOrEqual(patchSegments ?? 16);
     }
   });
 
@@ -612,7 +738,7 @@ describe('地图与建筑终极几何巡检', () => {
     const world = createWorld();
     expect(world.assetUsage.uniqueCount).toBeGreaterThanOrEqual(15);
     expect(world.assetUsage.totalInstances).toBeGreaterThanOrEqual(5000);
-    expect(world.assetUsage.count('map.infrastructure.bridge')).toBe(2);
+    expect(world.assetUsage.count('map.infrastructure.bridge')).toBe(2 + world.roadWaterCrossingCount);
     expect(world.assetUsage.count('map.landmark.region-site')).toBe(6);
     expect(world.buildings.assetUsage.uniqueCount).toBeGreaterThanOrEqual(20);
     expect(world.buildings.assetUsage.totalInstances).toBeGreaterThan(world.buildings.plots.length * 6);

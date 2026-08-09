@@ -26,7 +26,7 @@ import {
   smoothCameraDistance, type CameraShakeSample,
 } from './camera';
 import {
-  chooseInteractionCandidate, equipmentComparison, interactionDistanceText, isAutomaticPickupKind,
+  chooseInteractionCandidate, equipmentComparison, isAutomaticPickupKind,
   type ComparisonTone, type InteractionCandidate,
   type InteractionKind,
 } from './interaction';
@@ -622,34 +622,34 @@ export class PlayerController {
       detail = '',
       tone: ComparisonTone = 'neutral',
     ): { detail: string; tone: ComparisonTone } => {
-      const parts = [interactionDistanceText(selected.distance)];
+      const parts: string[] = [];
       if (detail) parts.push(detail);
       if (game.healT > 0) parts.push('会打断恢复');
       return { detail: parts.join(' · '), tone: game.healT > 0 ? 'warning' : tone };
     };
     if (selected.kind === 'ally') {
       const selectedAlly = selected.target as Character;
-      const context = contextualDetail('8 秒 · 移动, 受伤或距离过远会打断', 'positive');
+      const context = contextualDetail('需持续 8 秒', 'positive');
       game.promptAlly = selectedAlly;
       game.hud.setPickupPrompt(`按 F 救援 ${selectedAlly.name}`, 'ally', context.detail, context.tone);
       return;
     }
     if (selected.kind === 'door') {
       const selectedDoor = selected.target as Destructible;
-      const context = contextualDetail(selectedDoor.open ? '门口有人时无法关闭' : '门扇向远离你的一侧打开');
+      const context = contextualDetail();
       game.promptDoor = selectedDoor;
       game.hud.setPickupPrompt(selectedDoor.open ? '按 F 关门' : '按 F 开门', 'door', context.detail, context.tone);
       return;
     }
     if (selected.kind === 'airdrop') {
-      const context = contextualDetail('开启后物资散落在补给箱周围', 'positive');
+      const context = contextualDetail();
       game.promptCrate = selected.target as Crate;
       game.hud.setPickupPrompt('按 F 打开空投', 'airdrop', context.detail, context.tone);
       return;
     }
     if (selected.kind === 'deathcrate') {
       const selectedCrate = selected.target as DeathCrate;
-      const context = contextualDetail('自动装备升级并按负重拾取', 'positive');
+      const context = contextualDetail();
       game.promptDeathCrate = selectedCrate;
       game.hud.setPickupPrompt(`按 F 搜索 ${selectedCrate.owner} 的盒子`, 'deathcrate', context.detail, context.tone);
       return;
@@ -658,7 +658,7 @@ export class PlayerController {
       const selectedVehicle = selected.target as Vehicle;
       const spec = VEHICLE_SPEC[selectedVehicle.kind];
       const vehicleName = selectedVehicle.kind === 'car' ? '越野车' : selectedVehicle.kind === 'moto' ? '摩托车' : '沙滩车';
-      const context = contextualDetail(`${spec.seats} 座 · 耐久 ${Math.ceil(selectedVehicle.hp / spec.hp * 100)}%`);
+      const context = contextualDetail(`耐久 ${Math.ceil(selectedVehicle.hp / spec.hp * 100)}%`);
       game.promptVehicle = selectedVehicle;
       game.hud.setPickupPrompt(`按 F 驾驶 ${vehicleName}`, 'vehicle', context.detail, context.tone);
       return;
@@ -712,13 +712,13 @@ export class PlayerController {
       const ammoType = ammoTypeFromLoot(k);
       if (ammoType) {
         const rounds = selectedItem.ammo > 0 ? selectedItem.ammo : 0;
-        const context = contextualDetail(rounds > 0 ? `${rounds} 发 · 走近也可自动拾取` : '走近也可自动拾取', 'positive');
+        const context = contextualDetail(rounds > 0 ? `${rounds} 发` : '', 'positive');
         game.hud.setPickupPrompt(`按 F 拾取 ${AMMO_NAME[ammoType]}`, 'item', context.detail, context.tone);
       } else if (k === 'frag' || k === 'smoke' || k === 'flash') {
-        const context = contextualDetail('走近也可自动拾取', 'positive');
+        const context = contextualDetail();
         game.hud.setPickupPrompt(`按 F 拾取 ${THROWABLES[k].name}`, 'item', context.detail, context.tone);
       } else if (k === 'bandage' || k === 'medkit' || k === 'drink') {
-        const context = contextualDetail('走近也可自动拾取', 'positive');
+        const context = contextualDetail();
         game.hud.setPickupPrompt(`按 F 拾取 ${HEALS[k].name}`, 'item', context.detail, context.tone);
       }
     } else if (isPackKind(k)) {

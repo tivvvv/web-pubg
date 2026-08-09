@@ -29,6 +29,7 @@ type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
 export const WORLD_SIZE = 700;
 export const WORLD_HALF = 350;
 export const WATER_Y = 0.9;
+const ROAD_WATER_DECK_Y = WATER_Y + 0.72;
 export const SUN_SHADOW_MAP_SIZE = 2048;
 export const CHARACTER_COLLISION_HEIGHT = 1.7;
 export const PLATFORM_TOP_SNAP_TOLERANCE = 0.12;
@@ -78,12 +79,55 @@ export interface MapLootSpot {
 
 export const ROAD_PATHS: readonly (readonly [number, number])[][] = [
   [[-92, -96], [-66, -72], [-58, -20], [-52, 36], [-50, 66], [-50, 112], [-44, 164], [-40, 246]],
-  [[-142, -26], [-98, -23], [-58, -20], [-8, -18], [42, -12], [98, -18], [152, -31], [212, -48]],
-  [[178, -38], [194, -82], [203, -140], [205, -218]],
+  [[-142, -26], [-98, -23], [-58, -20], [-8, -18], [42, -12], [98, -18], [152, -31], [178, -38], [194, -43]],
+  [[178, -38], [194, -82], [203, -140], [205, -209]],
   [[-84, -20], [-136, -7], [-181, 9], [-228, 20]],
-  [[-58, -20], [-46, -68], [-30, -112], [-16, -158], [-8, -205]],
+  [[-58, -20], [-46, -68], [-30, -112], [-16, -158], [-10, -170], [0, -180], [10, -190], [10, -200], [20, -200]],
   [[178, -38], [171, 18], [170, 64], [170, 112], [134, 160], [70, 190], [-40, 200]],
 ];
+
+const DESIGNED_ROAD_TERMINI = [
+  { x: 194, z: -43, fromX: 178, fromZ: -38, style: 'concrete' },
+  { x: 205, z: -209, fromX: 203, fromZ: -140, style: 'harbor' },
+  { x: 20, z: -200, fromX: 10, fromZ: -200, style: 'forest' },
+] as const;
+
+// 供建筑规划和地图审计共用的道路占地判定。道路主体之外再传入 clearance，
+// 即可保证建筑墙体、门阶和道路路肩之间留有明确净距。
+export function roadIntersectsRect(
+  minX: number, minZ: number, maxX: number, maxZ: number, clearance = 0,
+): boolean {
+  const x0 = minX - clearance;
+  const z0 = minZ - clearance;
+  const x1 = maxX + clearance;
+  const z1 = maxZ + clearance;
+  for (const path of ROAD_PATHS) {
+    for (let index = 0; index < path.length - 1; index++) {
+      const a = path[index] as readonly [number, number];
+      const b = path[index + 1] as readonly [number, number];
+      let near = 0;
+      let far = 1;
+      const dx = b[0] - a[0];
+      const dz = b[1] - a[1];
+      let separated = false;
+      for (const [p, q] of [
+        [-dx, a[0] - x0], [dx, x1 - a[0]],
+        [-dz, a[1] - z0], [dz, z1 - a[1]],
+      ] as const) {
+        if (Math.abs(p) < 0.000001) {
+          if (q < 0) separated = true;
+          continue;
+        }
+        const ratio = q / p;
+        if (p < 0) near = Math.max(near, ratio);
+        else far = Math.min(far, ratio);
+        if (near > far) separated = true;
+      }
+      if (!separated && near <= far) return true;
+    }
+  }
+  return false;
+}
 
 export class World {
   readonly colliders: Collider[] = [];
@@ -122,6 +166,10 @@ export class World {
   plazaDetailCount = 0;
   fountainDetailCount = 0;
   religiousCrossCount = 0;
+  roadTerminusCount = 0;
+  roadWaterCrossingCount = 0;
+  roadWaterCrossingSegmentCount = 0;
+  forestFacilityDetailCount = 0;
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -521,6 +569,7 @@ varying vec3 vTerrainWorld;`,
     this.buildings.build(scene, this);
     this.prepareScenicSites();
     this.addRoadNetwork(scene);
+    this.addRoadTermini(scene);
     this.assetUsage.add('map.infrastructure.road', ROAD_PATHS.reduce((total, path) => total + Math.max(0, path.length - 1), 0));
     this.addDistantLandforms(scene);
 
@@ -1170,6 +1219,7 @@ varying vec3 vTerrainWorld;`,
     this.addBridge(scene, -50);
     this.addBridge(scene, 170);
     this.assetUsage.add('map.infrastructure.bridge', 2);
+    this.addRoadWaterCrossings(scene);
   }
 
   private prepareScenicSites(): void {
@@ -1235,7 +1285,45 @@ varying vec3 vTerrainWorld;`,
   private addRoadNetwork(scene: THREE.Scene): void {
     const makeLayer = (width: number, lift: number, color: number, roughness: number, name: string): THREE.Mesh => {
       const vertices: number[] = [];
+      const halfWidth = width * 0.5;
+
+      // 道路控制点既是转弯圆角，也是多条路线的接缝。旧实现把每个线段单独铺成四边形，
+      // 相邻线段使用不同法向后会在弯道留下三角缝，多条路线交汇时还会互相叠面。
+      const patchCenters: Array<readonly [number, number]> = [];
+      const addPatchCenter = (x: number, z: number): void => {
+        if (patchCenters.some(([px, pz]) => Math.hypot(px - x, pz - z) < 0.2)) return;
+        patchCenters.push([x, z]);
+      };
       for (const path of ROAD_PATHS) {
+        for (const [x, z] of path) addPatchCenter(x, z);
+      }
+
+      // 补齐没有共用控制点但几何上相交的道路，避免今后调整路线后再次出现十字口裸地。
+      const segments = ROAD_PATHS.flatMap((path) => path.slice(0, -1).map((a, index) => ({
+        a,
+        b: path[index + 1] as readonly [number, number],
+      })));
+      for (let i = 0; i < segments.length; i++) {
+        const first = segments[i] as typeof segments[number];
+        const rX = first.b[0] - first.a[0];
+        const rZ = first.b[1] - first.a[1];
+        for (let j = i + 1; j < segments.length; j++) {
+          const second = segments[j] as typeof segments[number];
+          const sX = second.b[0] - second.a[0];
+          const sZ = second.b[1] - second.a[1];
+          const denominator = rX * sZ - rZ * sX;
+          if (Math.abs(denominator) < 0.000001) continue;
+          const qX = second.a[0] - first.a[0];
+          const qZ = second.a[1] - first.a[1];
+          const t = (qX * sZ - qZ * sX) / denominator;
+          const u = (qX * rZ - qZ * rX) / denominator;
+          if (t < -0.0001 || t > 1.0001 || u < -0.0001 || u > 1.0001) continue;
+          addPatchCenter(first.a[0] + rX * t, first.a[1] + rZ * t);
+        }
+      }
+
+      for (const path of ROAD_PATHS) {
+        const samples: Array<readonly [number, number]> = [];
         for (let i = 0; i < path.length - 1; i++) {
           const a = path[i] as readonly [number, number];
           const b = path[i + 1] as readonly [number, number];
@@ -1243,37 +1331,74 @@ varying vec3 vTerrainWorld;`,
           const dz = b[1] - a[1];
           const len = Math.hypot(dx, dz);
           const steps = Math.max(1, Math.ceil(len / 3.5));
-          const px = (-dz / len) * width * 0.5;
-          const pz = (dx / len) * width * 0.5;
-          for (let s = 0; s < steps; s++) {
-            const t0 = s / steps;
-            const t1 = (s + 1) / steps;
-            const x0 = a[0] + dx * t0;
-            const z0 = a[1] + dz * t0;
-            const x1 = a[0] + dx * t1;
-            const z1 = a[1] + dz * t1;
-            const c0h = this.getHeight(x0, z0);
-            const c1h = this.getHeight(x1, z1);
-            if (c0h < WATER_Y + 0.02 && c1h < WATER_Y + 0.02) continue;
-            const x0l = x0 + px; const z0l = z0 + pz;
-            const x0r = x0 - px; const z0r = z0 - pz;
-            const x1l = x1 + px; const z1l = z1 + pz;
-            const x1r = x1 - px; const z1r = z1 - pz;
-            const y0l = this.getHeight(x0l, z0l) + lift;
-            const y0r = this.getHeight(x0r, z0r) + lift;
-            const y1l = this.getHeight(x1l, z1l) + lift;
-            const y1r = this.getHeight(x1r, z1r) + lift;
-            // 从上方观察保持逆时针绕序。旧顺序的法线朝下，路面在坡地上只剩零散黑色背面。
-            vertices.push(
-              x0l, y0l, z0l, x1r, y1r, z1r, x0r, y0r, z0r,
-              x0l, y0l, z0l, x1l, y1l, z1l, x1r, y1r, z1r,
-            );
-          }
+          if (i === 0) samples.push(a);
+          for (let s = 1; s <= steps; s++) samples.push([
+            a[0] + dx * (s / steps),
+            a[1] + dz * (s / steps),
+          ]);
+        }
+
+        const roadSurfaceHeight = (x: number, z: number): number => {
+          const terrainHeight = this.getHeight(x, z);
+          return terrainHeight < WATER_Y + 0.18 ? ROAD_WATER_DECK_Y : terrainHeight;
+        };
+        const edges = samples.map(([x, z], index) => {
+          const prev = samples[Math.max(0, index - 1)] as readonly [number, number];
+          const next = samples[Math.min(samples.length - 1, index + 1)] as readonly [number, number];
+          const tangentX = next[0] - prev[0];
+          const tangentZ = next[1] - prev[1];
+          const tangentLength = Math.hypot(tangentX, tangentZ) || 1;
+          const offsetX = (-tangentZ / tangentLength) * halfWidth;
+          const offsetZ = (tangentX / tangentLength) * halfWidth;
+          return {
+            left: [x + offsetX, roadSurfaceHeight(x + offsetX, z + offsetZ) + lift, z + offsetZ] as const,
+            right: [x - offsetX, roadSurfaceHeight(x - offsetX, z - offsetZ) + lift, z - offsetZ] as const,
+          };
+        });
+        for (let i = 0; i < edges.length - 1; i++) {
+          const a = edges[i] as typeof edges[number];
+          const b = edges[i + 1] as typeof edges[number];
+          // 整条折线共用边缘顶点，弯道不会再各自收口成相互穿插的四边形。
+          vertices.push(
+            ...a.left, ...b.right, ...a.right,
+            ...a.left, ...b.left, ...b.right,
+          );
+        }
+      }
+
+      // 以轻微抬高的圆形补片统一封住转弯、端点和交叉口。补片跟随地形逐点采样，
+      // 不会在坡地退化成悬空的大平面。
+      const patchSegments = 18;
+      const patchRadius = halfWidth * 1.035;
+      const renderedPatchCenters: Array<readonly [number, number]> = [];
+      for (const [centerX, centerZ] of patchCenters) {
+        const centerTerrain = this.getHeight(centerX, centerZ);
+        const centerBase = centerTerrain < WATER_Y + 0.18 ? ROAD_WATER_DECK_Y : centerTerrain;
+        const centerY = centerBase + lift + 0.006;
+        renderedPatchCenters.push([centerX, centerZ]);
+        for (let segment = 0; segment < patchSegments; segment++) {
+          const a = (segment / patchSegments) * Math.PI * 2;
+          const b = ((segment + 1) / patchSegments) * Math.PI * 2;
+          const ax = centerX + Math.cos(a) * patchRadius;
+          const az = centerZ + Math.sin(a) * patchRadius;
+          const bx = centerX + Math.cos(b) * patchRadius;
+          const bz = centerZ + Math.sin(b) * patchRadius;
+          const ah = this.getHeight(ax, az);
+          const bh = this.getHeight(bx, bz);
+          vertices.push(
+            centerX, centerY, centerZ,
+            bx, (bh < WATER_Y + 0.18 ? ROAD_WATER_DECK_Y : bh) + lift + 0.006, bz,
+            ax, (ah < WATER_Y + 0.18 ? ROAD_WATER_DECK_Y : ah) + lift + 0.006, az,
+          );
         }
       }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-      geo.computeVertexNormals();
+      // 道路由大量贴坡短三角组成，逐三角计算法线会让同色路面出现明显的深浅拼布。
+      // 统一使用向上法线保留材质光照，同时消除俯视和顺光下的碎三角色块。
+      const normals = new Float32Array(vertices.length);
+      for (let index = 1; index < normals.length; index += 3) normals[index] = 1;
+      geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       const mat = new THREE.MeshStandardMaterial({
         color,
         roughness,
@@ -1286,10 +1411,97 @@ varying vec3 vTerrainWorld;`,
       mesh.name = name;
       mesh.receiveShadow = true;
       mesh.renderOrder = 0;
+      mesh.userData.roadPatchCenters = renderedPatchCenters;
+      mesh.userData.roadPatchSegments = patchSegments;
       return mesh;
     };
     scene.add(makeLayer(7.2, 0.065, 0x796d56, 1, 'road-verge-surface'));
     scene.add(makeLayer(5.1, 0.105, 0xa48d66, 0.98, 'road-track-surface'));
+  }
+
+  private addRoadTermini(scene: THREE.Scene): void {
+    const group = new THREE.Group();
+    group.name = 'road-termini';
+    const concrete = new THREE.MeshStandardMaterial({ color: 0x8f918b, roughness: 0.94 });
+    const wood = new THREE.MeshStandardMaterial({ color: 0x765437, roughness: 0.97 });
+    const signWood = new THREE.MeshStandardMaterial({
+      color: 0xa57845,
+      emissive: 0x2e1809,
+      emissiveIntensity: 0.42,
+      roughness: 0.9,
+    });
+    const metal = new THREE.MeshStandardMaterial({ color: 0x4e585b, roughness: 0.68, metalness: 0.28 });
+    const reflector = new THREE.MeshStandardMaterial({
+      color: 0xf0c65f,
+      emissive: 0x8a4d12,
+      emissiveIntensity: 0.7,
+      roughness: 0.42,
+    });
+    applySurfaceAsset(concrete, 'concrete', 2.4, 0.68);
+    applySurfaceAsset(wood, 'wood', 3.0, 0.76);
+    applySurfaceAsset(signWood, 'wood', 3.0, 0.66);
+    applySurfaceAsset(metal, 'paintedMetal', 3.2, 0.72);
+
+    const addBox = (
+      x: number, y: number, z: number, w: number, h: number, d: number,
+      material: THREE.Material, yaw: number, collide = false,
+    ): THREE.Mesh => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      mesh.position.set(x, y + h * 0.5, z);
+      mesh.rotation.y = yaw;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      if (collide) {
+        const cw = Math.abs(Math.cos(yaw)) * w + Math.abs(Math.sin(yaw)) * d;
+        const cd = Math.abs(Math.sin(yaw)) * w + Math.abs(Math.cos(yaw)) * d;
+        this.addCollider({
+          kind: 'aabb', minX: x - cw * 0.5, minY: y, minZ: z - cd * 0.5,
+          maxX: x + cw * 0.5, maxY: y + h, maxZ: z + cd * 0.5, tag: 'wall',
+        });
+      }
+      return mesh;
+    };
+
+    this.roadTerminusCount = 0;
+    for (const terminus of DESIGNED_ROAD_TERMINI) {
+      const dx = terminus.x - terminus.fromX;
+      const dz = terminus.z - terminus.fromZ;
+      const length = Math.hypot(dx, dz) || 1;
+      const forwardX = dx / length;
+      const forwardZ = dz / length;
+      const sideX = -forwardZ;
+      const sideZ = forwardX;
+      const barrierX = terminus.x - forwardX * 0.65;
+      const barrierZ = terminus.z - forwardZ * 0.65;
+      const ground = this.getHeight(barrierX, barrierZ);
+      const yaw = Math.atan2(-sideZ, sideX);
+      const barrierMat = terminus.style === 'forest' ? wood : concrete;
+
+      // 横向实体路障明确告诉玩家这里是回车场/断路口，而不是可以继续驶入水里的道路。
+      addBox(barrierX, ground + 0.04, barrierZ, 4.8, 0.72, 0.46, barrierMat, yaw, true);
+      for (const side of [-1, 1] as const) {
+        const px = barrierX + sideX * side * 1.78;
+        const pz = barrierZ + sideZ * side * 1.78;
+        const py = this.getHeight(px, pz);
+        addBox(px, py + 0.72, pz, 0.24, 0.22, 0.12, reflector, yaw, false);
+        addBox(px, py, pz, 0.14, 0.84, 0.14, metal, 0, false);
+      }
+
+      // 林场使用原木方向牌，港区和竞技场使用金属警示牌，形成可读的区域差异。
+      const signX = barrierX + sideX * 2.65 - forwardX * 1.1;
+      const signZ = barrierZ + sideZ * 2.65 - forwardZ * 1.1;
+      const signY = this.getHeight(signX, signZ);
+      addBox(signX, signY, signZ, 0.13, 1.7, 0.13, terminus.style === 'forest' ? signWood : metal, 0, false);
+      addBox(
+        signX, signY + 1.3, signZ, 1.35, 0.52, 0.12,
+        terminus.style === 'forest' ? signWood : reflector, yaw, false,
+      );
+      this.roadTerminusCount++;
+    }
+    scene.add(group);
+    this.environmentDetailInstanceCount += this.roadTerminusCount * 8;
+    this.assetUsage.add('map.infrastructure.road', this.roadTerminusCount);
   }
 
   private addScenicLandmarks(scene: THREE.Scene): void {
@@ -2185,7 +2397,13 @@ varying vec3 vTerrainWorld;`,
     const sphereCap = 260;
     const boxes = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        roughness: 0.9,
+        emissive: 0x2a241d,
+        emissiveIntensity: 0.14,
+      }),
       boxCap,
     );
     const cylinders = new THREE.InstancedMesh(
@@ -2195,11 +2413,17 @@ varying vec3 vTerrainWorld;`,
     );
     const spheres = new THREE.InstancedMesh(
       new THREE.SphereGeometry(0.5, 9, 6),
-      new THREE.MeshLambertMaterial({
-        color: 0xffffff, vertexColors: true, emissive: 0x182018, emissiveIntensity: 0.24,
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        roughness: 0.92,
+        emissive: 0x334126,
+        emissiveIntensity: 0.26,
       }),
       sphereCap,
     );
+    boxes.name = 'regional-identity-boxes';
+    spheres.name = 'regional-identity-spheres';
     const nets = new THREE.InstancedMesh(
       new THREE.PlaneGeometry(1, 1, 6, 4),
       new THREE.MeshStandardMaterial({
@@ -2320,10 +2544,10 @@ varying vec3 vTerrainWorld;`,
     let farmChannels = 0;
     const furrowNormal = new THREE.Vector3();
     const furrowAlign = new THREE.Quaternion();
-    for (let row = -3; row <= 3; row++) {
-      for (let segment = -4; segment <= 4; segment++) {
-        const x = -40 + row * 8.5;
-        const z = 200 + segment * 6.1;
+    for (let row = -4; row <= 4 && farmChannels < furrowCap; row++) {
+      for (let segment = -5; segment <= 5 && farmChannels < furrowCap; segment++) {
+        const x = -40 + row * 7.5;
+        const z = 200 + segment * 5.5;
         const h = this.getHeight(x, z);
         if (
           h < WATER_Y + 0.35 || this.slopeAt(x, z) > 0.34 ||
@@ -2399,19 +2623,31 @@ varying vec3 vTerrainWorld;`,
       buoyCount++;
     }
 
-    // 磐石城: 街角花箱让硬质建筑之间出现连续生活层。
+    // 磐石城: 明亮石盆、分层绿植和花簇替代无法辨识的暗色方盒。
     let cityPlanterCount = 0;
+    const cityPlanterBoxStart = boxCount;
+    const cityPlanterSphereStart = sphereCount;
     for (let t = 0; t < 700 && cityPlanterCount < 18; t++) {
       const x = -60 + (rng() * 2 - 1) * 78;
       const z = -20 + (rng() * 2 - 1) * 72;
       if (regionAt(x, z)?.id !== 'stonegate' || this.inPlot(x, z, 1.9) || !decorFree(x, z, 0.95)) continue;
       const h = this.getHeight(x, z);
       const yaw = rng() * Math.PI * 2;
-      addBox(x, h + 0.28, z, 1.35, 0.56, 0.62, 0x8a7357, yaw);
-      addSphere(x - Math.cos(yaw) * 0.32, h + 0.76, z - Math.sin(yaw) * 0.32, 0.72, 0.5, 0.68, 0x426f34);
-      addSphere(x + Math.cos(yaw) * 0.32, h + 0.78, z + Math.sin(yaw) * 0.32, 0.66, 0.54, 0.64, 0x557f3b);
+      addBox(x, h + 0.24, z, 1.42, 0.48, 0.66, 0xb9a17e, yaw);
+      addBox(x, h + 0.5, z, 1.28, 0.12, 0.54, 0xd0b994, yaw);
+      addSphere(x - Math.cos(yaw) * 0.32, h + 0.8, z - Math.sin(yaw) * 0.32, 0.72, 0.52, 0.68, 0x648f46);
+      addSphere(x + Math.cos(yaw) * 0.32, h + 0.82, z + Math.sin(yaw) * 0.32, 0.66, 0.56, 0.64, 0x7aa455);
+      for (let flower = -1; flower <= 1; flower++) {
+        const offset = flower * 0.3;
+        const flowerX = x + Math.cos(yaw) * offset;
+        const flowerZ = z + Math.sin(yaw) * offset;
+        const flowerColor = flower < 0 ? 0xd88771 : flower > 0 ? 0x8fa5d2 : 0xe2c45f;
+        addSphere(flowerX, h + 1.12, flowerZ, 0.2, 0.24, 0.2, flowerColor);
+      }
       cityPlanterCount++;
     }
+    boxes.userData.cityPlanterRange = [cityPlanterBoxStart, boxCount];
+    spheres.userData.cityPlanterRange = [cityPlanterSphereStart, sphereCount];
 
     // 教堂广场: 环形石花坛与暖色花簇强化中心空间。
     const church = this.scenicSites.find((site) => site.kind === 'church');
@@ -2626,6 +2862,7 @@ varying vec3 vTerrainWorld;`,
     this.mapSites.length = 0;
     this.mapLootSpots.length = 0;
     this.verticalSliceDetailCount = 0;
+    this.forestFacilityDetailCount = 0;
 
     const addBox = (
       site: ResolvedMapContentSite,
@@ -2760,14 +2997,30 @@ varying vec3 vTerrainWorld;`,
   }
 
   private resolveMapContentSite(def: (typeof MAP_CONTENT_SITES)[number]): ResolvedMapContentSite | null {
-    for (let attempt = 0; attempt < 180; attempt++) {
+    const maxAttempts = def.kind === 'lumber' ? 360 : 180;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const ring = attempt === 0 ? 0 : 3.5 + Math.floor((attempt - 1) / 10) * 3;
       const angle = attempt * 2.399963;
       const x = def.x + Math.cos(angle) * ring;
       const z = def.z + Math.sin(angle) * ring;
       if (regionAt(x, z)?.id !== def.region) continue;
       if (this.inPlot(x, z, 5.2) || this.inScenicSite(x, z, 3.5)) continue;
-      if (this.slopeAt(x, z) > 0.42 || !this.pointFree(x, z, 4.8, WATER_Y + 0.35, 16)) continue;
+      // 木场的构筑物跨度较大, 但只需保证中心活动区不与树石重叠.
+      // 外圈单独做十二向地形探测, 避免大半径碰撞检查被林区植被误判为无可用场地.
+      const footprintRadius = def.kind === 'lumber' ? 7.2 : 4.8;
+      const collisionClearance = 4.8;
+      if (this.slopeAt(x, z) > 0.42 || !this.pointFree(x, z, collisionClearance, WATER_Y + 0.35, 16)) continue;
+      let footprintOnLand = true;
+      for (let probe = 0; probe < 12; probe++) {
+        const angle = probe / 12 * Math.PI * 2;
+        const px = x + Math.cos(angle) * footprintRadius;
+        const pz = z + Math.sin(angle) * footprintRadius;
+        if (this.getHeight(px, pz) < WATER_Y + 0.55 || this.slopeAt(px, pz) > 0.55) {
+          footprintOnLand = false;
+          break;
+        }
+      }
+      if (!footprintOnLand) continue;
       return { ...def, resolvedX: x, resolvedZ: z };
     }
     return null;
@@ -2964,10 +3217,12 @@ varying vec3 vTerrainWorld;`,
     const detailBox = (...args: Parameters<typeof box>): void => {
       box(...args);
       verticalSliceDetails++;
+      if (kit === 'lumber') this.forestFacilityDetailCount++;
     };
     const detailCylinder = (...args: Parameters<typeof cylinder>): void => {
       cylinder(...args);
       verticalSliceDetails++;
+      if (kit === 'lumber') this.forestFacilityDetailCount++;
     };
 
     if (kit === 'market') {
@@ -3058,6 +3313,50 @@ varying vec3 vTerrainWorld;`,
       for (const x of [-3.5, 3.5]) cylinder(site, x, 4.9, 0.18, 3.25, woodDark);
       box(site, 0, 4.9, 7.1, 0.2, 0.24, wood, 0, false, 2.95);
       box(site, 0, 4.86, 2.5, 0.52, 0.1, 0x687052, 0, false, 3.06);
+
+      // 护林员木屋: 用分段墙体保留真实门洞，台基、窗框、门廊和分层屋檐形成完整建筑轮廓。
+      detailBox(site, 4.5, -4.0, 5.1, 0.24, 3.9, 0x8c806a, 0, true, 0, 'stone');
+      detailBox(site, 4.5, -5.68, 4.8, 2.35, 0.22, 0x8b6847, 0, true, 0.24, 'wood');
+      for (const x of [2.2, 6.8]) {
+        detailBox(site, x, -4.0, 0.22, 2.35, 3.55, 0x8b6847, 0, true, 0.24, 'wood');
+      }
+      detailBox(site, 3.0, -2.28, 1.6, 2.35, 0.22, 0x8b6847, 0, true, 0.24, 'wood');
+      detailBox(site, 6.05, -2.28, 1.5, 2.35, 0.22, 0x8b6847, 0, true, 0.24, 'wood');
+      detailBox(site, 4.5, -2.15, 1.22, 2.04, 0.12, 0x4d3526, 0, false, 0.25, 'wood');
+      for (const x of [3.15, 5.85]) {
+        detailBox(site, x, -2.14, 0.84, 0.78, 0.08, 0x36545b, 0, false, 1.08, 'paintedMetal');
+        detailBox(site, x, -2.1, 0.94, 0.09, 0.12, 0xd1c3a5, 0, false, 1.0, 'wood');
+      }
+      detailBox(site, 4.5, -4.0, 5.45, 0.18, 4.35, 0x59654b, 0, false, 2.62, 'roof');
+      detailBox(site, 4.5, -4.0, 4.75, 0.16, 3.62, 0x6c7658, 0, false, 2.79, 'roof');
+      detailBox(site, 4.5, -4.0, 0.34, 0.18, 4.05, 0x49392d, 0, false, 2.94, 'roof');
+      detailBox(site, 2.92, -4.82, 0.48, 1.18, 0.48, 0x665f58, 0, false, 2.72, 'stone');
+      detailBox(site, 4.5, -1.72, 3.15, 0.18, 1.05, 0x7a5c3f, 0, true, 0.08, 'wood');
+      detailBox(site, 4.5, -1.72, 3.4, 0.14, 1.36, 0x59654b, 0, false, 2.25, 'roof');
+      detailBox(site, 5.35, -2.04, 0.18, 0.26, 0.16, 0xe4b769, 0, false, 1.78, 'paintedMetal');
+
+      // 林火瞭望台和工具区让树林拥有远近两级地标，而不是只在地面散放原木。
+      const towerX = -5.1;
+      const towerZ = 4.15;
+      for (const dx of [-0.88, 0.88]) {
+        for (const dz of [-0.88, 0.88]) {
+          detailCylinder(site, towerX + dx, towerZ + dz, 0.16, 3.45, woodDark, 'y', true, 0, 'wood');
+        }
+      }
+      detailBox(site, towerX, towerZ, 2.55, 0.22, 2.55, wood, 0, true, 2.82, 'wood');
+      for (const z of [towerZ - 1.12, towerZ + 1.12]) {
+        detailBox(site, towerX, z, 2.45, 0.12, 0.12, woodDark, 0, false, 3.82, 'wood');
+      }
+      for (const x of [towerX - 1.12, towerX + 1.12]) {
+        detailBox(site, x, towerZ, 0.12, 0.12, 2.45, woodDark, 0, false, 3.82, 'wood');
+      }
+      detailBox(site, towerX, towerZ, 3.05, 0.18, 3.05, 0x59654b, 0, false, 4.42, 'roof');
+      for (let rung = 0; rung < 6; rung++) {
+        detailBox(site, towerX + 1.15, towerZ - 1.35, 0.76, 0.08, 0.1, wood, 0, false, 0.55 + rung * 0.48, 'wood');
+      }
+      detailBox(site, -0.1, 2.55, 2.45, 0.72, 1.15, woodDark, 0, true, 0, 'wood');
+      detailCylinder(site, -0.1, 1.94, 1.05, 0.12, metal, 'z', false, 0.86, 'metal');
+      detailBox(site, 1.05, 2.55, 0.16, 1.28, 0.16, metal, 0, false, 0.05, 'metal');
     } else if (kit === 'relay') {
       cylinder(site, 0, 0, 0.28, 10.5, metal, 'y', true);
       box(site, 0, 0, 5.8, 0.16, 0.16, metal, 0, false, 4.2);
@@ -3646,6 +3945,152 @@ varying vec3 vTerrainWorld;`,
     scene.add(stems, heads, foam, pebble);
     this.shorelineDetailCount = count * 2 + foamCount + pebbleCount;
     this.environmentDetailInstanceCount += this.shorelineDetailCount;
+  }
+
+  // 道路跨过湖湾或支流时补齐低矮桥梁。旧道路只跳过水下三角形，视觉上会变成两截路直插水面，
+  // 同时角色和载具也没有可行走表面。这里沿道路中心线逐段生成桥面、护栏、桥墩和导航平台。
+  private addRoadWaterCrossings(scene: THREE.Scene): void {
+    type WaterSegment = {
+      x: number; z: number; length: number; yaw: number;
+      sideX: number; sideZ: number; sequence: number;
+    };
+    const segments: WaterSegment[] = [];
+    let crossingCount = 0;
+    const coveredByMainBridge = (x: number, z: number): boolean => [-50, 170].some((bridgeX) => (
+      Math.abs(x - bridgeX) <= 2.05 && Math.abs(z - riverZAt(bridgeX)) <= 14.1
+    ));
+
+    for (let pathIndex = 0; pathIndex < ROAD_PATHS.length; pathIndex++) {
+      const path = ROAD_PATHS[pathIndex] as readonly (readonly [number, number])[];
+      let previousWasWater = false;
+      let sequence = 0;
+      for (let pointIndex = 0; pointIndex < path.length - 1; pointIndex++) {
+        const a = path[pointIndex] as readonly [number, number];
+        const b = path[pointIndex + 1] as readonly [number, number];
+        const wholeLength = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const steps = Math.max(1, Math.ceil(wholeLength / 2.35));
+        for (let step = 0; step < steps; step++) {
+          const t0 = step / steps;
+          const t1 = (step + 1) / steps;
+          const x0 = a[0] + (b[0] - a[0]) * t0;
+          const z0 = a[1] + (b[1] - a[1]) * t0;
+          const x1 = a[0] + (b[0] - a[0]) * t1;
+          const z1 = a[1] + (b[1] - a[1]) * t1;
+          const x = (x0 + x1) * 0.5;
+          const z = (z0 + z1) * 0.5;
+          const water = Math.min(this.getHeight(x0, z0), this.getHeight(x, z), this.getHeight(x1, z1)) < WATER_Y + 0.18;
+          const mainBridge = coveredByMainBridge(x, z);
+          if (!water || mainBridge) {
+            previousWasWater = false;
+            continue;
+          }
+          if (!previousWasWater) crossingCount++;
+          previousWasWater = true;
+          const dx = x1 - x0;
+          const dz = z1 - z0;
+          const length = Math.hypot(dx, dz) || 1;
+          segments.push({
+            x, z, length: length + 0.12,
+            yaw: Math.atan2(dx, dz), sideX: -dz / length, sideZ: dx / length,
+            sequence: sequence++,
+          });
+        }
+      }
+    }
+
+    this.roadWaterCrossingCount = crossingCount;
+    this.roadWaterCrossingSegmentCount = segments.length;
+    if (segments.length === 0) return;
+
+    const group = new THREE.Group();
+    group.name = 'road-water-crossings';
+    const deckMat = new THREE.MeshStandardMaterial({ color: 0x73777a, roughness: 0.9, metalness: 0.04 });
+    const railMat = new THREE.MeshStandardMaterial({
+      color: 0x858d90,
+      emissive: 0x20282b,
+      emissiveIntensity: 0.24,
+      roughness: 0.72,
+      metalness: 0.24,
+    });
+    const pierMat = new THREE.MeshStandardMaterial({ color: 0x62696b, roughness: 0.96, metalness: 0.02 });
+    applySurfaceAsset(deckMat, 'concrete', 2.8, 0.58);
+    applySurfaceAsset(railMat, 'paintedMetal', 3.2, 0.64);
+    applySurfaceAsset(pierMat, 'concrete', 2.6, 0.62);
+
+    const deckGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const decks = new THREE.InstancedMesh(deckGeometry, deckMat, segments.length);
+    const rails = new THREE.InstancedMesh(deckGeometry, railMat, segments.length * 2);
+    const pierSegments = segments.filter((segment) => segment.sequence % 4 === 1);
+    const piers = new THREE.InstancedMesh(deckGeometry, pierMat, pierSegments.length * 2);
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const position = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    const deckWidth = 5.45;
+
+    const addBoxCollider = (
+      x: number, z: number, width: number, length: number, yaw: number,
+      minY: number, maxY: number, tag: 'floor' | 'wall', platform = false,
+    ): void => {
+      const halfX = Math.abs(Math.cos(yaw)) * width * 0.5 + Math.abs(Math.sin(yaw)) * length * 0.5;
+      const halfZ = Math.abs(Math.sin(yaw)) * width * 0.5 + Math.abs(Math.cos(yaw)) * length * 0.5;
+      const bounds = { minX: x - halfX, minZ: z - halfZ, maxX: x + halfX, maxZ: z + halfZ };
+      this.addCollider({ kind: 'aabb', ...bounds, minY, maxY, tag });
+      if (platform) this.platforms.push({ ...bounds, top: maxY });
+    };
+
+    for (let index = 0; index < segments.length; index++) {
+      const segment = segments[index] as WaterSegment;
+      quaternion.setFromAxisAngle(up, segment.yaw);
+      position.set(segment.x, ROAD_WATER_DECK_Y - 0.14, segment.z);
+      scale.set(deckWidth, 0.28, segment.length);
+      matrix.compose(position, quaternion, scale);
+      decks.setMatrixAt(index, matrix);
+      addBoxCollider(
+        segment.x, segment.z, deckWidth, segment.length, segment.yaw,
+        ROAD_WATER_DECK_Y - 0.28, ROAD_WATER_DECK_Y, 'floor', true,
+      );
+
+      for (const side of [-1, 1] as const) {
+        const railX = segment.x + segment.sideX * side * (deckWidth * 0.5 - 0.12);
+        const railZ = segment.z + segment.sideZ * side * (deckWidth * 0.5 - 0.12);
+        position.set(railX, ROAD_WATER_DECK_Y + 0.39, railZ);
+        scale.set(0.13, 0.78, segment.length);
+        matrix.compose(position, quaternion, scale);
+        rails.setMatrixAt(index * 2 + (side === -1 ? 0 : 1), matrix);
+        addBoxCollider(
+          railX, railZ, 0.13, segment.length, segment.yaw,
+          ROAD_WATER_DECK_Y, ROAD_WATER_DECK_Y + 0.78, 'wall', false,
+        );
+      }
+    }
+
+    for (let index = 0; index < pierSegments.length; index++) {
+      const segment = pierSegments[index] as WaterSegment;
+      for (const side of [-1, 1] as const) {
+        const pierX = segment.x + segment.sideX * side * 1.78;
+        const pierZ = segment.z + segment.sideZ * side * 1.78;
+        const bed = Math.min(this.getHeight(pierX, pierZ), WATER_Y - 0.25);
+        const height = Math.max(0.45, ROAD_WATER_DECK_Y - bed - 0.16);
+        position.set(pierX, bed + height * 0.5, pierZ);
+        quaternion.identity();
+        scale.set(0.34, height, 0.34);
+        matrix.compose(position, quaternion, scale);
+        piers.setMatrixAt(index * 2 + (side === -1 ? 0 : 1), matrix);
+      }
+    }
+
+    for (const mesh of [decks, rails, piers]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      group.add(mesh);
+    }
+    scene.add(group);
+    this.environmentDetailInstanceCount += segments.length * 3 + pierSegments.length * 2;
+    this.assetUsage.add('map.infrastructure.bridge', crossingCount);
   }
 
   // 单座桥: 桥面(floor 可走) + 两端踏步 + 侧护栏 + 桥墩, ≤20 AABB

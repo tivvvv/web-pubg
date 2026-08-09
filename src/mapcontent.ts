@@ -36,7 +36,7 @@ export const MAP_CONTENT_SITES: readonly MapContentSiteDef[] = [
   },
   {
     id: 'mistwood-lumberyard', region: 'mistwood', name: '北境木场', feature: '木料堆和林下短视线交火',
-    kind: 'lumber', x: -10, z: -208, radius: 26, premiumSpots: 0,
+    kind: 'lumber', x: 34, z: -184, radius: 28, premiumSpots: 0,
   },
   {
     id: 'eagleridge-relay', region: 'eagleridge', name: '鹰眼电台', feature: '高地通信塔和环形防守位',

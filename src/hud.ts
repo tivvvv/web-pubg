@@ -36,6 +36,14 @@ export function shouldShowSwimmingStatus(swimming: boolean, descentActive: boole
   return swimming && !descentActive;
 }
 
+export function compactHealCounts(bandage: number, medkit: number, drink: number): string {
+  const parts: string[] = [];
+  if (bandage > 0) parts.push(`绷带 ${bandage}`);
+  if (medkit > 0) parts.push(`医疗 ${medkit}`);
+  if (drink > 0) parts.push(`饮料 ${drink}`);
+  return parts.join(' · ');
+}
+
 export function healthFeedback(hp: number): { opacity: number; critical: boolean } {
   const pct = Math.max(0, Math.min(100, hp));
   const danger = Math.max(0, Math.min(1, (55 - pct) / 55));
@@ -161,6 +169,7 @@ export class Hud {
   private crosshairKey = '';
   private zoneTintKey: boolean | null = null;
   private squadOrderKey = '';
+  private locationTimer = 0;
 
   onStart: () => void = () => undefined;
   onRestart: () => void = () => undefined;
@@ -328,11 +337,13 @@ export class Hud {
     this.envTime.textContent = time;
     this.envLabel.textContent = `${phase} · ${label}`;
     this.environmentStatus.dataset.weather = weather;
+    this.environmentStatus.title = `${time} ${phase} · ${label}`;
   }
 
   setMatchRule(label: string, detail: string): void {
     this.matchRule.textContent = label;
     this.matchRule.title = detail;
+    this.environmentStatus.dataset.rule = label;
   }
 
   setLocation(name: string, tier: 'low' | 'medium' | 'high', feature: string): void {
@@ -343,6 +354,9 @@ export class Hud {
     this.locationTier.textContent = tier === 'high' ? '高资源区' : tier === 'medium' ? '中资源区' : '低资源区';
     this.locationFeature.textContent = feature;
     this.locationStatus.dataset.tier = tier;
+    this.locationStatus.title = `${this.locationTier.textContent} · ${feature}`;
+    this.locationStatus.classList.add('show');
+    this.locationTimer = 3.6;
   }
 
   setPickupPrompt(text: string | null, kind = 'default', detail = '', detailTone = 'neutral'): void {
@@ -426,6 +440,7 @@ export class Hud {
     this.squadOrder.dataset.kind = kind;
     this.squadOrderTitle.textContent = title;
     this.squadOrderDetail.textContent = detail;
+    this.squadOrder.title = detail;
   }
 
   // 击倒横幅(玩家): 显隐 + 流血条 + 副标题
@@ -484,10 +499,12 @@ export class Hud {
   }
 
   // 底栏恢复品计数(字符串化, 变化才写 DOM)
-  setHeals(counts: string): void {
+  setHeals(bandage: number, medkit: number, drink: number): void {
+    const counts = compactHealCounts(bandage, medkit, drink);
     if (counts === this.healCountsKey) return;
     this.healCountsKey = counts;
     this.healCountsEl.textContent = counts;
+    this.healCountsEl.classList.toggle('show', counts.length > 0);
   }
 
   // 饮料 buff 指示: frac∈[0,1] 显示剩余进度, 其他值隐藏
@@ -550,13 +567,13 @@ export class Hud {
     div.className = 'feed-entry';
     div.innerHTML = html;
     this.killfeed.prepend(div);
-    while (this.killfeed.children.length > 6) {
+    while (this.killfeed.children.length > 4) {
       this.killfeed.lastElementChild?.remove();
     }
     window.setTimeout(() => {
       div.classList.add('fade');
       window.setTimeout(() => div.remove(), 600);
-    }, 5000);
+    }, 4000);
   }
 
   clearFeed(): void {
@@ -661,6 +678,10 @@ export class Hud {
   }
 
   update(dt: number): void {
+    if (this.locationTimer > 0) {
+      this.locationTimer -= dt;
+      if (this.locationTimer <= 0) this.locationStatus.classList.remove('show');
+    }
     if (this.shotPulseTimer > 0) {
       this.shotPulseTimer -= dt;
       if (this.shotPulseTimer <= 0) this.crosshair.classList.remove('shot-pulse');

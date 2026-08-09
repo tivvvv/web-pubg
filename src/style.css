@@ -1735,6 +1735,150 @@ body {
   to { filter: brightness(1.18); transform: translateY(-1px); }
 }
 
+/* ---------- 精简 HUD: 常驻状态只保留可操作和战斗必需信息 ---------- */
+#topbar {
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 13px;
+  letter-spacing: 0.4px;
+}
+
+#environment-status {
+  min-width: 0;
+  gap: 5px;
+  padding: 4px 6px;
+}
+
+#env-label,
+#match-rule,
+#sound-toggle-label {
+  display: none;
+}
+
+#sound-toggle {
+  margin-left: 0;
+  padding: 3px 4px 3px 6px;
+}
+
+#location-status {
+  top: 51px;
+  display: flex;
+  min-width: 0;
+  padding: 5px 9px;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+#location-status.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#location-tier,
+#location-feature {
+  display: none;
+}
+
+#location-name {
+  font-size: 12px;
+}
+
+#killfeed {
+  top: 86px;
+  gap: 3px;
+}
+
+.feed-entry {
+  max-width: 290px;
+  padding: 3px 8px;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#squad-panel {
+  top: 205px;
+  gap: 4px;
+}
+
+.sq-row {
+  padding: 3px 6px;
+  background: rgba(10, 12, 10, 0.42);
+}
+
+#squad-order {
+  top: 318px;
+  display: block;
+  width: auto;
+  max-width: 176px;
+  padding: 5px 9px;
+}
+
+.squad-order-tag,
+#squad-order-detail {
+  display: none;
+}
+
+#squad-order-title {
+  font-size: 11px;
+}
+
+#bottom-left,
+#bottom-right {
+  padding: 7px 9px;
+}
+
+#heal-counts {
+  display: none;
+}
+
+#heal-counts.show {
+  display: inline;
+}
+
+#heals-row:not(:has(#heal-counts.show, #drink-buff.show)) {
+  display: none;
+}
+
+.slot.empty {
+  display: none;
+}
+
+#pickup-prompt {
+  min-width: 0;
+  padding: 6px 11px 5px;
+  font-size: 13px;
+}
+
+#pickup-prompt .prompt-detail {
+  display: none;
+}
+
+#pickup-prompt[data-kind='ally'] .prompt-detail,
+#pickup-prompt .prompt-detail[data-tone='warning'] {
+  display: block;
+}
+
+.kbd {
+  min-width: 21px;
+  font-size: 12px;
+}
+
+.start-panel {
+  height: auto;
+  min-height: 430px;
+}
+
+.controls {
+  margin-bottom: 18px;
+}
+
+.controls td {
+  padding: 7px 11px;
+}
+
 .panel,
 .bp-panel {
   background:

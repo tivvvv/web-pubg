@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  healthFeedback, selectQueuedToast, shouldShowSwimmingStatus, toastShouldInterrupt,
+  compactHealCounts, healthFeedback, selectQueuedToast, shouldShowSwimmingStatus, toastShouldInterrupt,
 } from '../src/hud';
 
 describe('HUD 状态互斥', () => {
+  it('恢复品栏隐藏零数量并压缩成短文案', () => {
+    expect(compactHealCounts(0, 0, 0)).toBe('');
+    expect(compactHealCounts(2, 0, 1)).toBe('绷带 2 · 饮料 1');
+  });
+
   it('低血量反馈平滑增强且仅在存活的危急血量脉动', () => {
     expect(healthFeedback(100)).toEqual({ opacity: 0, critical: false });
     expect(healthFeedback(55)).toEqual({ opacity: 0, critical: false });

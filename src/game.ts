@@ -243,7 +243,7 @@ export class Game {
     { name: MATE_NAMES[1] as string, hp: 100, alive: true, isPlayer: false, knocked: false },
     { name: MATE_NAMES[2] as string, hp: 100, alive: true, isPlayer: false, knocked: false },
   ];
-  private readonly hudSlotNames: (string | null)[] = [null, null, null, '拳头', '手雷×0'];
+  private readonly hudSlotNames: (string | null)[] = [null, null, null, '拳头', null];
 
   private shotRes = makeShotResult();
   private tmpDir = new THREE.Vector3();
@@ -2441,7 +2441,7 @@ export class Game {
       this.audio.warn();
     }
     this.hud.setHP(c.hp);
-    this.hud.setHeals(`绷带×${c.heals.bandage}  医疗包×${c.heals.medkit}  饮料×${c.heals.drink}`);
+    this.hud.setHeals(c.heals.bandage, c.heals.medkit, c.heals.drink);
     // 空降仪表与提示
     if (player.descent) {
       const agl = c.pos.y - this.world.getHeight(c.pos.x, c.pos.z);
@@ -2519,7 +2519,8 @@ export class Game {
     names[1] = c.guns[1]?.def.name.split(' ')[0] ?? null;
     names[2] = c.guns[2]?.def.name.split(' ')[0] ?? null;
     names[3] = c.melee.def.name;
-    names[4] = `${THROWABLES[c.throwKind].name}×${c.throwables[c.throwKind]}`;
+    const throwableCount = c.throwables[c.throwKind];
+    names[4] = throwableCount > 0 ? `${THROWABLES[c.throwKind].name}×${throwableCount}` : null;
     const key = `${names.join(',')}|${c.curSlot}`;
     if (key !== this.hudSlotsKey) {
       this.hudSlotsKey = key;
@@ -2535,9 +2536,9 @@ export class Game {
 
     // 毒圈状态
     if (inPlane) {
-      this.hud.setZoneStatus(flightJumpReady ? '飞机已进入安全区' : '等待飞机进入安全区', false);
+      this.hud.setZoneStatus(flightJumpReady ? '可跳伞' : '航线外', false);
     } else if (outside && c.alive) {
-      this.hud.setZoneStatus(`你在圈外！尽快移动 (-${this.zone.dps}/s)`, true);
+      this.hud.setZoneStatus(`圈外 -${this.zone.dps}/s`, true);
     } else {
       this.hud.setZoneStatus(this.zone.statusText(), this.zone.state === 'shrink');
     }

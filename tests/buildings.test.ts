@@ -2,13 +2,26 @@ import { describe, expect, it } from 'vitest';
 import {
   apartmentFloorLayout, doorColliderDisabled, doorLeafSegment, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES,
   GABLE_ROOF_RISE,
-  facadeSegments, gableRoofPitch, mainEntranceHalfWidth, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
+  entranceStepProfile, facadeSegments, gableRoofPitch, mainEntranceHalfWidth, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
   stairHandrailTransform, stairRailX,
 } from '../src/buildings';
 import type { AabbCollider } from '../src/types';
 import { REGIONS } from '../src/regions';
 
 describe('建筑门交互方向', () => {
+  it('门廊台阶按地基高差细分且从地面到室内无需跳跃', () => {
+    for (const [floorY, groundY] of [[2.4, 2.05], [3.2, 1.65], [5.1, 2.9]] as const) {
+      const profile = entranceStepProfile(floorY, groundY);
+      const walkPath = [groundY, ...profile.tops.slice().reverse(), floorY];
+      expect(profile.count).toBeGreaterThanOrEqual(3);
+      expect(profile.count).toBeLessThanOrEqual(8);
+      expect(profile.depth).toBeGreaterThanOrEqual(profile.count * 0.3);
+      for (let i = 1; i < walkPath.length; i++) {
+        expect((walkPath[i] as number) - (walkPath[i - 1] as number)).toBeLessThanOrEqual(0.36);
+      }
+    }
+  });
+
   it('正立面装饰为不同原型保留完整主入口净宽', () => {
     expect(mainEntranceHalfWidth('apartment')).toBeGreaterThan(mainEntranceHalfWidth('cottage2'));
     expect(mainEntranceHalfWidth('gym')).toBe(mainEntranceHalfWidth('apartment'));
@@ -134,16 +147,17 @@ describe('建筑门交互方向', () => {
   it('正反方向楼梯都生成贯穿整跑的连续斜扶手', () => {
     const forward = stairHandrailTransform(2, 8, 3, 0.32, 9);
     const reverse = stairHandrailTransform(8, 2, 3, 0.32, 9);
+    const postSpan = 8 / 9;
     expect(forward.centerZ).toBe(5);
     expect(reverse.centerZ).toBe(5);
     expect(forward.centerY).toBeCloseTo(reverse.centerY, 6);
-    expect(forward.length).toBeCloseTo(Math.hypot(6, 2.88) - 0.32, 6);
+    expect(forward.length).toBeCloseTo(Math.hypot(6 * postSpan, 2.56) - 0.32, 6);
     expect(reverse.length).toBeCloseTo(forward.length, 6);
     expect(forward.pitch).toBeLessThan(0);
     expect(reverse.pitch).toBeGreaterThan(0);
     expect(Math.abs(forward.pitch)).toBeCloseTo(Math.abs(reverse.pitch), 6);
     const halfRise = Math.sin(Math.abs(forward.pitch)) * forward.length / 2;
-    expect(forward.centerY - halfRise).toBeGreaterThan(3 + 0.32 * 0.5 + 0.83);
-    expect(forward.centerY + halfRise).toBeLessThan(3 + 0.32 * 9.5 + 0.83);
+    expect(forward.centerY - halfRise).toBeGreaterThan(3 + 0.32 + 0.83);
+    expect(forward.centerY + halfRise).toBeLessThan(3 + 0.32 * 9 + 0.83);
   });
 });
