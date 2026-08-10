@@ -401,10 +401,10 @@ export class LootManager {
       const item = this.spawn(kind, s.x, s.y, s.z);
       if (!item) break;
       armedSites.add(s.siteId);
-      const scenicInterior = s.siteId === 'stonegate-church';
-      item.outdoor = !scenicInterior;
+      const scenicPlatform = s.siteId.startsWith('stonegate-church');
+      item.outdoor = !scenicPlatform;
       count++;
-      count += this.pairAmmo(world, kind, s.x, s.y, s.z, signature ? 1 : 0.82, !scenicInterior);
+      count += this.pairAmmo(world, kind, s.x, s.y, s.z, signature ? 1 : 0.82, !scenicPlatform);
     }
     // 室内点位(一层普通表, 二层 premium 高级枪表)
     for (const s of world.buildings.lootSpots) {

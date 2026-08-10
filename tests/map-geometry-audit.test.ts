@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import type { AabbCollider } from '../src/types';
-import { World } from '../src/world';
+import { riverZAt, World } from '../src/world';
 import { doorLeafSegment } from '../src/buildings';
 import { regionAt } from '../src/regions';
 
@@ -550,32 +550,67 @@ describe('地图与建筑终极几何巡检', () => {
 
   it('城区花箱使用可辨识的石材植被配色而不是黑色占位块', () => {
     const scene = new THREE.Scene();
-    new World(scene);
-    const boxes = scene.getObjectByName('regional-identity-boxes') as THREE.InstancedMesh | undefined;
-    const spheres = scene.getObjectByName('regional-identity-spheres') as THREE.InstancedMesh | undefined;
-    expect(boxes).toBeDefined();
-    expect(spheres).toBeDefined();
+    const world = new World(scene);
+    const boxes = scene.getObjectByName('city-planter-bases') as THREE.InstancedMesh | undefined;
+    const spheres = scene.getObjectByName('city-planter-foliage') as THREE.InstancedMesh | undefined;
+    expect(boxes?.count).toBeGreaterThanOrEqual(30);
+    expect(spheres?.count).toBeGreaterThanOrEqual(70);
+    expect(world.cityPlanterPositions).toHaveLength((boxes?.count ?? 0) / 2);
     if (!boxes || !spheres) return;
 
-    const boxRange = boxes.userData.cityPlanterRange as [number, number] | undefined;
-    const sphereRange = spheres.userData.cityPlanterRange as [number, number] | undefined;
-    expect(boxRange).toBeDefined();
-    expect(sphereRange).toBeDefined();
-    if (!boxRange || !sphereRange) return;
-    expect(boxRange[1] - boxRange[0]).toBeGreaterThanOrEqual(30);
-    expect(sphereRange[1] - sphereRange[0]).toBeGreaterThanOrEqual(70);
-
     const color = new THREE.Color();
-    for (let index = boxRange[0]; index < boxRange[1]; index++) {
+    for (let index = 0; index < boxes.count; index++) {
       boxes.getColorAt(index, color);
       expect(color.r + color.g + color.b, `花箱石盆 ${index} 颜色过暗`).toBeGreaterThan(0.9);
     }
-    for (let index = sphereRange[0]; index < sphereRange[1]; index++) {
+    for (let index = 0; index < spheres.count; index++) {
       spheres.getColorAt(index, color);
       expect(color.r + color.g + color.b, `花箱植被 ${index} 颜色过暗`).toBeGreaterThan(0.4);
     }
-    expect((boxes.material as THREE.MeshStandardMaterial).emissiveIntensity).toBeGreaterThan(0.1);
-    expect((spheres.material as THREE.MeshStandardMaterial).emissiveIntensity).toBeGreaterThan(0.2);
+    expect((boxes.material as THREE.MeshStandardMaterial).emissiveIntensity).toBeGreaterThanOrEqual(0.5);
+    expect((spheres.material as THREE.MeshStandardMaterial).emissiveIntensity).toBeGreaterThanOrEqual(0.58);
+
+    const churchBases = scene.getObjectsByProperty('name', 'church-plaza-planter-base') as THREE.Mesh[];
+    const churchCaps = scene.getObjectsByProperty('name', 'church-plaza-planter-cap') as THREE.Mesh[];
+    const churchHedges = scene.getObjectsByProperty('name', 'church-plaza-planter-hedge') as THREE.Mesh[];
+    const churchFlowers = scene.getObjectsByProperty('name', 'church-plaza-planter-flower') as THREE.Mesh[];
+    const churchInsets = scene.getObjectsByProperty('name', 'church-plaza-planter-inset') as THREE.Mesh[];
+    expect(churchBases).toHaveLength(2);
+    expect(churchCaps).toHaveLength(2);
+    expect(churchHedges).toHaveLength(6);
+    expect(churchFlowers).toHaveLength(6);
+    expect(churchInsets).toHaveLength(8);
+    for (const mesh of [...churchBases, ...churchCaps]) {
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      expect(material.color.r + material.color.g + material.color.b).toBeGreaterThan(1.3);
+      expect(material.emissiveIntensity).toBeGreaterThanOrEqual(0.4);
+    }
+    for (const mesh of [...churchHedges, ...churchFlowers, ...churchInsets]) {
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      expect(material.color.r + material.color.g + material.color.b).toBeGreaterThan(0.7);
+      expect(material.emissiveIntensity).toBeGreaterThanOrEqual(0.4);
+    }
+  });
+
+  it('路牌和金属桶在阴影中仍有可辨识颜色及结构环', () => {
+    const scene = new THREE.Scene();
+    const world = new World(scene);
+    const signs = scene.getObjectByName('road-sign-boards') as THREE.InstancedMesh | undefined;
+    const barrels = scene.getObjectByName('street-barrel-bodies') as THREE.InstancedMesh | undefined;
+    const bands = scene.getObjectByName('street-barrel-bands') as THREE.InstancedMesh | undefined;
+    expect(signs?.count).toBeGreaterThanOrEqual(8);
+    expect(barrels?.count).toBeGreaterThanOrEqual(20);
+    expect(bands?.count).toBe((barrels?.count ?? 0) * 3);
+    expect(world.streetBarrelPositions).toHaveLength(barrels?.count ?? 0);
+    if (!signs || !barrels || !bands) return;
+    expect((signs.material as THREE.MeshStandardMaterial).emissiveIntensity).toBeGreaterThanOrEqual(0.3);
+    expect((barrels.material as THREE.MeshStandardMaterial).emissiveIntensity).toBeGreaterThanOrEqual(0.35);
+    expect((bands.material as THREE.MeshStandardMaterial).color.r).toBeGreaterThan(0.4);
+    const color = new THREE.Color();
+    for (let index = 0; index < barrels.count; index++) {
+      barrels.getColorAt(index, color);
+      expect(color.r + color.g + color.b, `金属桶 ${index} 颜色过暗`).toBeGreaterThan(0.75);
+    }
   });
 
   it('农田土沟和围栏贴坡生成且不会退化成长悬空黑板', () => {
@@ -584,10 +619,18 @@ describe('地图与建筑终极几何巡检', () => {
     const furrows = scene.getObjectByName('farm-soil-furrows') as THREE.InstancedMesh | undefined;
     const rails = scene.getObjectByName('farm-fence-rails') as THREE.InstancedMesh | undefined;
     const road = scene.getObjectByName('road-track-surface') as THREE.Mesh | undefined;
+    const roadVerge = scene.getObjectByName('road-verge-surface') as THREE.Mesh | undefined;
     expect(furrows).toBeDefined();
     expect(rails).toBeDefined();
     expect(road).toBeDefined();
-    if (!furrows || !rails || !road) return;
+    expect(roadVerge).toBeDefined();
+    if (!furrows || !rails || !road || !roadVerge) return;
+
+    const trackMaterial = road.material as THREE.MeshBasicMaterial;
+    const vergeMaterial = roadVerge.material as THREE.MeshBasicMaterial;
+    expect(trackMaterial).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect(vergeMaterial).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect(trackMaterial.color.getHex()).toBe(vergeMaterial.color.getHex());
 
     expect(world.farmFurrowCount).toBeGreaterThanOrEqual(24);
     expect(world.farmFenceRailCount).toBeGreaterThanOrEqual(120);
@@ -644,6 +687,14 @@ describe('地图与建筑终极几何巡检', () => {
     expect(patchCenters?.length).toBeGreaterThanOrEqual(28);
     expect(patchSegments).toBeGreaterThanOrEqual(16);
     const positions = road.geometry.getAttribute('position') as THREE.BufferAttribute;
+    for (let index = 0; index < positions.count; index += 3) {
+      const centerX = (positions.getX(index) + positions.getX(index + 1) + positions.getX(index + 2)) / 3;
+      const centerZ = (positions.getZ(index) + positions.getZ(index + 1) + positions.getZ(index + 2)) / 3;
+      const overlapsMainBridge = [-50, 170].some((bridgeX) => (
+        Math.abs(centerX - bridgeX) < 2.7 && Math.abs(centerZ - riverZAt(bridgeX)) < 14
+      ));
+      expect(overlapsMainBridge, `道路三角面 ${index / 3} 仍叠在主桥桥面下`).toBe(false);
+    }
     for (const [patchIndex, center] of (patchCenters ?? []).entries()) {
       let centerVertices = 0;
       for (let index = 0; index < positions.count; index++) {
@@ -652,6 +703,40 @@ describe('地图与建筑终极几何巡检', () => {
         }
       }
       expect(centerVertices, `道路节点 ${patchIndex} 没有完整交叉口补片`).toBeGreaterThanOrEqual(patchSegments ?? 16);
+    }
+  });
+
+  it('支路跨水桥使用开放式亮色护栏而不是遮挡视线的黑色整墙', () => {
+    const scene = new THREE.Scene();
+    const world = new World(scene);
+    const decks = scene.getObjectByName('road-water-crossing-decks') as THREE.InstancedMesh | undefined;
+    const rails = scene.getObjectByName('road-water-crossing-top-rails') as THREE.InstancedMesh | undefined;
+    const posts = scene.getObjectByName('road-water-crossing-rail-posts') as THREE.InstancedMesh | undefined;
+    expect(decks?.count).toBe(world.roadWaterCrossingSegmentCount);
+    expect(rails?.count).toBe(world.roadWaterCrossingSegmentCount * 2);
+    expect(posts?.count).toBe(world.roadWaterCrossingSegmentCount * 2);
+    if (!decks || !rails || !posts) return;
+
+    expect(decks.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const railMaterial = rails.material as THREE.MeshStandardMaterial;
+    expect(railMaterial.color.r + railMaterial.color.g + railMaterial.color.b).toBeGreaterThan(1.25);
+    expect(railMaterial.emissiveIntensity).toBeGreaterThanOrEqual(0.4);
+
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    for (let index = 0; index < rails.count; index++) {
+      rails.getMatrixAt(index, matrix);
+      matrix.decompose(position, rotation, scale);
+      expect(scale.y, `支路桥护栏 ${index} 仍是遮挡视线的整面高墙`).toBeLessThanOrEqual(0.15);
+    }
+    for (let index = 0; index < posts.count; index++) {
+      posts.getMatrixAt(index, matrix);
+      matrix.decompose(position, rotation, scale);
+      expect(scale.x, `支路桥立柱 ${index} 过粗`).toBeLessThanOrEqual(0.15);
+      expect(scale.y, `支路桥立柱 ${index} 高度不足`).toBeGreaterThanOrEqual(0.68);
+      expect(scale.z, `支路桥立柱 ${index} 过粗`).toBeLessThanOrEqual(0.15);
     }
   });
 
@@ -695,7 +780,21 @@ describe('地图与建筑终极几何巡检', () => {
       ))
       .reduce((highest, platform) => Math.max(highest, platform.top), -Infinity);
     expect(Number.isFinite(floorTop)).toBe(true);
-    expect(world.navPointFree(church.x, church.z + 3.1, floorTop, 0.35, false)).toBe(true);
+    const plazaPlatform = world.platforms.find((platform) => (
+      Math.abs(platform.minX - (church.x - 13.5)) < 0.01 &&
+      Math.abs(platform.maxX - (church.x + 13.5)) < 0.01 &&
+      Math.abs(platform.minZ - (church.z + 5)) < 0.01 &&
+      Math.abs(platform.maxZ - (church.z + 23)) < 0.01
+    ));
+    expect(plazaPlatform).toBeDefined();
+    expect(floorTop).toBeGreaterThanOrEqual((plazaPlatform?.top ?? Infinity) + 0.05);
+    for (const z of [church.z + 3.1, church.z + 4.2, church.z + 4.8, church.z + 5.4, church.z + 6.2]) {
+      const feetY = world.groundHeight(church.x, z, floorTop + 1);
+      expect(
+        world.navPointFree(church.x, z, feetY, 0.35, false),
+        `教堂正门通道在 z=${z.toFixed(2)} 被墙体或广场地基封堵`,
+      ).toBe(true);
+    }
     expect(world.cyls.some((collider) => (
       Math.abs(collider.x - church.x) < 0.05 &&
       Math.abs(collider.z - (church.z + 14)) < 0.05 && collider.r >= 2.2
@@ -708,7 +807,7 @@ describe('地图与建筑终极几何巡检', () => {
   it('桥梁和观景台只在可见栏杆处阻挡并保留入口', () => {
     const world = createWorld();
     for (const bridgeX of [-50, 170]) {
-      const riverZ = 80 + 22 * Math.sin(bridgeX * 0.012 + 1.3);
+      const riverZ = riverZAt(bridgeX);
       const deck = world.platforms.find((platform) => (
         platform.minX < bridgeX && platform.maxX > bridgeX &&
         platform.minZ < riverZ && platform.maxZ > riverZ &&
@@ -716,9 +815,10 @@ describe('地图与建筑终极几何巡检', () => {
       ));
       expect(deck, `${bridgeX} 桥缺少桥面平台`).toBeDefined();
       if (!deck) continue;
+      expect(deck.maxX - deck.minX).toBeCloseTo(5.4, 4);
       expect(world.navPointFree(bridgeX, riverZ, deck.top, 0.34, false)).toBe(true);
-      expect(world.navPointFree(bridgeX - 2.02, riverZ, deck.top, 0.34, false)).toBe(false);
-      expect(world.navPointFree(bridgeX + 2.02, riverZ, deck.top, 0.34, false)).toBe(false);
+      expect(world.navPointFree(bridgeX - 2.6, riverZ, deck.top, 0.34, false)).toBe(false);
+      expect(world.navPointFree(bridgeX + 2.6, riverZ, deck.top, 0.34, false)).toBe(false);
     }
 
     const lookout = world.landmarks.find((site) => site.kind === 'lookout');

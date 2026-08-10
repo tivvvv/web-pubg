@@ -30,6 +30,9 @@ export const WORLD_SIZE = 700;
 export const WORLD_HALF = 350;
 export const WATER_Y = 0.9;
 const ROAD_WATER_DECK_Y = WATER_Y + 0.72;
+const MAIN_BRIDGE_XS = [-50, 170] as const;
+const MAIN_BRIDGE_HALF_LENGTH = 14;
+const MAIN_BRIDGE_HALF_WIDTH = 2.7;
 export const SUN_SHADOW_MAP_SIZE = 2048;
 export const CHARACTER_COLLISION_HEIGHT = 1.7;
 export const PLATFORM_TOP_SNAP_TOLERANCE = 0.12;
@@ -41,6 +44,13 @@ export function characterOverlapsColliderHeight(feetY: number, minY: number, max
 // 河流中心线: z ≈ +80, 正弦蜿蜒 ±22
 export function riverZAt(x: number): number {
   return 80 + 22 * Math.sin(x * 0.012 + 1.3);
+}
+
+function insideMainBridgeDeck(x: number, z: number, padding = 0): boolean {
+  return MAIN_BRIDGE_XS.some((bridgeX) => (
+    Math.abs(x - bridgeX) <= MAIN_BRIDGE_HALF_WIDTH + padding &&
+    Math.abs(z - riverZAt(bridgeX)) <= MAIN_BRIDGE_HALF_LENGTH + padding
+  ));
 }
 
 const GRID = 192; // 更细地形网格让山脊、河岸和道路交界保持连续轮廓
@@ -169,7 +179,10 @@ export class World {
   roadTerminusCount = 0;
   roadWaterCrossingCount = 0;
   roadWaterCrossingSegmentCount = 0;
+  readonly roadWaterCrossingPositions: Array<{ x: number; z: number }> = [];
   forestFacilityDetailCount = 0;
+  readonly cityPlanterPositions: Array<{ x: number; z: number }> = [];
+  readonly streetBarrelPositions: Array<{ x: number; z: number }> = [];
   maxTerrainH = 24;
 
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
@@ -236,6 +249,10 @@ export class World {
     // 村庄规划 + 地基平整(必须在生成地形几何体之前)
     this.buildings.plan(this);
     this.buildings.flattenTerrain(this);
+    // 教堂与广场必须在地形网格生成前完成统一整地。此前广场按坡面最高点抬升，
+    // 而教堂仍留在低处，广场地基因此直接封死了正门。
+    this.prepareScenicSites();
+    this.flattenChurchTerrain();
     let maxH = -100;
     for (let i = 0; i < this.heights.length; i++) {
       const h = this.heights[i] as number;
@@ -567,7 +584,6 @@ varying vec3 vTerrainWorld;`,
 
     // ---- 房屋村庄(先生成, 树木岩石随后避开) ----
     this.buildings.build(scene, this);
-    this.prepareScenicSites();
     this.addRoadNetwork(scene);
     this.addRoadTermini(scene);
     this.assetUsage.add('map.infrastructure.road', ROAD_PATHS.reduce((total, path) => total + Math.max(0, path.length - 1), 0));
@@ -1254,6 +1270,38 @@ varying vec3 vTerrainWorld;`,
     }
   }
 
+  private flattenChurchTerrain(): void {
+    const church = this.scenicSites.find((site) => site.kind === 'church');
+    if (!church) return;
+    const samples = [
+      this.getHeight(church.x, church.z - 5),
+      this.getHeight(church.x - 7, church.z - 5),
+      this.getHeight(church.x + 7, church.z - 5),
+      this.getHeight(church.x, church.z + 14),
+      this.getHeight(church.x - 10, church.z + 14),
+      this.getHeight(church.x + 10, church.z + 14),
+    ].sort((a, b) => a - b);
+    const target = ((samples[2] as number) + (samples[3] as number)) * 0.5;
+    const gradeCenterZ = church.z + 4.5;
+    const halfWidth = 15;
+    const halfDepth = 20;
+    const blendDistance = 8;
+    for (let iz = 0; iz <= GRID; iz++) {
+      for (let ix = 0; ix <= GRID; ix++) {
+        const x = -WORLD_HALF + ix * CELL;
+        const z = -WORLD_HALF + iz * CELL;
+        const outsideX = Math.max(0, Math.abs(x - church.x) - halfWidth);
+        const outsideZ = Math.max(0, Math.abs(z - gradeCenterZ) - halfDepth);
+        const outsideDistance = Math.hypot(outsideX, outsideZ);
+        if (outsideDistance >= blendDistance) continue;
+        const blend = 1 - smoothstep(0, blendDistance, outsideDistance);
+        const index = iz * (GRID + 1) + ix;
+        const current = this.heights[index] as number;
+        this.heights[index] = current + (target - current) * blend;
+      }
+    }
+  }
+
   private inScenicSite(x: number, z: number, margin: number): boolean {
     for (const s of this.scenicSites) {
       const r = s.r + margin;
@@ -1283,7 +1331,7 @@ varying vec3 vTerrainWorld;`,
   }
 
   private addRoadNetwork(scene: THREE.Scene): void {
-    const makeLayer = (width: number, lift: number, color: number, roughness: number, name: string): THREE.Mesh => {
+    const makeLayer = (width: number, lift: number, color: number, name: string): THREE.Mesh => {
       const vertices: number[] = [];
       const halfWidth = width * 0.5;
 
@@ -1356,6 +1404,13 @@ varying vec3 vTerrainWorld;`,
           };
         });
         for (let i = 0; i < edges.length - 1; i++) {
+          const sampleA = samples[i] as readonly [number, number];
+          const sampleB = samples[i + 1] as readonly [number, number];
+          const midX = (sampleA[0] + sampleB[0]) * 0.5;
+          const midZ = (sampleA[1] + sampleB[1]) * 0.5;
+          // 主桥自身已经提供完整桥面。普通道路若继续在水面上铺设，会从木桥下方穿过，
+          // 并在桥头与桥面形成两套错位路面。
+          if (insideMainBridgeDeck(midX, midZ, 0.55)) continue;
           const a = edges[i] as typeof edges[number];
           const b = edges[i + 1] as typeof edges[number];
           // 整条折线共用边缘顶点，弯道不会再各自收口成相互穿插的四边形。
@@ -1372,6 +1427,8 @@ varying vec3 vTerrainWorld;`,
       const patchRadius = halfWidth * 1.035;
       const renderedPatchCenters: Array<readonly [number, number]> = [];
       for (const [centerX, centerZ] of patchCenters) {
+        // 位于主桥跨度内的道路节点由桥面和桥头坡台接管，不能再叠加圆形路口补片。
+        if (insideMainBridgeDeck(centerX, centerZ, 0.55)) continue;
         const centerTerrain = this.getHeight(centerX, centerZ);
         const centerBase = centerTerrain < WATER_Y + 0.18 ? ROAD_WATER_DECK_Y : centerTerrain;
         const centerY = centerBase + lift + 0.006;
@@ -1399,10 +1456,9 @@ varying vec3 vTerrainWorld;`,
       const normals = new Float32Array(vertices.length);
       for (let index = 1; index < normals.length; index += 3) normals[index] = 1;
       geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-      const mat = new THREE.MeshStandardMaterial({
+      const mat = new THREE.MeshBasicMaterial({
         color,
-        roughness,
-        metalness: 0,
+        fog: true,
         polygonOffset: true,
         polygonOffsetFactor: -2,
         polygonOffsetUnits: -2,
@@ -1415,8 +1471,9 @@ varying vec3 vTerrainWorld;`,
       mesh.userData.roadPatchSegments = patchSegments;
       return mesh;
     };
-    scene.add(makeLayer(7.2, 0.065, 0x796d56, 1, 'road-verge-surface'));
-    scene.add(makeLayer(5.1, 0.105, 0xa48d66, 0.98, 'road-track-surface'));
+    // 路肩和车辙使用同一土石基色，只依靠细微高度分层，避免交叉口出现深浅拼布。
+    scene.add(makeLayer(7.2, 0.065, 0x9a8867, 'road-verge-surface'));
+    scene.add(makeLayer(5.1, 0.105, 0x9a8867, 'road-track-surface'));
   }
 
   private addRoadTermini(scene: THREE.Scene): void {
@@ -1733,8 +1790,10 @@ varying vec3 vTerrainWorld;`,
 
   // 可进入的教堂和石铺广场共用一个地标安全区. 教堂提供室内近战路线, 广场提供开阔视线和环形掩体.
   private addChurchPlaza(scene: THREE.Scene, site: ScenicSite): void {
-    const floorTop = this.churchFloorTop(site);
     const plazaTop = this.churchPlazaTop(site);
+    // 广场所在坡面明显高于教堂后侧地形时，教堂必须跟随入口广场抬升。
+    // 否则广场地基的北侧立面会从门外顶进门洞，形成一整块无法通行的墙。
+    const floorTop = Math.max(this.churchFloorTop(site), plazaTop + 0.08);
     const centerZ = site.z - 5;
     const foundationGround = Math.min(
       this.getHeight(site.x - 6.4, centerZ - 9.5),
@@ -1748,6 +1807,38 @@ varying vec3 vTerrainWorld;`,
     const wood = new THREE.MeshStandardMaterial({ color: 0x5c3d27, roughness: 0.9 });
     const roofMat = new THREE.MeshStandardMaterial({ color: 0x71463d, roughness: 0.86 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x272a27, roughness: 0.82 });
+    const planterStone = new THREE.MeshStandardMaterial({
+      color: 0xd1bea0,
+      emissive: 0xa58e6c,
+      emissiveIntensity: 0.48,
+      roughness: 0.96,
+    });
+    const planterTrim = new THREE.MeshStandardMaterial({
+      color: 0xf0dfb9,
+      emissive: 0xc5a875,
+      emissiveIntensity: 0.48,
+      roughness: 0.92,
+    });
+    const planterInset = new THREE.MeshStandardMaterial({
+      color: 0x9f896a,
+      emissive: 0x6f5c43,
+      emissiveIntensity: 0.42,
+      roughness: 0.94,
+    });
+    const hedgeMaterials = [0xaed98c, 0xc0e6a0].map((hedgeColor) => new THREE.MeshStandardMaterial({
+      color: hedgeColor,
+      emissive: hedgeColor,
+      emissiveIntensity: 0.48,
+      roughness: 0.94,
+    }));
+    const planterFlowerMaterials = [0xf4c95d, 0xe67f72, 0x91a9e7].map((flowerColor) => (
+      new THREE.MeshStandardMaterial({
+        color: flowerColor,
+        emissive: flowerColor,
+        emissiveIntensity: 0.42,
+        roughness: 0.78,
+      })
+    ));
     const glass = new THREE.MeshStandardMaterial({
       color: 0x6aa1a8, emissive: 0x315d66, emissiveIntensity: 0.72,
       transparent: true, opacity: 0.72, roughness: 0.18, metalness: 0.08,
@@ -2003,7 +2094,7 @@ varying vec3 vTerrainWorld;`,
     const plazaBox = (
       x: number, z: number, w: number, h: number, d: number,
       material: THREE.Material, collide = false,
-    ): void => {
+    ): THREE.Mesh => {
       const ground = plazaTop;
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
       mesh.position.set(x, ground + h / 2 + 0.05, z);
@@ -2018,23 +2109,52 @@ varying vec3 vTerrainWorld;`,
         });
         this.tacticalCoverCount++;
       }
+      return mesh;
     };
     for (const side of [-1, 1]) {
       for (const zOffset of [-5.8, 5.8]) {
         plazaBox(site.x + side * 8.5, plazaCenterZ + zOffset, 3.8, 0.48, 0.72, wood, true);
         plazaBox(site.x + side * 8.5, plazaCenterZ + zOffset - 0.3, 3.8, 0.72, 0.14, wood);
       }
-      plazaBox(site.x + side * 10.8, plazaCenterZ, 2.8, 1.02, 2.8, stone, true);
-      plazaBox(site.x + side * 10.8, plazaCenterZ - 0.25, 2.45, 0.26, 2.45, trim);
+      const planterBase = plazaBox(site.x + side * 10.8, plazaCenterZ, 2.8, 1.02, 2.8, planterStone, true);
+      planterBase.name = 'church-plaza-planter-base';
+      const planterCap = plazaBox(site.x + side * 10.8, plazaCenterZ, 3.02, 0.2, 3.02, planterTrim);
+      planterCap.name = 'church-plaza-planter-cap';
+      planterCap.position.y = plazaTop + 1.03;
+      for (const [dx, dz, width, depth] of [
+        [0, -1.415, 1.72, 0.055], [0, 1.415, 1.72, 0.055],
+        [-1.415, 0, 0.055, 1.72], [1.415, 0, 0.055, 1.72],
+      ] as const) {
+        const inset = new THREE.Mesh(new THREE.BoxGeometry(width, 0.42, depth), planterInset);
+        inset.name = 'church-plaza-planter-inset';
+        inset.position.set(site.x + side * 10.8 + dx, plazaTop + 0.54, plazaCenterZ + dz);
+        inset.castShadow = true;
+        scene.add(inset);
+        plazaParts++;
+      }
       for (const zOffset of [-0.62, 0, 0.62]) {
         const hedge = new THREE.Mesh(
           new THREE.IcosahedronGeometry(0.68, 1),
-          new THREE.MeshLambertMaterial({ color: zOffset === 0 ? 0x4f7339 : 0x637f42 }),
+          zOffset === 0 ? hedgeMaterials[0] : hedgeMaterials[1],
         );
+        hedge.name = 'church-plaza-planter-hedge';
         hedge.scale.set(1.12, 0.78 + Math.abs(zOffset) * 0.12, 0.92);
         hedge.position.set(site.x + side * 10.8, plazaTop + 1.14, plazaCenterZ + zOffset);
         hedge.castShadow = true;
         scene.add(hedge);
+        plazaParts++;
+        const flower = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.2, 1),
+          planterFlowerMaterials[zOffset < 0 ? 0 : zOffset > 0 ? 2 : 1],
+        );
+        flower.name = 'church-plaza-planter-flower';
+        flower.position.set(
+          site.x + side * 10.8 + side * (zOffset === 0 ? 0.18 : -0.08),
+          plazaTop + 1.75 - Math.abs(zOffset) * 0.08,
+          plazaCenterZ + zOffset,
+        );
+        flower.castShadow = true;
+        scene.add(flower);
         plazaParts++;
       }
     }
@@ -2271,9 +2391,16 @@ varying vec3 vTerrainWorld;`,
     const signPosts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.09, 2.1, 0.09), poleMat, 18);
     const signBoards = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1.35, 0.62, 0.1),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.76, vertexColors: true }),
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        emissive: 0x4e4938,
+        emissiveIntensity: 0.34,
+        roughness: 0.76,
+      }),
       18,
     );
+    signBoards.name = 'road-sign-boards';
     const signColor = new THREE.Color();
     let signCount = 0;
     for (let pi = 0; pi < ROAD_PATHS.length && signCount < 18; pi++) {
@@ -2353,10 +2480,32 @@ varying vec3 vTerrainWorld;`,
     const barrelCap = 46;
     const barrels = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.34, 0.34, 0.78, 10),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, metalness: 0.2, vertexColors: true }),
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        emissive: 0x263b3c,
+        emissiveIntensity: 0.38,
+        roughness: 0.68,
+        metalness: 0.18,
+      }),
       barrelCap,
     );
+    barrels.name = 'street-barrel-bodies';
+    const barrelBands = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.37, 0.37, 0.055, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0xaeb8b7,
+        emissive: 0x3c4747,
+        emissiveIntensity: 0.34,
+        roughness: 0.5,
+        metalness: 0.46,
+      }),
+      barrelCap * 3,
+    );
+    barrelBands.name = 'street-barrel-bands';
     let barrelCount = 0;
+    let barrelBandCount = 0;
+    this.streetBarrelPositions.length = 0;
     const settlements = [regionById('stonegate'), regionById('ironring'), regionById('tideharbor')];
     for (let t = 0; t < 800 && barrelCount < barrelCap; t++) {
       const region = settlements[Math.floor(furnitureRng() * settlements.length)] as (typeof settlements)[number];
@@ -2368,18 +2517,27 @@ varying vec3 vTerrainWorld;`,
       s.set(0.82 + furnitureRng() * 0.24, 0.88 + furnitureRng() * 0.2, 0.82 + furnitureRng() * 0.24);
       m.compose(new THREE.Vector3(x, h + 0.39 * s.y, z), q, s);
       barrels.setMatrixAt(barrelCount, m);
-      signColor.setHex(barrelCount % 3 === 0 ? 0x4d6d78 : barrelCount % 3 === 1 ? 0x6b5b42 : 0x5d6951);
+      signColor.setHex(barrelCount % 3 === 0 ? 0x82adba : barrelCount % 3 === 1 ? 0xb79b70 : 0x90aa87);
       barrels.setColorAt(barrelCount++, signColor);
+      this.streetBarrelPositions.push({ x, z });
+      for (const height of [0.07, 0.39, 0.73]) {
+        m.compose(new THREE.Vector3(x, h + height * s.y, z), q, s);
+        barrelBands.setMatrixAt(barrelBandCount++, m);
+      }
       this.addCollider({ kind: 'cyl', x, z, r: 0.36, y0: h, y1: h + 0.86, tag: 'rock' });
     }
     barrels.count = barrelCount;
+    barrelBands.count = barrelBandCount;
     barrels.instanceMatrix.needsUpdate = true;
+    barrelBands.instanceMatrix.needsUpdate = true;
     if (barrels.instanceColor) barrels.instanceColor.needsUpdate = true;
     barrels.castShadow = true;
+    barrelBands.castShadow = true;
     barrels.computeBoundingSphere();
-    scene.add(barrels);
+    barrelBands.computeBoundingSphere();
+    scene.add(barrels, barrelBands);
 
-    this.humanDetailPropCount = lampCount * 2 + signCount * 2 + benchCount * 6 + barrelCount;
+    this.humanDetailPropCount = lampCount * 2 + signCount * 2 + benchCount * 6 + barrelCount + barrelBandCount;
     this.environmentDetailInstanceCount += this.humanDetailPropCount;
     this.assetUsage.add('map.infrastructure.street-furniture', lampCount + signCount + benchCount + barrelCount);
   }
@@ -2424,6 +2582,31 @@ varying vec3 vTerrainWorld;`,
     );
     boxes.name = 'regional-identity-boxes';
     spheres.name = 'regional-identity-spheres';
+    // 城区花箱独立材质渲染。它们常位于桥头和楼影中，共用通用道具材质时会被压成黑色轮廓。
+    const cityPlanterBases = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        emissive: 0x796348,
+        emissiveIntensity: 0.5,
+        roughness: 0.91,
+      }),
+      40,
+    );
+    const cityPlanterFoliage = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.5, 10, 7),
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        emissive: 0x385a2c,
+        emissiveIntensity: 0.58,
+        roughness: 0.93,
+      }),
+      100,
+    );
+    cityPlanterBases.name = 'city-planter-bases';
+    cityPlanterFoliage.name = 'city-planter-foliage';
     const nets = new THREE.InstancedMesh(
       new THREE.PlaneGeometry(1, 1, 6, 4),
       new THREE.MeshStandardMaterial({
@@ -2474,6 +2657,8 @@ varying vec3 vTerrainWorld;`,
     let boxCount = 0;
     let cylinderCount = 0;
     let sphereCount = 0;
+    let cityPlanterBaseCount = 0;
+    let cityPlanterFoliageCount = 0;
     let netCount = 0;
     const addBox = (
       x: number, y: number, z: number, sx: number, sy: number, sz: number, hex: number, yaw = 0,
@@ -2508,6 +2693,28 @@ varying vec3 vTerrainWorld;`,
       matrix.compose(position, rotation, scale);
       spheres.setMatrixAt(sphereCount, matrix);
       spheres.setColorAt(sphereCount++, color.setHex(hex));
+    };
+    const addCityPlanterBox = (
+      x: number, y: number, z: number, sx: number, sy: number, sz: number, hex: number, yaw: number,
+    ): void => {
+      if (cityPlanterBaseCount >= cityPlanterBases.count) return;
+      rotation.setFromAxisAngle(up, yaw);
+      position.set(x, y, z);
+      scale.set(sx, sy, sz);
+      matrix.compose(position, rotation, scale);
+      cityPlanterBases.setMatrixAt(cityPlanterBaseCount, matrix);
+      cityPlanterBases.setColorAt(cityPlanterBaseCount++, color.setHex(hex));
+    };
+    const addCityPlanterSphere = (
+      x: number, y: number, z: number, sx: number, sy: number, sz: number, hex: number,
+    ): void => {
+      if (cityPlanterFoliageCount >= cityPlanterFoliage.count) return;
+      rotation.identity();
+      position.set(x, y, z);
+      scale.set(sx, sy, sz);
+      matrix.compose(position, rotation, scale);
+      cityPlanterFoliage.setMatrixAt(cityPlanterFoliageCount, matrix);
+      cityPlanterFoliage.setColorAt(cityPlanterFoliageCount++, color.setHex(hex));
     };
     const decorFree = (x: number, z: number, radius: number): boolean => (
       this.pointFree(x, z, radius, WATER_Y + 0.2, 16) &&
@@ -2625,29 +2832,27 @@ varying vec3 vTerrainWorld;`,
 
     // 磐石城: 明亮石盆、分层绿植和花簇替代无法辨识的暗色方盒。
     let cityPlanterCount = 0;
-    const cityPlanterBoxStart = boxCount;
-    const cityPlanterSphereStart = sphereCount;
+    this.cityPlanterPositions.length = 0;
     for (let t = 0; t < 700 && cityPlanterCount < 18; t++) {
       const x = -60 + (rng() * 2 - 1) * 78;
       const z = -20 + (rng() * 2 - 1) * 72;
       if (regionAt(x, z)?.id !== 'stonegate' || this.inPlot(x, z, 1.9) || !decorFree(x, z, 0.95)) continue;
       const h = this.getHeight(x, z);
       const yaw = rng() * Math.PI * 2;
-      addBox(x, h + 0.24, z, 1.42, 0.48, 0.66, 0xb9a17e, yaw);
-      addBox(x, h + 0.5, z, 1.28, 0.12, 0.54, 0xd0b994, yaw);
-      addSphere(x - Math.cos(yaw) * 0.32, h + 0.8, z - Math.sin(yaw) * 0.32, 0.72, 0.52, 0.68, 0x648f46);
-      addSphere(x + Math.cos(yaw) * 0.32, h + 0.82, z + Math.sin(yaw) * 0.32, 0.66, 0.56, 0.64, 0x7aa455);
+      addCityPlanterBox(x, h + 0.24, z, 1.42, 0.48, 0.66, 0xc9b28a, yaw);
+      addCityPlanterBox(x, h + 0.5, z, 1.28, 0.12, 0.54, 0xe0c99f, yaw);
+      addCityPlanterSphere(x - Math.cos(yaw) * 0.32, h + 0.8, z - Math.sin(yaw) * 0.32, 0.72, 0.52, 0.68, 0x78a855);
+      addCityPlanterSphere(x + Math.cos(yaw) * 0.32, h + 0.82, z + Math.sin(yaw) * 0.32, 0.66, 0.56, 0.64, 0x8bb961);
       for (let flower = -1; flower <= 1; flower++) {
         const offset = flower * 0.3;
         const flowerX = x + Math.cos(yaw) * offset;
         const flowerZ = z + Math.sin(yaw) * offset;
         const flowerColor = flower < 0 ? 0xd88771 : flower > 0 ? 0x8fa5d2 : 0xe2c45f;
-        addSphere(flowerX, h + 1.12, flowerZ, 0.2, 0.24, 0.2, flowerColor);
+        addCityPlanterSphere(flowerX, h + 1.12, flowerZ, 0.2, 0.24, 0.2, flowerColor);
       }
+      this.cityPlanterPositions.push({ x, z });
       cityPlanterCount++;
     }
-    boxes.userData.cityPlanterRange = [cityPlanterBoxStart, boxCount];
-    spheres.userData.cityPlanterRange = [cityPlanterSphereStart, sphereCount];
 
     // 教堂广场: 环形石花坛与暖色花簇强化中心空间。
     const church = this.scenicSites.find((site) => site.kind === 'church');
@@ -2674,8 +2879,10 @@ varying vec3 vTerrainWorld;`,
     boxes.count = boxCount;
     cylinders.count = cylinderCount;
     spheres.count = sphereCount;
+    cityPlanterBases.count = cityPlanterBaseCount;
+    cityPlanterFoliage.count = cityPlanterFoliageCount;
     nets.count = netCount;
-    for (const mesh of [boxes, cylinders, spheres, nets]) {
+    for (const mesh of [boxes, cylinders, spheres, cityPlanterBases, cityPlanterFoliage, nets]) {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.castShadow = mesh !== nets;
       mesh.computeBoundingSphere();
@@ -2684,6 +2891,8 @@ varying vec3 vTerrainWorld;`,
     if (boxes.instanceColor) boxes.instanceColor.needsUpdate = true;
     if (cylinders.instanceColor) cylinders.instanceColor.needsUpdate = true;
     if (spheres.instanceColor) spheres.instanceColor.needsUpdate = true;
+    if (cityPlanterBases.instanceColor) cityPlanterBases.instanceColor.needsUpdate = true;
+    if (cityPlanterFoliage.instanceColor) cityPlanterFoliage.instanceColor.needsUpdate = true;
     mushroomStems.count = mushroomClusters;
     mushroomCaps.count = mushroomClusters;
     mushroomStems.instanceMatrix.needsUpdate = true;
@@ -2701,7 +2910,7 @@ varying vec3 vTerrainWorld;`,
     if (farmFurrows.instanceColor) farmFurrows.instanceColor.needsUpdate = true;
     farmFurrows.computeBoundingSphere();
     scene.add(farmFurrows);
-    this.regionalIdentityDetailCount = boxCount + cylinderCount + sphereCount + netCount + mushroomClusters * 2 + farmChannels;
+    this.regionalIdentityDetailCount = boxCount + cylinderCount + sphereCount + cityPlanterBaseCount + cityPlanterFoliageCount + netCount + mushroomClusters * 2 + farmChannels;
     this.environmentDetailInstanceCount += this.regionalIdentityDetailCount;
     this.assetUsage.add(
       'map.landmark.regional-detail',
@@ -3956,9 +4165,8 @@ varying vec3 vTerrainWorld;`,
     };
     const segments: WaterSegment[] = [];
     let crossingCount = 0;
-    const coveredByMainBridge = (x: number, z: number): boolean => [-50, 170].some((bridgeX) => (
-      Math.abs(x - bridgeX) <= 2.05 && Math.abs(z - riverZAt(bridgeX)) <= 14.1
-    ));
+    this.roadWaterCrossingPositions.length = 0;
+    const coveredByMainBridge = (x: number, z: number): boolean => insideMainBridgeDeck(x, z, 0.1);
 
     for (let pathIndex = 0; pathIndex < ROAD_PATHS.length; pathIndex++) {
       const path = ROAD_PATHS[pathIndex] as readonly (readonly [number, number])[];
@@ -3984,7 +4192,10 @@ varying vec3 vTerrainWorld;`,
             previousWasWater = false;
             continue;
           }
-          if (!previousWasWater) crossingCount++;
+          if (!previousWasWater) {
+            crossingCount++;
+            this.roadWaterCrossingPositions.push({ x, z });
+          }
           previousWasWater = true;
           const dx = x1 - x0;
           const dz = z1 - z0;
@@ -4004,22 +4215,25 @@ varying vec3 vTerrainWorld;`,
 
     const group = new THREE.Group();
     group.name = 'road-water-crossings';
-    const deckMat = new THREE.MeshStandardMaterial({ color: 0x73777a, roughness: 0.9, metalness: 0.04 });
+    const deckMat = new THREE.MeshBasicMaterial({ color: 0x9a8867, fog: true });
     const railMat = new THREE.MeshStandardMaterial({
-      color: 0x858d90,
-      emissive: 0x20282b,
-      emissiveIntensity: 0.24,
-      roughness: 0.72,
-      metalness: 0.24,
+      color: 0xc4baa2,
+      emissive: 0x80745f,
+      emissiveIntensity: 0.46,
+      roughness: 0.76,
+      metalness: 0.12,
     });
     const pierMat = new THREE.MeshStandardMaterial({ color: 0x62696b, roughness: 0.96, metalness: 0.02 });
-    applySurfaceAsset(deckMat, 'concrete', 2.8, 0.58);
     applySurfaceAsset(railMat, 'paintedMetal', 3.2, 0.64);
     applySurfaceAsset(pierMat, 'concrete', 2.6, 0.62);
 
     const deckGeometry = new THREE.BoxGeometry(1, 1, 1);
     const decks = new THREE.InstancedMesh(deckGeometry, deckMat, segments.length);
     const rails = new THREE.InstancedMesh(deckGeometry, railMat, segments.length * 2);
+    const railPosts = new THREE.InstancedMesh(deckGeometry, railMat, segments.length * 2);
+    decks.name = 'road-water-crossing-decks';
+    rails.name = 'road-water-crossing-top-rails';
+    railPosts.name = 'road-water-crossing-rail-posts';
     const pierSegments = segments.filter((segment) => segment.sequence % 4 === 1);
     const piers = new THREE.InstancedMesh(deckGeometry, pierMat, pierSegments.length * 2);
     const matrix = new THREE.Matrix4();
@@ -4055,10 +4269,14 @@ varying vec3 vTerrainWorld;`,
       for (const side of [-1, 1] as const) {
         const railX = segment.x + segment.sideX * side * (deckWidth * 0.5 - 0.12);
         const railZ = segment.z + segment.sideZ * side * (deckWidth * 0.5 - 0.12);
-        position.set(railX, ROAD_WATER_DECK_Y + 0.39, railZ);
-        scale.set(0.13, 0.78, segment.length);
+        position.set(railX, ROAD_WATER_DECK_Y + 0.67, railZ);
+        scale.set(0.13, 0.14, segment.length + 0.08);
         matrix.compose(position, quaternion, scale);
         rails.setMatrixAt(index * 2 + (side === -1 ? 0 : 1), matrix);
+        position.set(railX, ROAD_WATER_DECK_Y + 0.35, railZ);
+        scale.set(0.14, 0.7, 0.14);
+        matrix.compose(position, quaternion, scale);
+        railPosts.setMatrixAt(index * 2 + (side === -1 ? 0 : 1), matrix);
         addBoxCollider(
           railX, railZ, 0.13, segment.length, segment.yaw,
           ROAD_WATER_DECK_Y, ROAD_WATER_DECK_Y + 0.78, 'wall', false,
@@ -4081,7 +4299,7 @@ varying vec3 vTerrainWorld;`,
       }
     }
 
-    for (const mesh of [decks, rails, piers]) {
+    for (const mesh of [decks, rails, railPosts, piers]) {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -4089,25 +4307,31 @@ varying vec3 vTerrainWorld;`,
       group.add(mesh);
     }
     scene.add(group);
-    this.environmentDetailInstanceCount += segments.length * 3 + pierSegments.length * 2;
+    this.environmentDetailInstanceCount += segments.length * 4 + pierSegments.length * 2;
     this.assetUsage.add('map.infrastructure.bridge', crossingCount);
   }
 
   // 单座桥: 桥面(floor 可走) + 两端踏步 + 侧护栏 + 桥墩, ≤20 AABB
   private addBridge(scene: THREE.Scene, bx: number): void {
     const rzC = riverZAt(bx);
-    const z0 = rzC - 14;
-    const z1 = rzC + 14;
+    const z0 = rzC - MAIN_BRIDGE_HALF_LENGTH;
+    const z1 = rzC + MAIN_BRIDGE_HALF_LENGTH;
     const hBank0 = this.getHeight(bx, z0 - 3);
     const hBank1 = this.getHeight(bx, z1 + 3);
     // 桥面贴近较低岸 +0.5 (高岸下坡自然接上, 低岸 1~2 级踏步)
-    const deckY = Math.min(hBank0, hBank1) + 0.5;
-    const wood = new THREE.MeshLambertMaterial({ color: 0x8a6a42 });
+    const deckY = Math.max(ROAD_WATER_DECK_Y + 0.18, Math.min(hBank0, hBank1) + 0.5);
+    const wood = new THREE.MeshLambertMaterial({ color: 0x9b784b });
+    const approach = new THREE.MeshBasicMaterial({
+      color: 0x9a8867,
+      fog: true,
+      side: THREE.DoubleSide,
+    });
     const box = (
       tag: 'wall' | 'floor', x0: number, y0: number, z0_: number, x1: number, y1: number, z1_: number,
-      opts: { collider?: boolean; platform?: boolean } = {},
+      opts: { collider?: boolean; platform?: boolean; material?: THREE.Material; name?: string } = {},
     ): THREE.Mesh => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1_ - z0_), wood);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1_ - z0_), opts.material ?? wood);
+      if (opts.name) mesh.name = opts.name;
       mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0_ + z1_) / 2);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -4120,36 +4344,78 @@ varying vec3 vTerrainWorld;`,
       }
       return mesh;
     };
-    // 桥面(可走)
-    box('floor', bx - 2, deckY - 0.24, z0, bx + 2, deckY, z1, { platform: true });
-    // 两端踏步(从桥面降到岸, 每级 ≤0.45)
+    // 桥面宽度与道路主车辙一致，避免桥下残留第二层路面和桥头突然收窄。
+    box(
+      'floor', bx - MAIN_BRIDGE_HALF_WIDTH, deckY - 0.24, z0,
+      bx + MAIN_BRIDGE_HALF_WIDTH, deckY, z1,
+      { platform: true, name: 'main-bridge-deck' },
+    );
+    // 两端使用喇叭形连续坡面从 7.2m 路肩平滑收束到 5.4m 桥面，
+    // 避免方块坡台互相叠压后留下三角形草地和锯齿接缝。
     for (const [ze, dir] of [[z0, -1], [z1, 1]] as const) {
       const bankH = this.getHeight(bx, ze + dir * 3);
-      const drop = deckY - bankH;
-      if (drop > 0.4) {
-        const steps = Math.min(3, Math.ceil(drop / 0.42));
-        for (let i = 0; i < steps; i++) {
-          const top = deckY - ((i + 1) * drop) / (steps + 1);
-          const zc = ze + dir * (0.8 + i * 1.1);
-          box('floor', bx - 2, top - 0.2, zc - 0.6, bx + 2, top, zc + 0.6, { collider: false, platform: true });
-        }
+      const bankRoadY = bankH + 0.11;
+      const approachLength = 4.4;
+      const outerZ = ze + dir * approachLength;
+      const outerHalfWidth = 4.15;
+      const approachVertices = dir < 0
+        ? [
+          bx - MAIN_BRIDGE_HALF_WIDTH, deckY + 0.012, ze,
+          bx + outerHalfWidth, bankRoadY + 0.012, outerZ,
+          bx + MAIN_BRIDGE_HALF_WIDTH, deckY + 0.012, ze,
+          bx - MAIN_BRIDGE_HALF_WIDTH, deckY + 0.012, ze,
+          bx - outerHalfWidth, bankRoadY + 0.012, outerZ,
+          bx + outerHalfWidth, bankRoadY + 0.012, outerZ,
+        ]
+        : [
+          bx - MAIN_BRIDGE_HALF_WIDTH, deckY + 0.012, ze,
+          bx + MAIN_BRIDGE_HALF_WIDTH, deckY + 0.012, ze,
+          bx + outerHalfWidth, bankRoadY + 0.012, outerZ,
+          bx - MAIN_BRIDGE_HALF_WIDTH, deckY + 0.012, ze,
+          bx + outerHalfWidth, bankRoadY + 0.012, outerZ,
+          bx - outerHalfWidth, bankRoadY + 0.012, outerZ,
+        ];
+      const approachGeometry = new THREE.BufferGeometry();
+      approachGeometry.setAttribute('position', new THREE.Float32BufferAttribute(approachVertices, 3));
+      const approachNormals = new Float32Array(approachVertices.length);
+      for (let normalIndex = 1; normalIndex < approachNormals.length; normalIndex += 3) {
+        approachNormals[normalIndex] = 1;
+      }
+      approachGeometry.setAttribute('normal', new THREE.BufferAttribute(approachNormals, 3));
+      const approachMesh = new THREE.Mesh(approachGeometry, approach);
+      approachMesh.name = 'main-bridge-approach';
+      approachMesh.receiveShadow = true;
+      scene.add(approachMesh);
+      for (let i = 0; i < 4; i++) {
+        const near = i / 4;
+        const far = (i + 1) / 4;
+        const top = deckY + (bankRoadY - deckY) * far;
+        const nearDistance = near * approachLength;
+        const farDistance = far * approachLength;
+        const segmentMinZ = Math.min(ze + dir * nearDistance, ze + dir * farDistance);
+        const segmentMaxZ = Math.max(ze + dir * nearDistance, ze + dir * farDistance);
+        const halfWidth = MAIN_BRIDGE_HALF_WIDTH + (outerHalfWidth - MAIN_BRIDGE_HALF_WIDTH) * far;
+        this.platforms.push({
+          minX: bx - halfWidth, minZ: segmentMinZ,
+          maxX: bx + halfWidth, maxZ: segmentMaxZ, top,
+        });
       }
     }
     // 侧护栏(矮碰撞)
-    box('wall', bx - 2.12, deckY, z0, bx - 1.92, deckY + 0.85, z1);
-    box('wall', bx + 1.92, deckY, z0, bx + 2.12, deckY + 0.85, z1);
+    box('wall', bx - 2.7, deckY, z0, bx - 2.5, deckY + 0.85, z1, { name: 'main-bridge-rail' });
+    box('wall', bx + 2.5, deckY, z0, bx + 2.7, deckY + 0.85, z1, { name: 'main-bridge-rail' });
     // 装饰: 板面条纹(深色板缝) + 底托侧梁(无碰撞)
-    const woodDark = new THREE.MeshLambertMaterial({ color: 0x6a4e2e });
+    const woodDark = new THREE.MeshLambertMaterial({ color: 0x6f5435 });
     for (let z = z0 + 0.7; z < z1 - 0.5; z += 1.15) {
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.84, 0.02, 0.07), woodDark);
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(5.12, 0.02, 0.07), woodDark);
       stripe.position.set(bx, deckY + 0.012, z);
       scene.add(stripe);
     }
     const beamL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.3, z1 - z0), woodDark);
-    beamL.position.set(bx - 2.02, deckY - 0.4, (z0 + z1) / 2);
+    beamL.position.set(bx - 2.58, deckY - 0.4, (z0 + z1) / 2);
     scene.add(beamL);
     const beamR = beamL.clone();
-    beamR.position.x = bx + 2.02;
+    beamR.position.x = bx + 2.58;
     scene.add(beamR);
     // 桥墩(入水立柱)
     for (const pz of [z0 + 4.5, z1 - 4.5]) {

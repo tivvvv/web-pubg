@@ -188,6 +188,12 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.naturalStoryProps = String(game.world.naturalStoryPropCount);
   panel.dataset.humanDetailProps = String(game.world.humanDetailPropCount);
   panel.dataset.regionalIdentityDetails = String(game.world.regionalIdentityDetailCount);
+  panel.dataset.cityPlanterSamples = game.world.cityPlanterPositions.slice(0, 8)
+    .map(({ x, z }) => `${x.toFixed(1)},${z.toFixed(1)}`).join('|');
+  panel.dataset.streetBarrelSamples = game.world.streetBarrelPositions.slice(0, 8)
+    .map(({ x, z }) => `${x.toFixed(1)},${z.toFixed(1)}`).join('|');
+  panel.dataset.roadWaterCrossingSamples = game.world.roadWaterCrossingPositions
+    .map(({ x, z }) => `${x.toFixed(1)},${z.toFixed(1)}`).join('|');
   panel.dataset.treeCount = String(game.world.treeCount);
   panel.dataset.treeVariants = String(game.world.treeVariantCount);
   panel.dataset.treeSamples = game.world.cyls

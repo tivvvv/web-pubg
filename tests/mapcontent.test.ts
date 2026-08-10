@@ -83,6 +83,7 @@ describe('地图内容收口', () => {
     }
     expect(unsupported).toEqual([]);
     expect(world.roadWaterCrossingCount).toBeGreaterThanOrEqual(5);
+    expect(world.roadWaterCrossingPositions).toHaveLength(world.roadWaterCrossingCount);
     expect(world.roadWaterCrossingSegmentCount).toBeGreaterThan(40);
   });
 
