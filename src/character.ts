@@ -321,6 +321,145 @@ function shirtDetailMat(color: number): THREE.MeshStandardMaterial {
   return material;
 }
 
+const GHILLIE_MATERIALS = [0x4d6938, 0x617b42, 0x354f31, 0x7b7745].map((color) => {
+  const material = new THREE.MeshStandardMaterial({ color, roughness: 0.98, side: THREE.DoubleSide });
+  applySurfaceAsset(material, 'foliage', 4.8, 0.62);
+  return material;
+});
+const GHILLIE_CORD = new THREE.MeshStandardMaterial({ color: 0x766f48, roughness: 1 });
+applySurfaceAsset(GHILLIE_CORD, 'fabric', 7.5, 0.48);
+
+export function buildGhillieSuitModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'ghillie-suit';
+
+  // 七边形斗篷代替单块背板, 轮廓从肩部收紧并向下自然散开。
+  const cloak = new THREE.Mesh(new THREE.ConeGeometry(0.39, 0.78, 7, 3, true), GHILLIE_MATERIALS[2]);
+  cloak.name = 'ghillie-cloak';
+  cloak.position.set(0, 1.03, -0.015);
+  cloak.scale.z = 0.76;
+  cloak.castShadow = true;
+  group.add(cloak);
+
+  const mantle = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.31, 0.22, 10, 2), GHILLIE_MATERIALS[1]);
+  mantle.name = 'ghillie-mantle';
+  mantle.position.set(0, 1.31, -0.015);
+  mantle.scale.z = 0.78;
+  mantle.castShadow = true;
+  group.add(mantle);
+
+  const backclothGeometry = new THREE.BufferGeometry();
+  backclothGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.28, 1.35, -0.292,
+    0.28, 1.35, -0.292,
+    0.36, 0.69, -0.292,
+    -0.36, 0.69, -0.292,
+  ], 3));
+  backclothGeometry.setIndex([0, 2, 1, 0, 3, 2]);
+  backclothGeometry.computeVertexNormals();
+  const backcloth = new THREE.Mesh(backclothGeometry, GHILLIE_MATERIALS[2]);
+  backcloth.name = 'ghillie-backcloth';
+  backcloth.castShadow = true;
+  group.add(backcloth);
+
+  const hood = new THREE.Mesh(
+    new THREE.SphereGeometry(0.285, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.72),
+    GHILLIE_MATERIALS[0],
+  );
+  hood.name = 'ghillie-hood';
+  hood.position.set(0, 1.57, -0.035);
+  hood.scale.set(1.08, 1.02, 1.14);
+  hood.castShadow = true;
+  group.add(hood);
+
+  // 不等长的后摆和侧摆打破整齐底边, 避免像一块绿色纸板。
+  const ragGeometry = new THREE.BoxGeometry(0.105, 0.46, 0.035, 1, 3, 1);
+  for (let index = 0; index < 7; index++) {
+    const rag = new THREE.Mesh(ragGeometry, GHILLIE_MATERIALS[(index + 1) % GHILLIE_MATERIALS.length]);
+    rag.name = 'ghillie-rag';
+    rag.position.set((index - 3) * 0.085, 0.78 - (index % 3) * 0.025, -0.285 + Math.abs(index - 3) * 0.008);
+    rag.rotation.z = (index - 3) * 0.045;
+    rag.scale.y = 0.76 + (index % 4) * 0.09;
+    rag.castShadow = true;
+    group.add(rag);
+  }
+
+  const leafGeometry = new THREE.BufferGeometry();
+  leafGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0.17, 0,
+    -0.075, 0, 0,
+    0, -0.17, 0,
+    0.075, 0, 0,
+    0, 0, 0.035,
+  ], 3));
+  leafGeometry.setIndex([
+    0, 1, 4,
+    1, 2, 4,
+    2, 3, 4,
+    3, 0, 4,
+  ]);
+  leafGeometry.computeVertexNormals();
+  const clusters = [
+    [-0.29, 1.38, -0.17, -0.42], [-0.14, 1.4, -0.25, 0.18], [0.03, 1.39, -0.28, -0.12],
+    [0.18, 1.38, -0.24, 0.32], [0.3, 1.36, -0.16, 0.46],
+    [-0.27, 1.2, -0.27, -0.52], [-0.08, 1.22, -0.32, 0.28], [0.12, 1.19, -0.33, -0.25],
+    [0.28, 1.17, -0.25, 0.52], [-0.3, 0.98, -0.25, -0.44], [-0.13, 1.0, -0.34, 0.17],
+    [0.05, 0.96, -0.35, -0.2], [0.24, 0.95, -0.29, 0.46], [-0.27, 0.76, -0.23, -0.35],
+    [-0.08, 0.78, -0.34, 0.24], [0.13, 0.74, -0.32, -0.26], [0.29, 0.75, -0.22, 0.38],
+    [-0.19, 1.69, -0.08, -0.28], [0.0, 1.72, -0.17, 0.08], [0.19, 1.68, -0.08, 0.3],
+    [-0.29, 1.1, 0.11, -0.62], [0.29, 1.08, 0.1, 0.62],
+  ] as const;
+  for (let index = 0; index < clusters.length; index++) {
+    const [x, y, z, rotation] = clusters[index] as typeof clusters[number];
+    const leaf = new THREE.Mesh(leafGeometry, GHILLIE_MATERIALS[index % GHILLIE_MATERIALS.length]);
+    leaf.name = 'ghillie-foliage';
+    leaf.position.set(x, y, z);
+    leaf.rotation.set(0.12 + (index % 4) * 0.18, rotation + (index % 3 - 1) * 0.24, rotation * 0.72);
+    leaf.scale.set(0.82 + (index % 3) * 0.12, 0.82 + (index % 4) * 0.1, 1);
+    leaf.castShadow = true;
+    group.add(leaf);
+  }
+
+  // 麻绳丝条提供细节尺度, 近景时不再只有块面叶片。
+  const strandGeometry = new THREE.CylinderGeometry(0.008, 0.012, 0.38, 5);
+  for (let index = 0; index < 10; index++) {
+    const strand = new THREE.Mesh(strandGeometry, GHILLIE_CORD);
+    strand.name = 'ghillie-strand';
+    strand.position.set(-0.27 + (index % 6) * 0.108, 0.93 + Math.floor(index / 6) * 0.27, -0.325);
+    strand.rotation.z = ((index % 5) - 2) * 0.07;
+    strand.castShadow = true;
+    group.add(strand);
+  }
+  return group;
+}
+
+function buildGhillieLimbWrap(kind: 'arm' | 'leg', variant: number): THREE.Group {
+  const group = new THREE.Group();
+  group.name = kind === 'arm' ? 'ghillie-arm-wrap' : 'ghillie-leg-wrap';
+  const height = kind === 'arm' ? 0.31 : 0.43;
+  const radius = kind === 'arm' ? 0.105 : 0.13;
+  const sleeve = new THREE.Mesh(
+    new THREE.ConeGeometry(radius * 1.12, height, 7, 2, true),
+    GHILLIE_MATERIALS[(variant + 1) % GHILLIE_MATERIALS.length],
+  );
+  sleeve.position.y = kind === 'arm' ? -0.14 : -0.2;
+  sleeve.scale.z = 0.8;
+  sleeve.castShadow = true;
+  group.add(sleeve);
+  for (let index = 0; index < 3; index++) {
+    const strip = new THREE.Mesh(
+      new THREE.BoxGeometry(0.032, height * (0.54 + index * 0.08), 0.024),
+      GHILLIE_MATERIALS[(variant + index + 2) % GHILLIE_MATERIALS.length],
+    );
+    strip.name = 'ghillie-limb-strip';
+    strip.position.set((index - 1) * radius * 0.68, sleeve.position.y - height * 0.22, -radius * 0.78);
+    strip.rotation.z = (index - 1) * 0.12;
+    strip.castShadow = true;
+    group.add(strip);
+  }
+  return group;
+}
+
 export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.Group; parts: HumanParts } {
   const group = new THREE.Group();
   const inner = new THREE.Group();
@@ -587,6 +726,7 @@ export class Character {
   helmet: ArmorState | null = null;  // 已装备头盔(减头部伤害)
   vest: ArmorState | null = null;    // 已装备防弹衣(减身体伤害)
   pack: { level: PackLevel } | null = null; // 已装备背包(加负重)
+  ghillie = false; // 林中宝箱的唯一吉利服, 提供外观和侦察距离减益
 
   swingT = 0;          // 挥击动画进度(1→0)
   swingSide = 1;       // 出拳侧(1 右 / -1 左, 每次挥击交替)
@@ -639,6 +779,7 @@ export class Character {
   private helmetMesh: THREE.Group | null = null;
   private vestMesh: THREE.Group | null = null;
   private packMesh: THREE.Group | null = null;
+  private ghillieMesh: THREE.Group | null = null;
   private actionF = 0;
   private actionDuration = 0;
   private visualAction: CharacterAction | 'revive' | null = null;
@@ -663,6 +804,18 @@ export class Character {
 
   hasGun(): boolean {
     return this.guns[0] !== null || this.guns[1] !== null || this.guns[2] !== null;
+  }
+
+  equipGhillie(): boolean {
+    if (this.ghillie) return false;
+    this.ghillie = true;
+    this.ghillieMesh = buildGhillieSuitModel();
+    this.parts.body.add(this.ghillieMesh);
+    this.parts.armL.add(buildGhillieLimbWrap('arm', 0));
+    this.parts.armR.add(buildGhillieLimbWrap('arm', 1));
+    this.parts.legL.add(buildGhillieLimbWrap('leg', 2));
+    this.parts.legR.add(buildGhillieLimbWrap('leg', 3));
+    return true;
   }
 
   // 品级最高的枪所在栏位(bot 用), 无枪返回 -1

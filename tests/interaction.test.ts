@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   chooseInteractionCandidate, doorwayOccupied, equipmentComparison, interactionDistanceText,
+  interactionSelfOcclusionTolerance,
   interactionScore, isAutomaticPickupKind, reviveCancellationReason, type InteractionCandidate,
 } from '../src/interaction';
 
@@ -64,6 +65,12 @@ describe('交互目标选择', () => {
   it('提示距离统一为一位小数并钳制负值', () => {
     expect(interactionDistanceText(1.26)).toBe('1.3 米');
     expect(interactionDistanceText(-1)).toBe('0.0 米');
+  });
+
+  it('宝箱允许射线命中自身前表面但不放宽其他物体的隔墙交互', () => {
+    expect(interactionSelfOcclusionTolerance('treasure')).toBe(1.05);
+    expect(interactionSelfOcclusionTolerance('treasure')).toBeGreaterThan(interactionSelfOcclusionTolerance('door'));
+    expect(interactionSelfOcclusionTolerance('item')).toBe(0.32);
   });
 
   it('自动拾取只包含消耗品且不自动装备武器护具和背包', () => {

@@ -26,7 +26,7 @@ import {
   smoothCameraDistance, type CameraShakeSample,
 } from './camera';
 import {
-  chooseInteractionCandidate, equipmentComparison, isAutomaticPickupKind,
+  chooseInteractionCandidate, equipmentComparison, interactionSelfOcclusionTolerance, isAutomaticPickupKind,
   type ComparisonTone, type InteractionCandidate,
   type InteractionKind,
 } from './interaction';
@@ -34,6 +34,7 @@ import type { Destructible } from './buildings';
 import type { Crate } from './airdrop';
 import type { DeathCrate } from './deathcrate';
 import type { LootItem } from './loot';
+import type { ForestTreasure } from './wildlife';
 import { resolveMovementDirection, wadingSpeedMultiplier } from './movement';
 
 const BASE_FOV = 75;
@@ -50,7 +51,7 @@ export function updateSwimFireLatch(latched: boolean, swimming: boolean, fireHel
   return fireHeld ? latched || swimming : false;
 }
 
-type InteractionTarget = LootItem | Destructible | Vehicle | Crate | DeathCrate | Character;
+type InteractionTarget = LootItem | Destructible | Vehicle | Crate | ForestTreasure | DeathCrate | Character;
 
 export class PlayerController {
   readonly char: Character;
@@ -515,6 +516,7 @@ export class PlayerController {
     game.promptDoor = null;
     game.promptVehicle = null;
     game.promptCrate = null;
+    game.promptTreasure = null;
     game.promptDeathCrate = null;
     game.promptAlly = null;
     if (c.reviveTarget || c.knocked || c.swimming || this.descent || this.driving || this.interactionLockT > 0) {
@@ -571,6 +573,11 @@ export class PlayerController {
       } else if (kind === 'airdrop') {
         const crate = target as Crate;
         if (crate.state === 'landed') push(kind, crate, crate.pos.x, crate.pos.y + 0.55, crate.pos.z, 2.9, -0.02, 0.08);
+      } else if (kind === 'treasure') {
+        const treasure = target as ForestTreasure;
+        if (!treasure.opened) push(
+          kind, treasure, treasure.pos.x, treasure.pos.y + 0.55, treasure.pos.z, 2.9, -0.02, 0.1,
+        );
       } else if (kind === 'deathcrate') {
         const crate = target as DeathCrate;
         if (crate.active) {
@@ -597,6 +604,8 @@ export class PlayerController {
     if (ally) pushTarget('ally', ally);
     const crate = game.airdrop.nearestClosedCrate(c.pos.x, c.pos.y, c.pos.z, 3.15);
     if (crate) pushTarget('airdrop', crate);
+    const treasure = game.wildlife.nearestClosedTreasure(c.pos.x, c.pos.y, c.pos.z, 3.15);
+    if (treasure) pushTarget('treasure', treasure);
     const deathCrate = game.deathCrates.nearest(c.pos.x, c.pos.y, c.pos.z, 3.15);
     if (deathCrate) pushTarget('deathcrate', deathCrate);
     const vehicle = game.vehicles.nearest(c.pos.x, c.pos.z, 3.05);
@@ -645,6 +654,12 @@ export class PlayerController {
       const context = contextualDetail();
       game.promptCrate = selected.target as Crate;
       game.hud.setPickupPrompt('按 F 打开空投', 'airdrop', context.detail, context.tone);
+      return;
+    }
+    if (selected.kind === 'treasure') {
+      const context = contextualDetail('吉利服 · 老虎守护', 'positive');
+      game.promptTreasure = selected.target as ForestTreasure;
+      game.hud.setPickupPrompt('按 F 打开林中宝箱', 'airdrop', context.detail, context.tone);
       return;
     }
     if (selected.kind === 'deathcrate') {
@@ -764,7 +779,10 @@ export class PlayerController {
     if (game.world.raycastStatics(this.interactionOrigin, this.camProbeDir, distance, game.staticHit)) {
       blockedAt = Math.min(blockedAt, game.staticHit.t);
     }
-    return blockedAt >= distance - (kind === 'door' ? 0.45 : 0.32);
+    // 宝箱自身是有体积的静态碰撞体, 射线会先命中箱体前表面。
+    // 只对 treasure 放宽至箱体半径, 墙后隔物拾取仍会被正常拦截。
+    const selfOcclusionTolerance = interactionSelfOcclusionTolerance(kind);
+    return blockedAt >= distance - selfOcclusionTolerance;
   }
 
   private nearestVisibleAutoPickup(game: Game): LootItem | null {

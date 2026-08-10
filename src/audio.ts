@@ -567,6 +567,25 @@ export class AudioSys {
     }
   }
 
+  // 老虎近身扑咬: 短促低频吼声与重击叠加, 并按距离和遮挡衰减。
+  tigerAttack(dist: number, pan: number, occluded = false): void {
+    if (!this.ctx) return;
+    const d = Math.max(0, dist);
+    if (d >= 18) return;
+    const edge = Math.pow(1 - d / 18, 1.35);
+    const gain = edge / (1 + Math.pow(d / 5.2, 1.8)) * (occluded ? 0.34 : 1);
+    if (gain <= 0.001) return;
+    const lowpass = occluded ? 760 : Math.round(2200 - Math.min(1, d / 18) * 1200);
+    this.thump(0.34 * gain, pan, 118, 48, 0.16);
+    this.noiseBurst(0.16 * gain, pan, lowpass, 0.62, 0.2);
+    this.blip(150, 72, 0.18, 0.14 * gain, 'sawtooth');
+    if (this.publishTestState) {
+      document.body.dataset.lastSpatialSound = 'tiger';
+      document.body.dataset.lastSpatialGain = gain.toFixed(3);
+      document.body.dataset.lastSpatialLowpass = String(lowpass);
+    }
+  }
+
   motionWhoosh(dist: number, pan: number, kind: 'throw' | 'vault', occluded = false): void {
     const profile = motionWhooshDistanceProfile(dist, occluded);
     if (profile.gain <= 0.001) return;

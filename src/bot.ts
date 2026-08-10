@@ -1127,6 +1127,11 @@ export class BotController {
       }
       // 灌木隐蔽: 目标在灌木足迹内按姿态压缩可侦距离; 开火暴露 2s 恢复常规
       let detect = this.difficulty.detectionDistance;
+      // 吉利服在未开火时压缩视觉侦察距离。移动仍会扰动伪装，静止或低姿态收益最大。
+      if (other.ghillie && game.nowSec - other.lastShotT > 2) {
+        const movementScale = other.speed2d < 0.3 ? 0.52 : other.speed2d < 2.2 ? 0.66 : 0.78;
+        detect *= movementScale;
+      }
       if (game.world.inBush(other.pos.x, other.pos.z) && game.nowSec - other.lastShotT > 2) {
         const perceptionScale = this.difficulty.detectionDistance / 88;
         if (other.stance === 'prone') detect = Math.min(detect, (other.speed2d < 0.3 ? 12 : 40) * perceptionScale);

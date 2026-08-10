@@ -1,7 +1,7 @@
 import { clamp } from './utils';
 import type { LootKind } from './types';
 
-export type InteractionKind = 'ally' | 'door' | 'airdrop' | 'deathcrate' | 'vehicle' | 'item';
+export type InteractionKind = 'ally' | 'door' | 'airdrop' | 'treasure' | 'deathcrate' | 'vehicle' | 'item';
 export type ComparisonTone = 'positive' | 'neutral' | 'warning';
 export type ReviveCancelReason = 'target' | 'incapacitated' | 'movement' | 'range';
 
@@ -18,6 +18,12 @@ export function isAutomaticPickupKind(kind: LootKind): boolean {
 
 export function interactionDistanceText(distance: number): string {
   return `${Math.max(0, distance).toFixed(1)} 米`;
+}
+
+export function interactionSelfOcclusionTolerance(kind: InteractionKind): number {
+  if (kind === 'door') return 0.45;
+  if (kind === 'treasure') return 1.05;
+  return 0.32;
 }
 
 export function reviveCancellationReason(input: {

@@ -85,6 +85,9 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=wildlife&kind=cow',
   'scenario=wildlife&kind=fish',
   'scenario=wildlife&kind=bird',
+  'scenario=wildlife&kind=tiger',
+  'scenario=wildlife&kind=treasure',
+  'scenario=wildlife&kind=ghillie',
   'scenario=maptour&region=stonegate',
   'scenario=maptour&region=ironring',
   'scenario=maptour&region=sunfield',
@@ -122,7 +125,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   zone: '毒圈回归: 圈外持续受伤, 进入圈内后立即停止伤害',
   endgame: '结算回归: 淘汰最后一名敌人后进入胜利界面',
   defeat: '失败回归: 玩家被淘汰后进入失败界面并可重新开始',
-  wildlife: '生态回归: 检查牛羊, 水下鱼群和飞鸟的模型, 活动范围与命中死亡',
+  wildlife: '生态回归: 检查牛羊, 水下鱼群, 飞鸟和守护老虎的模型, 活动范围与命中死亡',
   maptour: '地图巡查: 使用 region=区域 id 依次检查六区主地标, 补给点和转移路线',
 };
 
@@ -212,9 +215,15 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.plazaDetails = String(game.world.plazaDetailCount);
   panel.dataset.fountainDetails = String(game.world.fountainDetailCount);
   panel.dataset.religiousCrosses = String(game.world.religiousCrossCount);
-  panel.dataset.wildlifeCounts = (['cow', 'sheep', 'fish', 'bird'] as const)
+  panel.dataset.wildlifeCounts = (['cow', 'sheep', 'fish', 'bird', 'tiger'] as const)
     .map((kind) => `${kind}:${game.wildlife.count(kind, true)}/${game.wildlife.count(kind)}`)
     .join(',');
+  panel.dataset.forestTreasure = [
+    game.wildlife.treasure.pos.x,
+    game.wildlife.treasure.pos.y,
+    game.wildlife.treasure.pos.z,
+  ].map((value) => value.toFixed(2)).join(',');
+  panel.dataset.forestTreasureOpened = String(game.wildlife.treasure.opened);
   const churchSite = game.world.landmarks.find((site) => site.kind === 'church');
   panel.dataset.churchSite = churchSite
     ? `${churchSite.x.toFixed(2)},${churchSite.z.toFixed(2)}`
@@ -1962,14 +1971,43 @@ function setupDefeat(game: Game): void {
 function setupWildlife(game: Game): void {
   const params = new URLSearchParams(window.location.search);
   const rawKind = params.get('kind');
-  const kind: WildlifeKind = rawKind === 'sheep' || rawKind === 'fish' || rawKind === 'bird' ? rawKind : 'cow';
+  if (rawKind === 'ghillie' || rawKind === 'treasure') {
+    const player = game.playerCtl;
+    if (!player) return;
+    const treasure = game.wildlife.treasure;
+    let spawnX = treasure.pos.x;
+    const viewDistance = rawKind === 'treasure' ? 2.25 : 5.2;
+    let spawnZ = treasure.pos.z - viewDistance;
+    for (let step = 0; step < 20; step++) {
+      const angle = step / 20 * Math.PI * 2;
+      const x = treasure.pos.x + Math.sin(angle) * viewDistance;
+      const z = treasure.pos.z + Math.cos(angle) * viewDistance;
+      if (!game.world.pointFree(x, z, 0.7, WATER_Y + 0.3, 18)) continue;
+      spawnX = x;
+      spawnZ = z;
+      break;
+    }
+    setGroundPlayer(game, spawnX, spawnZ);
+    if (rawKind === 'ghillie') player.char.equipGhillie();
+    player.yaw = Math.atan2(treasure.pos.x - spawnX, treasure.pos.z - spawnZ);
+    player.pitch = 0.02;
+    for (const entity of game.wildlife.entities) {
+      if (entity.kind !== 'tiger') continue;
+      entity.alive = false;
+      entity.group.visible = false;
+    }
+    return;
+  }
+  const kind: WildlifeKind = rawKind === 'sheep' || rawKind === 'fish' || rawKind === 'bird' || rawKind === 'tiger'
+    ? rawKind
+    : 'cow';
   const candidates = game.wildlife.entities.filter((entity) => entity.kind === kind && entity.alive);
   const target = candidates[kind === 'bird' ? Math.min(4, candidates.length - 1) : 0];
   const player = game.playerCtl;
   if (!target || !player) return;
   if (kind === 'bird') target.speed = 0;
   const targetPosition = target.group.position;
-  const overlapTest = params.get('overlap') === '1' && (kind === 'cow' || kind === 'sheep');
+  const overlapTest = params.get('overlap') === '1' && (kind === 'cow' || kind === 'sheep' || kind === 'tiger');
   let spawnX = targetPosition.x;
   let spawnZ = overlapTest ? targetPosition.z : targetPosition.z - (kind === 'bird' ? 9 : 6.5);
   let found = false;

@@ -103,7 +103,10 @@ import {
 import { MUZZLE_SCALE } from './weaponmodels';
 import { buildTransportPlane } from './planemodel';
 import { WATER_Y, World, type StaticHit } from './world';
-import { WildlifeSystem, wildlifeLabel } from './wildlife';
+import {
+  WildlifeSystem, wildlifeLabel,
+  type ForestTreasure, type WildlifeCharacterBody, type WildlifeEntity,
+} from './wildlife';
 import { Zone } from './zone';
 import { regionOrWilderness } from './regions';
 import {
@@ -186,6 +189,7 @@ export class Game {
   promptDoor: Destructible | null = null; // 当前可开/关的门提示(优先于武器当看得更正)
   promptVehicle: Vehicle | null = null;   // 当前可驾驶载具提示
   promptCrate: Crate | null = null;       // 当前可开启的空投提示
+  promptTreasure: ForestTreasure | null = null; // 当前可开启的林中宝箱
   promptDeathCrate: DeathCrate | null = null; // 当前可搜索的死亡盒
   promptAlly: Character | null = null;    // 当前可救援的倒地队友提示
   backpackOpen = false;
@@ -1007,6 +1011,7 @@ export class Game {
     this.promptItem = null;
     this.promptDoor = null;
     this.promptCrate = null;
+    this.promptTreasure = null;
     this.promptDeathCrate = null;
     this.promptAlly = null;
     this.hud.setKnocked(false);
@@ -1132,6 +1137,11 @@ export class Game {
     let markerLift = 1.1;
     if (this.promptItem) marked = this.promptItem.group.position;
     else if (this.promptDeathCrate) marked = this.promptDeathCrate.group.position;
+    else if (this.promptTreasure) {
+      marked = this.promptTreasure.pos;
+      markerColor = 0x9fe071;
+      markerLift = 1.35;
+    }
     else if (this.promptCrate) {
       marked = this.promptCrate.pos;
       markerColor = 0xffcf58;
@@ -1237,7 +1247,7 @@ export class Game {
     this.loot.update(dt);
     this.deathCrates.update(dt);
     this.effects.update(dt);
-    this.wildlife.update(dt);
+    this.wildlife.update(dt, this.chars, (target, damage, tiger) => this.handleTigerAttack(target, damage, tiger));
     this.wildlife.resolveVehicleCollisions(this.vehicles.list);
     this.grenades.update(dt, this);
     this.vehicles.update(dt, this);
@@ -1880,7 +1890,26 @@ export class Game {
 
   // ---- 伤害/击杀 ----
 
-  damageChar(victim: Character, dmg: number, head: boolean, attacker: Character | null, via?: string, ignoreArmor = false): number {
+  private handleTigerAttack(target: WildlifeCharacterBody, damage: number, tiger: WildlifeEntity): void {
+    const victim = target as Character;
+    if (!victim.alive) return;
+    this.tmpEnd.set(victim.pos.x, victim.pos.y + victim.chestHeight(), victim.pos.z);
+    this.effects.impactBlood(this.tmpEnd);
+    this.soundAt(tiger.group.position, (dist, pan, occluded) => {
+      this.audio.tigerAttack(dist, pan, occluded);
+    }, 18);
+    this.damageChar(victim, damage, false, null, '老虎', false, tiger.group.position);
+  }
+
+  damageChar(
+    victim: Character,
+    dmg: number,
+    head: boolean,
+    attacker: Character | null,
+    via?: string,
+    ignoreArmor = false,
+    source?: THREE.Vector3,
+  ): number {
     if (!victim.alive) return 0;
     // 护具减伤: 子弹/近战有效; 爆炸与毒圈无视护甲
     if (!ignoreArmor) {
@@ -1910,11 +1939,12 @@ export class Game {
         this.squadIntel.report(attacker, victim.id, this.now);
       }
     }
-    victim.lastHitX = attacker ? attacker.pos.x : 0;
-    victim.lastHitZ = attacker ? attacker.pos.z : 0;
+    victim.lastHitX = attacker?.pos.x ?? source?.x ?? 0;
+    victim.lastHitZ = attacker?.pos.z ?? source?.z ?? 0;
     if (victim.isPlayer && dmg > 0) this.cancelHeal('受伤打断恢复'); // 新增: 受伤取消读条
-    if (victim.isPlayer && attacker) {
-      const ang = Math.atan2(attacker.pos.x - victim.pos.x, attacker.pos.z - victim.pos.z);
+    const damageSource = attacker?.pos ?? source;
+    if (victim.isPlayer && damageSource) {
+      const ang = Math.atan2(damageSource.x - victim.pos.x, damageSource.z - victim.pos.z);
       const rel = ang - (this.player?.yaw ?? 0);
       this.hud.damageFrom(-rel);
       this.audio.hit(false);
@@ -2058,6 +2088,11 @@ export class Game {
     this.hud.setPickupPrompt(null);
     this.hud.resetFeedback();
     this.promptDoor = null;
+    this.promptCrate = null;
+    this.promptTreasure = null;
+    this.promptDeathCrate = null;
+    this.promptAlly = null;
+    this.promptItem = null;
     this.hud.setHealCast(-1);
     this.input.exitLock();
   }
@@ -2079,7 +2114,7 @@ export class Game {
       return;
     }
     if (this.healT > 0 && (
-      this.promptDoor || this.promptCrate || this.promptDeathCrate || this.promptAlly || this.promptItem
+      this.promptDoor || this.promptCrate || this.promptTreasure || this.promptDeathCrate || this.promptAlly || this.promptItem
     )) {
       this.cancelHeal('恢复被打断');
     }
@@ -2100,6 +2135,20 @@ export class Game {
         x: crate.pos.x, y: crate.pos.y + 0.55, z: crate.pos.z,
       }, 'pickup', 0.52);
       this.promptCrate = null;
+      this.hud.setPickupPrompt(null);
+      return;
+    }
+    const treasure = this.promptTreasure;
+    if (treasure) {
+      if (this.wildlife.openTreasure()) {
+        player.char.equipGhillie();
+        this.hud.toast('获得吉利服, 静止时更难被敌人发现', 'success');
+        this.audio.pickup();
+        player.beginInteractionFeedback(this, {
+          x: treasure.pos.x, y: treasure.pos.y + 0.55, z: treasure.pos.z,
+        }, 'pickup', 0.58);
+      }
+      this.promptTreasure = null;
       this.hud.setPickupPrompt(null);
       return;
     }

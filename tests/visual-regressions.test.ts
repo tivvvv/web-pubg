@@ -11,6 +11,26 @@ import { SUN_SHADOW_MAP_SIZE } from '../src/world';
 import { squadNameTagPresentation, weaponPickupSlot } from '../src/game';
 
 describe('画面回归保护', () => {
+  it('吉利服只能装备一次且具备完整的斗篷和枝叶轮廓', () => {
+    const character = new Character('吉利服测试', true, 0x335577);
+    expect(character.equipGhillie()).toBe(true);
+    expect(character.ghillie).toBe(true);
+    const suit = character.parts.body.getObjectByName('ghillie-suit');
+    expect(suit).toBeDefined();
+    expect(suit?.getObjectByName('ghillie-cloak')).toBeDefined();
+    expect(suit?.getObjectByName('ghillie-hood')).toBeDefined();
+    expect(suit?.getObjectByName('ghillie-backcloth')).toBeDefined();
+    expect(suit?.children.filter((child) => child.name === 'ghillie-foliage')).toHaveLength(22);
+    expect(suit?.children.filter((child) => child.name === 'ghillie-rag')).toHaveLength(7);
+    expect(suit?.children.filter((child) => child.name === 'ghillie-strand')).toHaveLength(10);
+    expect(character.equipGhillie()).toBe(false);
+    expect(character.parts.body.children.filter((child) => child.name === 'ghillie-suit')).toHaveLength(1);
+    expect(character.parts.armL.getObjectByName('ghillie-arm-wrap')).toBeDefined();
+    expect(character.parts.armR.getObjectByName('ghillie-arm-wrap')).toBeDefined();
+    expect(character.parts.legL.getObjectByName('ghillie-leg-wrap')).toBeDefined();
+    expect(character.parts.legR.getObjectByName('ghillie-leg-wrap')).toBeDefined();
+  });
+
   it('角色近景具有独立五官和衣物结构线', () => {
     const character = new Character('角色细节测试', false, 0x335577);
 
