@@ -199,6 +199,26 @@ describe('画面回归保护', () => {
     expect(character.parts.inner.rotation.y).toBeCloseTo(0, 5);
   });
 
+  it('蹲姿双腿折叠在身体下方且不会沉入楼梯踏步', () => {
+    const character = new Character('蹲姿楼梯测试', false, 0x335577);
+    character.setStance('crouch');
+    character.stanceF = 1;
+    character.speed2d = 2.1;
+    character.syncModel(1 / 60, true);
+    character.group.updateMatrixWorld(true);
+
+    const leftBoot = character.group.getObjectByName('boot-left');
+    const rightBoot = character.group.getObjectByName('boot-right');
+    expect(leftBoot).toBeDefined();
+    expect(rightBoot).toBeDefined();
+    if (!leftBoot || !rightBoot) return;
+    const leftPos = leftBoot.getWorldPosition(new THREE.Vector3());
+    const rightPos = rightBoot.getWorldPosition(new THREE.Vector3());
+    expect(Math.max(Math.abs(leftPos.z), Math.abs(rightPos.z))).toBeLessThan(0.22);
+    expect(Math.min(leftPos.y, rightPos.y)).toBeGreaterThan(-0.04);
+    expect(character.parts.inner.position.y).toBeGreaterThan(-0.42);
+  });
+
   it('拾取和救援期间收起武器并在动作退出后恢复', () => {
     const character = new Character('持枪交互测试', false, 0x335577);
     character.guns[0] = { def: WEAPONS.rifle, mag: 30, att: emptyAttachments() };

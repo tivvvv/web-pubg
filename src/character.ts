@@ -610,6 +610,7 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
     shin.castShadow = true;
     knee.add(shin);
     const boot = new THREE.Mesh(GEO.boot, MAT.boot);
+    boot.name = side < 0 ? 'boot-left' : 'boot-right';
     boot.position.set(0, -0.405, 0.035);
     knee.add(boot);
     // 鞋底(深色伪 AO 接地感)
@@ -1366,15 +1367,18 @@ export class Character {
       bob = gait.bob;
     }
     // 蹲: 腿前弯; 趴: 腿顺直
-    const legBend = -1.05 * fC * (1 - fP);
+    // 蹲姿使用“髋向前, 膝向后”的折叠链保持鞋底落在身体正下方。
+    // 旧姿态只有髋部前弯、膝盖补偿不足，双脚会伸进前方的楼梯立板，
+    // 同时模型根下沉过多，导致腿和腰一起埋进踏步。
+    const legBend = -1.0 * fC * (1 - fP);
     // 使用完整欧拉角复位，避免自由落体的侧向展开角残留到落地、站立和跑步姿态。
     p.legL.rotation.set(legSwing + legBend, 0, 0);
     p.legR.rotation.set(gait.legR + legBend, 0, 0);
-    p.kneeL.rotation.x = gait.kneeL + fC * 0.5 * (1 - fP);
-    p.kneeR.rotation.x = gait.kneeR + fC * 0.5 * (1 - fP);
+    p.kneeL.rotation.x = gait.kneeL + fC * 2.2 * (1 - fP);
+    p.kneeR.rotation.x = gait.kneeR + fC * 2.2 * (1 - fP);
     // 身体下沉(蹲 -0.53 / 趴 +0.30 由旋转完成趴倒)与旋转(趴 = 面朝下平躺, 部分随瞄准俯仰)
     p.inner.position.x = gait.lateral * (1 - fP);
-    p.inner.position.y = bob - meleeBodyDip - 0.53 * fC + 0.83 * fP;
+    p.inner.position.y = bob - meleeBodyDip - 0.36 * fC + 0.66 * fP;
     // 移动前倾(速度越大越前倾, 趴下不再加)
     const lean = Math.min(1, this.speed2d / 6.6) * 0.18 * (1 - fP);
     p.inner.rotation.x = 0.2 * fC + lean + meleeBodyLean + fP * (Math.PI / 2 - 0.2 - clamp(this.aimPitch, -0.5, 0.5) * 0.6);

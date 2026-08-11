@@ -31,6 +31,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=stairs&slice=1&view=facade',
   'scenario=stairs&slice=1&view=interior',
   'scenario=stairs&traverse=up&arch=cottage2',
+  'scenario=stairs&traverse=up&arch=cottage2&stance=crouch',
   'scenario=stairs&traverse=up&arch=terrace',
   'scenario=stairs&traverse=up&arch=apartment&plot=last',
   'scenario=stairs&traverse=up&arch=apartment&flight=2',
@@ -1179,6 +1180,10 @@ function setupStairs(game: Game): void {
       }
       player.yaw = secondFlight ? 0 : Math.PI;
       player.pitch = 0.03;
+      if (params.get('stance') === 'crouch') {
+        player.char.setStance('crouch');
+        player.char.stanceF = 1;
+      }
       game.input.keys.add('KeyW');
       window.setTimeout(() => game.input.keys.delete('KeyW'), 1500);
     }
