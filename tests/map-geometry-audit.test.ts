@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import type { AabbCollider } from '../src/types';
-import { riverZAt, World } from '../src/world';
+import { ROAD_PATHS, riverZAt, WATER_Y, World } from '../src/world';
 import { doorLeafSegment } from '../src/buildings';
 import { regionAt } from '../src/regions';
 
@@ -590,6 +590,21 @@ describe('地图与建筑终极几何巡检', () => {
       expect(material.color.r + material.color.g + material.color.b).toBeGreaterThan(0.7);
       expect(material.emissiveIntensity).toBeGreaterThanOrEqual(0.4);
     }
+
+    // 教堂外围旧版“黑盒加三个黑球”不得复用通用区域实例。
+    const gardenPlanters = scene.getObjectsByProperty('name', 'church-garden-planter') as THREE.Group[];
+    expect(gardenPlanters).toHaveLength(world.churchGardenPlanterCount);
+    expect(gardenPlanters.length).toBeGreaterThanOrEqual(4);
+    for (const planter of gardenPlanters) {
+      const stone = planter.getObjectByName('church-garden-planter-stone') as THREE.Mesh | undefined;
+      const soil = planter.getObjectByName('church-garden-planter-soil') as THREE.Mesh | undefined;
+      expect(stone).toBeDefined();
+      expect(soil).toBeDefined();
+      expect(planter.children.filter((child) => child.name === 'church-garden-planter-bloom')).toHaveLength(5);
+      const material = stone?.material as THREE.MeshStandardMaterial;
+      expect(material.color.r + material.color.g + material.color.b).toBeGreaterThan(1.5);
+      expect(material.emissiveIntensity).toBeGreaterThanOrEqual(0.35);
+    }
   });
 
   it('路牌和金属桶在阴影中仍有可辨识颜色及结构环', () => {
@@ -623,14 +638,14 @@ describe('地图与建筑终极几何巡检', () => {
     expect(furrows).toBeDefined();
     expect(rails).toBeDefined();
     expect(road).toBeDefined();
-    expect(roadVerge).toBeDefined();
-    if (!furrows || !rails || !road || !roadVerge) return;
+    expect(roadVerge).toBeUndefined();
+    if (!furrows || !rails || !road) return;
 
     const trackMaterial = road.material as THREE.MeshBasicMaterial;
-    const vergeMaterial = roadVerge.material as THREE.MeshBasicMaterial;
     expect(trackMaterial).toBeInstanceOf(THREE.MeshBasicMaterial);
-    expect(vergeMaterial).toBeInstanceOf(THREE.MeshBasicMaterial);
-    expect(trackMaterial.color.getHex()).toBe(vergeMaterial.color.getHex());
+    expect(trackMaterial.color.getHex()).toBe(0x948267);
+    expect(road.userData.roadSurfaceLift).toBeGreaterThanOrEqual(0.028);
+    expect(road.userData.roadSurfaceLift).toBeLessThanOrEqual(0.04);
 
     expect(world.farmFurrowCount).toBeGreaterThanOrEqual(24);
     expect(world.farmFenceRailCount).toBeGreaterThanOrEqual(120);
@@ -688,12 +703,37 @@ describe('地图与建筑终极几何巡检', () => {
     expect(patchSegments).toBeGreaterThanOrEqual(16);
     const positions = road.geometry.getAttribute('position') as THREE.BufferAttribute;
     for (let index = 0; index < positions.count; index += 3) {
+      const ax = positions.getX(index);
+      const az = positions.getZ(index);
+      const bx = positions.getX(index + 1);
+      const bz = positions.getZ(index + 1);
+      const cx = positions.getX(index + 2);
+      const cz = positions.getZ(index + 2);
+      const signedArea = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+      expect(signedArea, `道路三角面 ${index / 3} 发生翻面`).toBeLessThan(-0.000001);
       const centerX = (positions.getX(index) + positions.getX(index + 1) + positions.getX(index + 2)) / 3;
       const centerZ = (positions.getZ(index) + positions.getZ(index + 1) + positions.getZ(index + 2)) / 3;
       const overlapsMainBridge = [-50, 170].some((bridgeX) => (
         Math.abs(centerX - bridgeX) < 2.7 && Math.abs(centerZ - riverZAt(bridgeX)) < 14
       ));
       expect(overlapsMainBridge, `道路三角面 ${index / 3} 仍叠在主桥桥面下`).toBe(false);
+    }
+    for (const mesh of [road]) {
+      const surface = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const expectedLift = mesh.userData.roadSurfaceLift as number;
+      for (let index = 0; index < surface.count; index++) {
+        const x = surface.getX(index);
+        const y = surface.getY(index);
+        const z = surface.getZ(index);
+        const terrainY = world.getHeight(x, z);
+        if (terrainY < WATER_Y + 0.18) continue;
+        const offset = y - terrainY;
+        expect(
+          offset,
+          `${mesh.name} 顶点 ${index} 与物理地面错位导致角色陷入或路面悬空`,
+        ).toBeGreaterThanOrEqual(expectedLift - 0.004);
+        expect(offset).toBeLessThanOrEqual(expectedLift + 0.01);
+      }
     }
     for (const [patchIndex, center] of (patchCenters ?? []).entries()) {
       let centerVertices = 0;
@@ -703,6 +743,56 @@ describe('地图与建筑终极几何巡检', () => {
         }
       }
       expect(centerVertices, `道路节点 ${patchIndex} 没有完整交叉口补片`).toBeGreaterThanOrEqual(patchSegments ?? 16);
+    }
+
+    const pointCoveredByRoad = (x: number, z: number): boolean => {
+      for (let index = 0; index < positions.count; index += 3) {
+        const ax = positions.getX(index);
+        const az = positions.getZ(index);
+        const bx = positions.getX(index + 1);
+        const bz = positions.getZ(index + 1);
+        const cx = positions.getX(index + 2);
+        const cz = positions.getZ(index + 2);
+        const area = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+        const ab = (bx - ax) * (z - az) - (bz - az) * (x - ax);
+        const bc = (cx - bx) * (z - bz) - (cz - bz) * (x - bx);
+        const ca = (ax - cx) * (z - cz) - (az - cz) * (x - cx);
+        const epsilon = Math.max(0.0001, Math.abs(area) * 0.00001);
+        if (area < 0 && ab <= epsilon && bc <= epsilon && ca <= epsilon) return true;
+        if (area > 0 && ab >= -epsilon && bc >= -epsilon && ca >= -epsilon) return true;
+      }
+      return false;
+    };
+    for (let pathIndex = 0; pathIndex < ROAD_PATHS.length; pathIndex++) {
+      const path = ROAD_PATHS[pathIndex] as readonly (readonly [number, number])[];
+      for (let segmentIndex = 0; segmentIndex < path.length - 1; segmentIndex++) {
+        const a = path[segmentIndex] as readonly [number, number];
+        const b = path[segmentIndex + 1] as readonly [number, number];
+        const dx = b[0] - a[0];
+        const dz = b[1] - a[1];
+        const length = Math.hypot(dx, dz);
+        const nx = -dz / length;
+        const nz = dx / length;
+        const samples = Math.max(2, Math.ceil(length / 2));
+        for (let sample = 0; sample <= samples; sample++) {
+          const t = sample / samples;
+          // 主桥桥面会从 7.2 米路肩自然收窄到 5.4 米，逐段审计稳定可行驶的 4.8 米核心宽度。
+          for (const lateral of [-2.4, 0, 2.4]) {
+            const x = a[0] + dx * t + nx * lateral;
+            const z = a[1] + dz * t + nz * lateral;
+            if (pointCoveredByRoad(x, z)) continue;
+            const bridged = world.platforms.some((platform) => (
+              x >= platform.minX - 0.08 && x <= platform.maxX + 0.08 &&
+              z >= platform.minZ - 0.08 && z <= platform.maxZ + 0.08 &&
+              platform.top >= WATER_Y + 0.45
+            ));
+            expect(
+              bridged,
+              `道路 ${pathIndex} 第 ${segmentIndex} 节在 ${x.toFixed(1)},${z.toFixed(1)} 露出草地或缺少桥面`,
+            ).toBe(true);
+          }
+        }
+      }
     }
   });
 

@@ -65,13 +65,13 @@ describe('对局节奏和地图最终平衡', () => {
   it('首圈保留搜索窗口且后期连续提速', () => {
     const durations = ZONE_PHASES.map((phase) => phase.wait + phase.shrink);
     const total = durations.reduce((sum, duration) => sum + duration, 0);
-    expect(durations[0]).toBeGreaterThanOrEqual(60);
-    expect(durations[durations.length - 1]).toBeLessThanOrEqual(18);
+    expect(durations[0]).toBeGreaterThanOrEqual(105);
+    expect(durations[durations.length - 1]).toBeLessThanOrEqual(26);
     for (let i = 1; i < durations.length; i++) {
       expect(durations[i]).toBeLessThan(durations[i - 1] as number);
     }
-    expect(total).toBeGreaterThanOrEqual(215);
-    expect(total).toBeLessThanOrEqual(230);
+    expect(total).toBeGreaterThanOrEqual(355);
+    expect(total).toBeLessThanOrEqual(375);
   });
 
   it('所有正式区域均拥有至少一个载具转移点', () => {

@@ -162,6 +162,7 @@ export class World {
   naturalStoryPropCount = 0;
   humanDetailPropCount = 0;
   regionalIdentityDetailCount = 0;
+  churchGardenPlanterCount = 0;
   farmFurrowCount = 0;
   farmFenceRailCount = 0;
   shorelineDetailCount = 0;
@@ -248,6 +249,7 @@ export class World {
 
     // 村庄规划 + 地基平整(必须在生成地形几何体之前)
     this.buildings.plan(this);
+    this.gradeRoadTerrain();
     this.buildings.flattenTerrain(this);
     // 教堂与广场必须在地形网格生成前完成统一整地。此前广场按坡面最高点抬升，
     // 而教堂仍留在低处，广场地基因此直接封死了正门。
@@ -272,6 +274,7 @@ export class World {
     const cForest = new THREE.Color(0x456b47);
     const cDry = new THREE.Color(0x9a925b);
     const cRock = new THREE.Color(0x92938c);
+    const cRoadBed = new THREE.Color(0x948267);
     const tmpC = new THREE.Color();
     const grassC = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
@@ -298,6 +301,12 @@ export class World {
         cSandWet.b * surface.wetSand + cSand.b * surface.sand + grassC.b * surface.meadow +
           cForest.b * surface.forest + cDry.b * surface.dryGrass + cRock.b * surface.rock,
       );
+      // 路面下方同步铺一层土色路基。即使远距离深度精度下降或道路三角边缘露出，
+      // 看到的也会是同色路肩而不是突兀的绿色草地碎片。
+      if (h >= WATER_Y + 0.18) {
+        const roadBed = 1 - smoothstep(3.4, 3.78, this.roadDistanceAt(x, z));
+        if (roadBed > 0) tmpC.lerp(cRoadBed, roadBed * 0.96);
+      }
       // 逐顶点确定性抖动, 打散色带
       const jh = Math.sin(i * 12.9898) * 43758.5453;
       const j = 1 + (jh - Math.floor(jh) - 0.5) * 0.05;
@@ -482,6 +491,60 @@ varying vec3 vTerrainWorld;`,
           const t = smoothstep(0, margin, dist);
           this.heights[idx] = h + ((this.heights[idx] as number) - h) * t;
         }
+      }
+    }
+  }
+
+  // 道路先在高度场上整形，再生成地形和路面。中心车道沿控制点做线性缓坡，
+  // 两侧逐渐混回自然地形，避免道路沿噪声地表起伏成碎折面。
+  private gradeRoadTerrain(): void {
+    const original = this.heights.slice();
+    const width = GRID + 1;
+    const sample = (x: number, z: number): number => {
+      const gx = clamp((x + WORLD_HALF) / CELL, 0, GRID - 0.0001);
+      const gz = clamp((z + WORLD_HALF) / CELL, 0, GRID - 0.0001);
+      const ix = gx | 0;
+      const iz = gz | 0;
+      const fx = gx - ix;
+      const fz = gz - iz;
+      const h00 = original[iz * width + ix] as number;
+      const h10 = original[iz * width + ix + 1] as number;
+      const h01 = original[(iz + 1) * width + ix] as number;
+      const h11 = original[(iz + 1) * width + ix + 1] as number;
+      return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz;
+    };
+    const segments = ROAD_PATHS.flatMap((path) => path.slice(0, -1).map((a, index) => {
+      const b = path[index + 1] as readonly [number, number];
+      return { a, b, ah: sample(a[0], a[1]), bh: sample(b[0], b[1]) };
+    }));
+    const coreRadius = 3.75;
+    const blendRadius = 7.25;
+    for (let iz = 0; iz <= GRID; iz++) {
+      for (let ix = 0; ix <= GRID; ix++) {
+        const x = -WORLD_HALF + ix * CELL;
+        const z = -WORLD_HALF + iz * CELL;
+        const index = iz * width + ix;
+        const current = original[index] as number;
+        if (current < WATER_Y + 0.18) continue;
+        let nearest = Infinity;
+        let target = current;
+        for (const segment of segments) {
+          const vx = segment.b[0] - segment.a[0];
+          const vz = segment.b[1] - segment.a[1];
+          const len2 = vx * vx + vz * vz;
+          const t = clamp(((x - segment.a[0]) * vx + (z - segment.a[1]) * vz) / len2, 0, 1);
+          const px = segment.a[0] + vx * t;
+          const pz = segment.a[1] + vz * t;
+          const distance = Math.hypot(x - px, z - pz);
+          if (distance >= nearest) continue;
+          nearest = distance;
+          target = segment.ah + (segment.bh - segment.ah) * t;
+        }
+        if (nearest >= blendRadius || target < WATER_Y + 0.18) continue;
+        const blend = nearest <= coreRadius
+          ? 1
+          : 1 - smoothstep(coreRadius, blendRadius, nearest);
+        this.heights[index] = current + (target - current) * blend;
       }
     }
   }
@@ -1312,8 +1375,8 @@ varying vec3 vTerrainWorld;`,
     return false;
   }
 
-  private nearRoad(x: number, z: number, margin: number): boolean {
-    const rr = 2.5 + margin;
+  private roadDistanceAt(x: number, z: number): number {
+    let nearest = Number.POSITIVE_INFINITY;
     for (const path of ROAD_PATHS) {
       for (let i = 0; i < path.length - 1; i++) {
         const a = path[i] as readonly [number, number];
@@ -1324,10 +1387,14 @@ varying vec3 vTerrainWorld;`,
         const t = clamp(((x - a[0]) * vx + (z - a[1]) * vz) / len2, 0, 1);
         const dx = x - (a[0] + vx * t);
         const dz = z - (a[1] + vz * t);
-        if (dx * dx + dz * dz < rr * rr) return true;
+        nearest = Math.min(nearest, Math.hypot(dx, dz));
       }
     }
-    return false;
+    return nearest;
+  }
+
+  private nearRoad(x: number, z: number, margin: number): boolean {
+    return this.roadDistanceAt(x, z) < 2.5 + margin;
   }
 
   private addRoadNetwork(scene: THREE.Scene): void {
@@ -1390,20 +1457,7 @@ varying vec3 vTerrainWorld;`,
           const terrainHeight = this.getHeight(x, z);
           return terrainHeight < WATER_Y + 0.18 ? ROAD_WATER_DECK_Y : terrainHeight;
         };
-        const edges = samples.map(([x, z], index) => {
-          const prev = samples[Math.max(0, index - 1)] as readonly [number, number];
-          const next = samples[Math.min(samples.length - 1, index + 1)] as readonly [number, number];
-          const tangentX = next[0] - prev[0];
-          const tangentZ = next[1] - prev[1];
-          const tangentLength = Math.hypot(tangentX, tangentZ) || 1;
-          const offsetX = (-tangentZ / tangentLength) * halfWidth;
-          const offsetZ = (tangentX / tangentLength) * halfWidth;
-          return {
-            left: [x + offsetX, roadSurfaceHeight(x + offsetX, z + offsetZ) + lift, z + offsetZ] as const,
-            right: [x - offsetX, roadSurfaceHeight(x - offsetX, z - offsetZ) + lift, z - offsetZ] as const,
-          };
-        });
-        for (let i = 0; i < edges.length - 1; i++) {
+        for (let i = 0; i < samples.length - 1; i++) {
           const sampleA = samples[i] as readonly [number, number];
           const sampleB = samples[i + 1] as readonly [number, number];
           const midX = (sampleA[0] + sampleB[0]) * 0.5;
@@ -1411,12 +1465,36 @@ varying vec3 vTerrainWorld;`,
           // 主桥自身已经提供完整桥面。普通道路若继续在水面上铺设，会从木桥下方穿过，
           // 并在桥头与桥面形成两套错位路面。
           if (insideMainBridgeDeck(midX, midZ, 0.55)) continue;
-          const a = edges[i] as typeof edges[number];
-          const b = edges[i + 1] as typeof edges[number];
-          // 整条折线共用边缘顶点，弯道不会再各自收口成相互穿插的四边形。
+          // 每个短路段独立计算左右边缘，避免急弯处平均切线把四边形折反。
+          // 控制点和交叉点由下方圆角补片封口，因此不会留下草地三角缝。
+          const tangentX = sampleB[0] - sampleA[0];
+          const tangentZ = sampleB[1] - sampleA[1];
+          const tangentLength = Math.hypot(tangentX, tangentZ) || 1;
+          const offsetX = (-tangentZ / tangentLength) * halfWidth;
+          const offsetZ = (tangentX / tangentLength) * halfWidth;
+          const aLeft = [
+            sampleA[0] + offsetX,
+            roadSurfaceHeight(sampleA[0] + offsetX, sampleA[1] + offsetZ) + lift,
+            sampleA[1] + offsetZ,
+          ] as const;
+          const aRight = [
+            sampleA[0] - offsetX,
+            roadSurfaceHeight(sampleA[0] - offsetX, sampleA[1] - offsetZ) + lift,
+            sampleA[1] - offsetZ,
+          ] as const;
+          const bLeft = [
+            sampleB[0] + offsetX,
+            roadSurfaceHeight(sampleB[0] + offsetX, sampleB[1] + offsetZ) + lift,
+            sampleB[1] + offsetZ,
+          ] as const;
+          const bRight = [
+            sampleB[0] - offsetX,
+            roadSurfaceHeight(sampleB[0] - offsetX, sampleB[1] - offsetZ) + lift,
+            sampleB[1] - offsetZ,
+          ] as const;
           vertices.push(
-            ...a.left, ...b.right, ...a.right,
-            ...a.left, ...b.left, ...b.right,
+            ...aLeft, ...bRight, ...aRight,
+            ...aLeft, ...bLeft, ...bRight,
           );
         }
       }
@@ -1424,7 +1502,7 @@ varying vec3 vTerrainWorld;`,
       // 以轻微抬高的圆形补片统一封住转弯、端点和交叉口。补片跟随地形逐点采样，
       // 不会在坡地退化成悬空的大平面。
       const patchSegments = 18;
-      const patchRadius = halfWidth * 1.035;
+      const patchRadius = halfWidth * 1.22;
       const renderedPatchCenters: Array<readonly [number, number]> = [];
       for (const [centerX, centerZ] of patchCenters) {
         // 位于主桥跨度内的道路节点由桥面和桥头坡台接管，不能再叠加圆形路口补片。
@@ -1469,11 +1547,12 @@ varying vec3 vTerrainWorld;`,
       mesh.renderOrder = 0;
       mesh.userData.roadPatchCenters = renderedPatchCenters;
       mesh.userData.roadPatchSegments = patchSegments;
+      mesh.userData.roadSurfaceLift = lift;
       return mesh;
     };
-    // 路肩和车辙使用同一土石基色，只依靠细微高度分层，避免交叉口出现深浅拼布。
-    scene.add(makeLayer(7.2, 0.065, 0x9a8867, 'road-verge-surface'));
-    scene.add(makeLayer(5.1, 0.105, 0x9a8867, 'road-track-surface'));
+    // 单层路面消除旧版宽窄两层重叠后在弯道形成的平行细线。贴地偏移控制在两厘米内，
+    // 角色脚底与物理地形一致，不再看起来陷入路面。
+    scene.add(makeLayer(7.2, 0.032, 0x948267, 'road-track-surface'));
   }
 
   private addRoadTermini(scene: THREE.Scene): void {
@@ -2854,9 +2933,40 @@ varying vec3 vTerrainWorld;`,
       cityPlanterCount++;
     }
 
-    // 教堂广场: 环形石花坛与暖色花簇强化中心空间。
+    // 教堂周边的小花池使用独立浅色材质和真实花株。
+    // 旧实现复用通用 box/sphere 实例，背光时会变成“黑盒加三个黑球”，必须避免再次回退。
     const church = this.scenicSites.find((site) => site.kind === 'church');
     let churchBedCount = 0;
+    let churchGardenPartCount = 0;
+    this.churchGardenPlanterCount = 0;
+    const gardenStone = new THREE.MeshStandardMaterial({
+      color: 0xd9c8a6,
+      emissive: 0x8f7b59,
+      emissiveIntensity: 0.38,
+      roughness: 0.96,
+    });
+    const gardenSoil = new THREE.MeshStandardMaterial({
+      color: 0x76583a,
+      emissive: 0x382719,
+      emissiveIntensity: 0.22,
+      roughness: 1,
+    });
+    const gardenStem = new THREE.MeshStandardMaterial({
+      color: 0x5f8f49,
+      emissive: 0x294622,
+      emissiveIntensity: 0.32,
+      roughness: 0.94,
+    });
+    const gardenPetals = [0xe89b86, 0xf0cf68, 0x9fb7e8, 0xe7b5ce].map((hex) => (
+      new THREE.MeshStandardMaterial({
+        color: hex,
+        emissive: hex,
+        emissiveIntensity: 0.3,
+        roughness: 0.82,
+      })
+    ));
+    applySurfaceAsset(gardenStone, 'stone', 2.8, 0.58);
+    applySurfaceAsset(gardenSoil, 'terrain', 3.6, 0.46);
     if (church) {
       for (let i = 0; i < 10; i++) {
         const angle = i / 10 * Math.PI * 2;
@@ -2864,17 +2974,67 @@ varying vec3 vTerrainWorld;`,
         const z = church.z + Math.sin(angle) * 11.2;
         if (!decorFree(x, z, 0.72)) continue;
         const h = this.getHeight(x, z);
-        addBox(x, h + 0.22, z, 1.05, 0.44, 0.72, 0x8e8575, -angle);
-        for (let flower = 0; flower < 3; flower++) {
-          const offset = (flower - 1) * 0.28;
-          addSphere(
-            x + Math.cos(angle) * offset, h + 0.6, z + Math.sin(angle) * offset,
-            0.28, 0.34, 0.28, flower % 2 === 0 ? 0xd99072 : 0xe6c96f,
+        const planter = new THREE.Group();
+        planter.name = 'church-garden-planter';
+        planter.position.set(x, h, z);
+        planter.rotation.y = -angle;
+
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.86, 0.3, 16), gardenStone);
+        base.name = 'church-garden-planter-stone';
+        base.position.y = 0.15;
+        base.scale.z = 0.68;
+        base.castShadow = true;
+        base.receiveShadow = true;
+        planter.add(base);
+
+        const soil = new THREE.Mesh(new THREE.CylinderGeometry(0.69, 0.69, 0.075, 16), gardenSoil);
+        soil.name = 'church-garden-planter-soil';
+        soil.position.y = 0.325;
+        soil.scale.z = 0.66;
+        soil.receiveShadow = true;
+        planter.add(soil);
+
+        for (let flower = 0; flower < 5; flower++) {
+          const localX = (flower - 2) * 0.27;
+          const localZ = flower % 2 === 0 ? -0.1 : 0.1;
+          const stemHeight = 0.28 + (flower % 3) * 0.045;
+          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.025, stemHeight, 6), gardenStem);
+          stem.name = 'church-garden-planter-stem';
+          stem.position.set(localX, 0.35 + stemHeight / 2, localZ);
+          stem.castShadow = true;
+          planter.add(stem);
+
+          const bloom = new THREE.Group();
+          bloom.name = 'church-garden-planter-bloom';
+          bloom.position.set(localX, 0.38 + stemHeight, localZ);
+          for (let petal = 0; petal < 5; petal++) {
+            const petalAngle = petal / 5 * Math.PI * 2;
+            const petalMesh = new THREE.Mesh(
+              new THREE.SphereGeometry(0.075, 7, 5),
+              gardenPetals[(flower + i) % gardenPetals.length],
+            );
+            petalMesh.name = 'church-garden-planter-petal';
+            petalMesh.position.set(Math.cos(petalAngle) * 0.07, 0, Math.sin(petalAngle) * 0.07);
+            petalMesh.scale.set(1, 0.48, 0.72);
+            petalMesh.castShadow = true;
+            bloom.add(petalMesh);
+          }
+          const center = new THREE.Mesh(
+            new THREE.SphereGeometry(0.045, 7, 5),
+            gardenPetals[1],
           );
+          center.name = 'church-garden-planter-center';
+          center.position.y = 0.02;
+          center.castShadow = true;
+          bloom.add(center);
+          planter.add(bloom);
         }
+        scene.add(planter);
+        churchGardenPartCount += 2 + 5 * 8;
         churchBedCount++;
       }
     }
+    this.churchGardenPlanterCount = churchBedCount;
 
     boxes.count = boxCount;
     cylinders.count = cylinderCount;
@@ -2910,7 +3070,7 @@ varying vec3 vTerrainWorld;`,
     if (farmFurrows.instanceColor) farmFurrows.instanceColor.needsUpdate = true;
     farmFurrows.computeBoundingSphere();
     scene.add(farmFurrows);
-    this.regionalIdentityDetailCount = boxCount + cylinderCount + sphereCount + cityPlanterBaseCount + cityPlanterFoliageCount + netCount + mushroomClusters * 2 + farmChannels;
+    this.regionalIdentityDetailCount = boxCount + cylinderCount + sphereCount + cityPlanterBaseCount + cityPlanterFoliageCount + netCount + mushroomClusters * 2 + farmChannels + churchGardenPartCount;
     this.environmentDetailInstanceCount += this.regionalIdentityDetailCount;
     this.assetUsage.add(
       'map.landmark.regional-detail',

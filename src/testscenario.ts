@@ -975,6 +975,7 @@ function setGroundPlayer(game: Game, x: number, z: number): void {
   c.groundH = c.pos.y;
   c.grounded = true;
   c.swimming = false;
+  c.speed2d = 0;
 }
 
 const TEST_LANES = [
@@ -1385,8 +1386,13 @@ function setupCombat(game: Game): void {
   if (movement === 'walk' || movement === 'run') {
     game.input.keys.add('KeyW');
     if (movement === 'run') game.input.keys.add('ShiftLeft');
+    window.setTimeout(() => {
+      game.input.keys.delete('KeyW');
+      game.input.keys.delete('ShiftLeft');
+    }, 1800);
   } else if (movement === 'strafe') {
     game.input.keys.add('KeyD');
+    window.setTimeout(() => game.input.keys.delete('KeyD'), 1800);
   }
   player.yaw = Math.atan2(targetX - playerX, targetZ - playerZ);
 

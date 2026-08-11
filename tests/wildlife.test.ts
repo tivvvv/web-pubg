@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { WildlifeSystem, WILDLIFE_COUNTS, type WildlifeKind } from '../src/wildlife';
-import { WATER_Y, World } from '../src/world';
+import { ROAD_PATHS, WATER_Y, World } from '../src/world';
 import { Vehicle, VEHICLE_SPEC } from '../src/vehicles';
 import { regionAt } from '../src/regions';
 
@@ -73,7 +73,7 @@ describe('环境动物系统', () => {
     }
   });
 
-  it('雾松林宝箱由两只老虎守护且开启状态可重置', () => {
+  it('雾松林宝箱由三只老虎守护且开启状态可重置', () => {
     const { world, wildlife } = createWildlife();
     const treasure = wildlife.treasure;
     expect(regionAt(treasure.pos.x, treasure.pos.z)?.id).toBe('mistwood');
@@ -85,9 +85,35 @@ describe('环境动物系统', () => {
     expect(world.cyls.filter((collider) => collider.tag === 'tree' &&
       Math.hypot(treasure.pos.x - collider.x, treasure.pos.z - collider.z) <= 22).length).toBeGreaterThanOrEqual(4);
     expect(treasure.pos.y).toBeGreaterThan(WATER_Y + 4.5);
+    const buildingDistance = world.buildings.plots.reduce((nearest, plot) => {
+      const dx = Math.max(plot.minX - treasure.pos.x, 0, treasure.pos.x - plot.maxX);
+      const dz = Math.max(plot.minZ - treasure.pos.z, 0, treasure.pos.z - plot.maxZ);
+      return Math.min(nearest, Math.hypot(dx, dz));
+    }, Number.POSITIVE_INFINITY);
+    expect(buildingDistance).toBeGreaterThanOrEqual(55);
+    let roadDistance = Number.POSITIVE_INFINITY;
+    for (const path of ROAD_PATHS) for (let index = 0; index < path.length - 1; index++) {
+      const a = path[index] as readonly [number, number];
+      const b = path[index + 1] as readonly [number, number];
+      const vx = b[0] - a[0];
+      const vz = b[1] - a[1];
+      const t = Math.max(0, Math.min(1, (
+        (treasure.pos.x - a[0]) * vx + (treasure.pos.z - a[1]) * vz
+      ) / (vx * vx + vz * vz)));
+      roadDistance = Math.min(roadDistance, Math.hypot(
+        treasure.pos.x - a[0] - vx * t,
+        treasure.pos.z - a[1] - vz * t,
+      ));
+    }
+    expect(roadDistance).toBeGreaterThanOrEqual(18);
+    expect(treasure.group.children.filter((child) => child.name === 'treasure-spark')).toHaveLength(12);
+    expect(treasure.group.getObjectByName('treasure-lock-gem')).toBeDefined();
+    expect(treasure.group.getObjectByName('treasure-golden-halo')).toBeDefined();
+    const aura = treasure.group.getObjectByName('treasure-aura-light') as THREE.PointLight | undefined;
+    expect(aura?.intensity).toBeGreaterThan(2);
 
     const tigers = wildlife.entities.filter((entity) => entity.kind === 'tiger');
-    expect(tigers).toHaveLength(2);
+    expect(tigers).toHaveLength(3);
     for (const tiger of tigers) {
       expect(tiger.group.name).toBe('forest-guardian-tiger');
       expect(tiger.group.getObjectByName('tiger-whiskers')).toBeDefined();

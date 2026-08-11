@@ -240,46 +240,39 @@ export interface HumanParts {
 
 // 共享几何体(跨对局复用, 重开不泄漏)
 const GEO = {
-  head: new THREE.IcosahedronGeometry(0.22, 2),
-  torso: new THREE.CylinderGeometry(0.205, 0.255, 0.58, 12, 4),
-  waist: new THREE.CylinderGeometry(0.205, 0.22, 0.16, 12, 2),
-  upperArm: new THREE.CapsuleGeometry(0.068, 0.17, 6, 10),
-  forearm: new THREE.CapsuleGeometry(0.06, 0.185, 6, 10),
-  hand: new THREE.IcosahedronGeometry(0.085, 1),
-  thigh: new THREE.CapsuleGeometry(0.082, 0.22, 6, 10),
-  shin: new THREE.CapsuleGeometry(0.074, 0.235, 6, 10),
-  boot: new THREE.BoxGeometry(0.16, 0.12, 0.26),
+  head: new THREE.BoxGeometry(0.36, 0.36, 0.34),
+  torso: new THREE.BoxGeometry(0.44, 0.54, 0.24),
+  waist: new THREE.BoxGeometry(0.34, 0.15, 0.22),
+  upperArm: new THREE.BoxGeometry(0.13, 0.29, 0.13),
+  forearm: new THREE.BoxGeometry(0.125, 0.29, 0.125),
+  hand: new THREE.BoxGeometry(0.13, 0.13, 0.13),
+  thigh: new THREE.BoxGeometry(0.16, 0.31, 0.17),
+  shin: new THREE.BoxGeometry(0.15, 0.31, 0.16),
+  boot: new THREE.BoxGeometry(0.16, 0.13, 0.24),
 };
 // 细节件共享几何(面部/领口/护具/鞋底等, 一次创建全局复用)
 const GEO_D = {
-  neck: new THREE.CylinderGeometry(0.07, 0.075, 0.1, 12),
-  eye: new THREE.BoxGeometry(0.052, 0.042, 0.018),
-  brow: new THREE.BoxGeometry(0.068, 0.018, 0.016),
-  mouth: new THREE.BoxGeometry(0.085, 0.016, 0.014),
-  shirtPlacket: new THREE.BoxGeometry(0.026, 0.42, 0.018),
-  collar: new THREE.TorusGeometry(0.14, 0.026, 6, 14),
-  shoulder: new THREE.SphereGeometry(0.115, 12, 8),
-  strap: new THREE.BoxGeometry(0.07, 0.5, 0.02),
-  belt: new THREE.CylinderGeometry(0.225, 0.225, 0.06, 12),
-  buckle: new THREE.BoxGeometry(0.08, 0.05, 0.02),
-  cuff: new THREE.BoxGeometry(0.125, 0.055, 0.125),
-  kneePad: new THREE.BoxGeometry(0.16, 0.11, 0.05),
-  sole: new THREE.BoxGeometry(0.17, 0.035, 0.28),
-  elbowPad: new THREE.BoxGeometry(0.13, 0.09, 0.045),
-  hair: new THREE.SphereGeometry(0.225, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
-  ear: new THREE.CylinderGeometry(0.04, 0.045, 0.075, 10),
-  nose: new THREE.ConeGeometry(0.038, 0.075, 7),
-  pocket: new THREE.BoxGeometry(0.13, 0.13, 0.025),
-  cargo: new THREE.BoxGeometry(0.035, 0.14, 0.11),
-  backYoke: new THREE.BoxGeometry(0.34, 0.1, 0.022),
-  seam: new THREE.BoxGeometry(0.018, 0.34, 0.012),
-  beltPouch: new THREE.BoxGeometry(0.08, 0.1, 0.1),
-  sleeveBand: new THREE.CylinderGeometry(0.073, 0.073, 0.045, 10),
-  bootToe: new THREE.SphereGeometry(0.085, 10, 6),
+  neck: new THREE.BoxGeometry(0.12, 0.09, 0.12),
+  eye: new THREE.BoxGeometry(0.055, 0.04, 0.012),
+  brow: new THREE.BoxGeometry(0.06, 0.012, 0.012),
+  mouth: new THREE.BoxGeometry(0.065, 0.01, 0.01),
+  collar: new THREE.BoxGeometry(0.13, 0.055, 0.03),
+  chestPanel: new THREE.BoxGeometry(0.32, 0.18, 0.018),
+  chestSeam: new THREE.BoxGeometry(0.27, 0.018, 0.014),
+  belt: new THREE.BoxGeometry(0.36, 0.05, 0.24),
+  buckle: new THREE.BoxGeometry(0.065, 0.04, 0.018),
+  cuff: new THREE.BoxGeometry(0.135, 0.05, 0.135),
+  kneePad: new THREE.BoxGeometry(0.13, 0.09, 0.035),
+  sole: new THREE.BoxGeometry(0.15, 0.028, 0.245),
+  elbowPad: new THREE.BoxGeometry(0.105, 0.075, 0.035),
+  hair: new THREE.BoxGeometry(0.37, 0.1, 0.35),
+  hairBack: new THREE.BoxGeometry(0.37, 0.23, 0.055),
+  cargo: new THREE.BoxGeometry(0.028, 0.12, 0.09),
+  backYoke: new THREE.BoxGeometry(0.31, 0.075, 0.016),
+  bootToe: new THREE.BoxGeometry(0.15, 0.06, 0.1),
 };
 
 const MAT = {
-  skin: new THREE.MeshStandardMaterial({ color: 0xd9a066, roughness: 0.82 }),
   boot: new THREE.MeshStandardMaterial({ color: 0x2c2620, roughness: 0.9 }),
   dark: new THREE.MeshStandardMaterial({ color: 0x23282e, roughness: 0.68, metalness: 0.08 }), // 面罩/护具/手套
   strap: new THREE.MeshStandardMaterial({ color: 0x2f2a22, roughness: 0.88 }), // 胸挂/腰带
@@ -297,6 +290,21 @@ applySurfaceAsset(MAT.sole, 'fabric', 4.8, 0.36);
 
 // 裤装配色(bot 按索引错开, 远距可读)
 const PANTS_COLORS = [0x3d4436, 0x37404a, 0x4a3f33, 0x2f3a2f, 0x46464e];
+const SKIN_COLORS = [0xd7a06a, 0xb9794f, 0xe0b07a, 0x9b6547, 0xc98d61];
+const HAIR_COLORS = [0x35251d, 0x241e1b, 0x4a3224, 0x1f2022];
+const skinCache = new Map<number, THREE.MeshStandardMaterial>();
+const hairCache = new Map<number, THREE.MeshStandardMaterial>();
+
+function cachedCharacterMaterial(
+  cache: Map<number, THREE.MeshStandardMaterial>, color: number, roughness: number,
+): THREE.MeshStandardMaterial {
+  let material = cache.get(color);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({ color, roughness });
+    cache.set(color, material);
+  }
+  return material;
+}
 
 const shirtCache = new Map<number, THREE.MeshStandardMaterial>();
 const shirtDetailCache = new Map<number, THREE.MeshStandardMaterial>();
@@ -313,7 +321,7 @@ function shirtMat(color: number): THREE.MeshStandardMaterial {
 function shirtDetailMat(color: number): THREE.MeshStandardMaterial {
   let material = shirtDetailCache.get(color);
   if (!material) {
-    const detailColor = new THREE.Color(color).multiplyScalar(0.72);
+    const detailColor = new THREE.Color(color).multiplyScalar(0.82);
     material = new THREE.MeshStandardMaterial({ color: detailColor, roughness: 0.92, metalness: 0 });
     applySurfaceAsset(material, 'fabric', 4.2, 0.6);
     shirtDetailCache.set(color, material);
@@ -469,136 +477,105 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   const shirt = shirtMat(shirtColor);
   const shirtDetail = shirtDetailMat(shirtColor);
   const pants = shirtMat(PANTS_COLORS[variant % PANTS_COLORS.length] as number);
+  const skinColor = SKIN_COLORS[variant % SKIN_COLORS.length] as number;
+  const hairColor = HAIR_COLORS[variant % HAIR_COLORS.length] as number;
+  const skin = cachedCharacterMaterial(skinCache, skinColor, 0.84);
+  const hairMaterial = cachedCharacterMaterial(hairCache, hairColor, 0.92);
 
+  // 方块人使用单纯清晰的长方体轮廓。动画骨架仍保留，但关节不再额外挂球或护垫。
   const torso = new THREE.Mesh(GEO.torso, shirt);
   torso.name = 'torso';
-  torso.position.set(0, 1.05, 0);
-  torso.scale.z = 0.72;
+  torso.position.set(0, 1.07, 0);
   torso.castShadow = true;
   body.add(torso);
-  for (const side of [-1, 1] as const) {
-    const pocket = new THREE.Mesh(GEO_D.pocket, shirt);
-    pocket.position.set(0.11 * side, -0.02, 0.177);
-    torso.add(pocket);
-  }
-  const placket = new THREE.Mesh(GEO_D.shirtPlacket, MAT.strap);
-  placket.name = 'shirt-placket';
-  placket.position.set(0, 0, 0.178);
-  torso.add(placket);
-  // 腰带/裤腰色块
+  const chestPanel = new THREE.Mesh(GEO_D.chestPanel, shirtDetail);
+  chestPanel.name = 'jacket-chest-panel';
+  chestPanel.position.set(0, 0.075, 0.127);
+  chestPanel.scale.set(1, 1, 0.8);
+  torso.add(chestPanel);
+  const chestSeam = new THREE.Mesh(GEO_D.chestSeam, shirtDetail);
+  chestSeam.name = 'jacket-chest-seam';
+  chestSeam.position.set(0, -0.105, 0.127);
+  torso.add(chestSeam);
+
   const waist = new THREE.Mesh(GEO.waist, pants);
-  waist.position.set(0, 0.79, 0);
-  waist.scale.z = 0.7;
+  waist.name = 'character-waist';
+  waist.position.set(0, 0.77, 0);
   body.add(waist);
-  // ---- 细节: 颈部/领口/肩垫/胸挂带/腰带扣 ----
-  const neck = new THREE.Mesh(GEO_D.neck, MAT.skin);
+  const neck = new THREE.Mesh(GEO_D.neck, skin);
   neck.position.set(0, 1.38, 0);
   body.add(neck);
-  const collar = new THREE.Mesh(GEO_D.collar, shirt);
-  collar.position.set(0, 1.33, 0);
-  collar.rotation.x = Math.PI / 2;
-  collar.scale.z = 0.78;
-  body.add(collar);
   for (const side of [-1, 1] as const) {
-    const pad = new THREE.Mesh(GEO_D.shoulder, shirt);
-    pad.name = side < 0 ? 'shoulder-left' : 'shoulder-right';
-    pad.position.set(0.245 * side, 1.315, 0);
-    pad.scale.set(0.96, 0.52, 0.82);
-    pad.castShadow = true;
-    body.add(pad);
+    const collar = new THREE.Mesh(GEO_D.collar, shirtDetail);
+    collar.name = side < 0 ? 'collar-left' : 'collar-right';
+    collar.position.set(0.07 * side, 1.34, 0.13);
+    collar.rotation.set(-0.34, side * 0.12, side * 0.35);
+    body.add(collar);
   }
-  const strap = new THREE.Mesh(GEO_D.strap, MAT.strap);
-  strap.position.set(0.09, 1.05, 0.178);
-  body.add(strap);
   const belt = new THREE.Mesh(GEO_D.belt, MAT.strap);
-  belt.position.set(0, 0.88, 0);
-  belt.scale.z = 0.72;
+  belt.name = 'character-belt';
+  belt.position.set(0, 0.82, 0);
   body.add(belt);
   const buckle = new THREE.Mesh(GEO_D.buckle, MAT.dark);
-  buckle.position.set(0, 0.88, 0.174);
+  buckle.position.set(0, 0.82, 0.132);
   body.add(buckle);
   const backYoke = new THREE.Mesh(GEO_D.backYoke, shirt);
-  backYoke.name = 'shirt-back-yoke';
-  backYoke.position.set(0, 1.235, -0.166);
+  backYoke.name = 'jacket-back-yoke';
+  backYoke.position.set(0, 1.24, -0.129);
   body.add(backYoke);
-  const backSeam = new THREE.Mesh(GEO_D.seam, shirtDetail);
-  backSeam.name = 'shirt-back-seam';
-  backSeam.position.set(0, 1.045, -0.177);
-  body.add(backSeam);
-  for (const side of [-1, 1] as const) {
-    const pouch = new THREE.Mesh(GEO_D.beltPouch, MAT.strap);
-    pouch.name = side < 0 ? 'belt-pouch-left' : 'belt-pouch-right';
-    pouch.position.set(0.19 * side, 0.84, -0.015);
-    pouch.rotation.y = side * 0.18;
-    body.add(pouch);
-  }
 
-  const head = new THREE.Mesh(GEO.head, MAT.skin);
+  // 单块立方头配像素化五官和方形发片，接近经典方块人但保留本项目配色。
+  const head = new THREE.Mesh(GEO.head, skin);
   head.name = 'head';
-  head.position.set(0, 1.53, 0);
-  head.scale.set(0.92, 0.96, 0.9);
+  head.position.set(0, 1.54, 0);
   head.castShadow = true;
-  // 独立眼睛、眉毛和嘴部让近景表情可读，仍保持低多边形块面风格。
   for (const side of [-1, 1] as const) {
     const eye = new THREE.Mesh(GEO_D.eye, MAT.face);
     eye.name = side < 0 ? 'eye-left' : 'eye-right';
-    eye.position.set(side * 0.078, 0.025, 0.194);
+    eye.position.set(side * 0.072, 0.025, 0.176);
     head.add(eye);
-    const brow = new THREE.Mesh(GEO_D.brow, MAT.hair);
+    const brow = new THREE.Mesh(GEO_D.brow, hairMaterial);
     brow.name = side < 0 ? 'brow-left' : 'brow-right';
-    brow.position.set(side * 0.078, 0.075, 0.192);
-    brow.rotation.z = side * -0.08;
+    brow.position.set(side * 0.072, 0.072, 0.177);
     head.add(brow);
   }
   const mouth = new THREE.Mesh(GEO_D.mouth, MAT.lip);
   mouth.name = 'mouth';
-  mouth.position.set(0, -0.095, 0.194);
+  mouth.position.set(0, -0.085, 0.177);
   head.add(mouth);
-  const hair = new THREE.Mesh(GEO_D.hair, MAT.hair);
-  hair.position.set(0, 0.112, -0.005);
-  hair.scale.set(0.94, 0.64, 0.92);
+  const hair = new THREE.Mesh(GEO_D.hair, hairMaterial);
+  hair.name = 'hair-cap';
+  hair.position.set(0, 0.155, 0);
   head.add(hair);
-  const nose = new THREE.Mesh(GEO_D.nose, MAT.skin);
-  nose.position.set(0, -0.035, 0.215);
-  nose.rotation.x = Math.PI / 2;
-  head.add(nose);
-  for (const side of [-1, 1] as const) {
-    const ear = new THREE.Mesh(GEO_D.ear, MAT.skin);
-    ear.position.set(0.202 * side, -0.01, 0);
-    ear.rotation.z = Math.PI / 2;
-    head.add(ear);
-  }
+  const hairBack = new THREE.Mesh(GEO_D.hairBack, hairMaterial);
+  hairBack.name = 'hair-back';
+  hairBack.position.set(0, 0.045, -0.17);
+  head.add(hairBack);
   body.add(head);
 
-  // 手臂: 肩部枢轴 → 上臂 → 肘部枢轴 → 前臂 + 手(肘/手暗示)
+  // 手臂由两段方块组成，枢轴只负责动画且完全不可见。
   const mkArm = (side: 1 | -1): { root: THREE.Group; elbow: THREE.Group } => {
     const arm = new THREE.Group();
-    arm.position.set(0.275 * side, 1.3, 0);
-    const shoulderJoint = new THREE.Mesh(GEO_D.shoulder, shirt);
-    shoulderJoint.name = side < 0 ? 'arm-joint-left' : 'arm-joint-right';
-    shoulderJoint.scale.set(0.72, 0.84, 0.72);
-    arm.add(shoulderJoint);
+    arm.position.set(0.285 * side, 1.3, 0);
     const upper = new THREE.Mesh(GEO.upperArm, shirt);
-    upper.position.set(0, -0.14, 0);
+    upper.name = side < 0 ? 'upper-arm-left' : 'upper-arm-right';
+    upper.position.set(0, -0.145, 0);
     upper.castShadow = true;
     arm.add(upper);
-    const sleeveBand = new THREE.Mesh(GEO_D.sleeveBand, MAT.strap);
-    sleeveBand.position.set(0, -0.245, 0);
+    const sleeveBand = new THREE.Mesh(GEO_D.cuff, shirtDetail);
+    sleeveBand.position.set(0, -0.285, 0);
     arm.add(sleeveBand);
     const elbow = new THREE.Group();
-    elbow.position.set(0, -0.3, 0);
+    elbow.position.set(0, -0.29, 0);
     elbow.rotation.x = -0.35; // 肘部微屈
     const fore = new THREE.Mesh(GEO.forearm, shirt);
     fore.position.set(0, -0.14, 0);
     fore.castShadow = true;
     elbow.add(fore);
-    // 袖口(裤色撞色) + 肘垫
-    const cuff = new THREE.Mesh(GEO_D.cuff, pants);
-    cuff.position.set(0, -0.27, 0);
+    // 方形袖口和手掌遮住段间缝隙，不显示圆形肘关节。
+    const cuff = new THREE.Mesh(GEO_D.cuff, MAT.glove);
+    cuff.position.set(0, -0.265, 0);
     elbow.add(cuff);
-    const epad = new THREE.Mesh(GEO_D.elbowPad, MAT.dark);
-    epad.position.set(0, -0.1, -0.075);
-    elbow.add(epad);
     const hand = new THREE.Mesh(GEO.hand, MAT.glove);
     hand.name = side < 0 ? 'hand-left' : 'hand-right';
     hand.position.set(0, -0.32, 0);
@@ -618,38 +595,26 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   armR.rotation.z = -0.1;
   inner.add(armR);
 
-  // 腿: 髋部枢轴 → 大腿 → 膝部枢轴 → 小腿 + 靴(膝/靴暗示)
+  // 双腿同样采用无可见关节的方块段，保留膝枢轴以兼容跑步、游泳和倒地动作。
   const mkLeg = (side: 1 | -1): { root: THREE.Group; knee: THREE.Group } => {
     const leg = new THREE.Group();
-    leg.position.set(0.13 * side, 0.74, 0);
+    leg.position.set(0.095 * side, 0.75, 0);
     const thigh = new THREE.Mesh(GEO.thigh, pants);
     thigh.position.set(0, -0.19, 0);
     thigh.castShadow = true;
     leg.add(thigh);
-    const cargo = new THREE.Mesh(GEO_D.cargo, pants);
-    cargo.position.set(0.09 * side, -0.02, 0.01);
-    thigh.add(cargo);
     const knee = new THREE.Group();
     knee.position.set(0, -0.38, 0);
     const shin = new THREE.Mesh(GEO.shin, pants);
     shin.position.set(0, -0.19, 0);
     shin.castShadow = true;
     knee.add(shin);
-    // 护膝
-    const kpad = new THREE.Mesh(GEO_D.kneePad, MAT.dark);
-    kpad.position.set(0, -0.04, 0.09);
-    knee.add(kpad);
     const boot = new THREE.Mesh(GEO.boot, MAT.boot);
-    boot.position.set(0, -0.42, 0.03);
+    boot.position.set(0, -0.405, 0.035);
     knee.add(boot);
-    const toe = new THREE.Mesh(GEO_D.bootToe, MAT.boot);
-    toe.name = side < 0 ? 'boot-toe-left' : 'boot-toe-right';
-    toe.position.set(0, -0.005, 0.125);
-    toe.scale.set(0.94, 0.62, 1.12);
-    boot.add(toe);
     // 鞋底(深色伪 AO 接地感)
     const sole = new THREE.Mesh(GEO_D.sole, MAT.sole);
-    sole.position.set(0, -0.075, 0.01);
+    sole.position.set(0, -0.064, 0.008);
     boot.add(sole);
     leg.add(knee);
     return { root: leg, knee };
@@ -1063,8 +1028,8 @@ export class Character {
       7.5,
     );
     const breathe = Math.sin(this.idleT * 1.75) * (1 - this.locomotionF) * 0.012;
-    p.torso.scale.set(1 + breathe * 0.3, 1 + breathe, 0.6 + breathe * 0.16);
-    p.head.position.y = 1.53 + breathe * 0.55;
+    p.torso.scale.set(1 + breathe * 0.3, 1 + breathe, 0.72 + breathe * 0.16);
+    p.head.position.y = 1.54 + breathe * 0.55;
     p.head.rotation.set(-this.aimPitch * 0.16, 0, 0);
     p.elbowL.rotation.set(-0.35, 0, 0);
     p.elbowR.rotation.set(-0.35, 0, 0);

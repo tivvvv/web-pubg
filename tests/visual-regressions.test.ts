@@ -31,18 +31,28 @@ describe('画面回归保护', () => {
     expect(character.parts.legR.getObjectByName('ghillie-leg-wrap')).toBeDefined();
   });
 
-  it('角色近景具有独立五官和衣物结构线', () => {
+  it('新角色模型采用无外露球形关节的方块人比例', () => {
     const character = new Character('角色细节测试', false, 0x335577);
 
     for (const name of [
-      'eye-left', 'eye-right', 'brow-left', 'brow-right', 'mouth', 'shirt-placket',
-      'shirt-back-yoke', 'shirt-back-seam', 'arm-joint-left', 'boot-toe-right',
+      'eye-left', 'eye-right', 'brow-left', 'brow-right', 'mouth',
+      'hair-cap', 'hair-back', 'jacket-chest-panel', 'jacket-chest-seam', 'jacket-back-yoke',
+      'collar-left', 'collar-right', 'upper-arm-left', 'upper-arm-right',
     ]) {
       expect(character.group.getObjectByName(name), name).toBeTruthy();
     }
-    expect(character.group.getObjectByName('head')?.children.length).toBeGreaterThanOrEqual(8);
-    expect(character.parts.torso.geometry.type).toBe('CylinderGeometry');
-    expect(character.parts.head.geometry.type).toBe('IcosahedronGeometry');
+    expect(character.group.getObjectByName('arm-joint-left')).toBeUndefined();
+    expect(character.group.getObjectByName('face-jaw')).toBeUndefined();
+    expect(character.group.getObjectByName('head')?.children.length).toBeGreaterThanOrEqual(7);
+    expect(character.parts.torso.geometry.type).toBe('BoxGeometry');
+    expect(character.parts.head.geometry.type).toBe('BoxGeometry');
+    const visibleBodyMeshes: THREE.Mesh[] = [];
+    character.parts.body.traverse((object) => {
+      if (object instanceof THREE.Mesh) visibleBodyMeshes.push(object);
+    });
+    expect(visibleBodyMeshes.every((mesh) => !['SphereGeometry', 'CapsuleGeometry'].includes(mesh.geometry.type))).toBe(true);
+    expect(character.parts.armL.position.x).toBeGreaterThan(-0.3);
+    expect(character.parts.armR.position.x).toBeLessThan(0.3);
     expect(character.parts.elbowL).toBeTruthy();
     expect(character.parts.kneeR).toBeTruthy();
   });

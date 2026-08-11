@@ -30,8 +30,16 @@ interface Crater {
 }
 
 const RADIUS = 30;
-const WARNING_DURATION = 8;
-const ACTIVE_DURATION = 10;
+export const BOMBARDMENT_TIMING = {
+  warning: 12,
+  active: 12,
+  initialCooldownMin: 55,
+  initialCooldownMax: 75,
+  repeatCooldownMin: 65,
+  repeatCooldownMax: 90,
+  shellIntervalMin: 0.85,
+  shellIntervalMax: 1.25,
+} as const;
 const BLAST_RADIUS = 9;
 const SHELL_CAP = 7;
 const CRATER_CAP = 18;
@@ -209,7 +217,9 @@ export class BombardmentSystem {
     this.cooldownScale = Math.max(0.5, Math.min(1.5, cooldownScale));
     this.state = 'idle';
     this.timer = 0;
-    this.cooldown = this.testOverride ? 0.35 : rand(18, 25) * this.cooldownScale;
+    this.cooldown = this.testOverride
+      ? 0.35
+      : rand(BOMBARDMENT_TIMING.initialCooldownMin, BOMBARDMENT_TIMING.initialCooldownMax) * this.cooldownScale;
     this.shellTimer = 0;
     this.marker.visible = false;
     for (const shell of this.shells) {
@@ -238,20 +248,23 @@ export class BombardmentSystem {
     this.timer -= dt;
     this.updateMarker(game.nowSec);
     if (this.state === 'warning') {
-      const warningDuration = this.testOverride === 'active' ? 0.25 : WARNING_DURATION;
-      if (this.timer <= WARNING_DURATION - warningDuration) this.beginBombing(game);
+      const warningDuration = this.testOverride === 'active' ? 0.25 : BOMBARDMENT_TIMING.warning;
+      if (this.timer <= BOMBARDMENT_TIMING.warning - warningDuration) this.beginBombing(game);
       return;
     }
 
     this.shellTimer -= dt;
     while (this.shellTimer <= 0 && this.timer > 0) {
       this.spawnShell(game);
-      this.shellTimer += rand(0.62, 1.05);
+      this.shellTimer += rand(BOMBARDMENT_TIMING.shellIntervalMin, BOMBARDMENT_TIMING.shellIntervalMax);
     }
     if (this.timer <= 0) {
       this.state = 'idle';
       this.marker.visible = false;
-      this.cooldown = rand(34, 48) * this.cooldownScale;
+      this.cooldown = rand(
+        BOMBARDMENT_TIMING.repeatCooldownMin,
+        BOMBARDMENT_TIMING.repeatCooldownMax,
+      ) * this.cooldownScale;
     }
   }
 
@@ -273,7 +286,7 @@ export class BombardmentSystem {
   setTestArea(game: Game, x: number, z: number, state: Exclude<BombardmentState, 'idle'>): void {
     this.center.set(x, z);
     this.state = state;
-    this.timer = state === 'warning' ? WARNING_DURATION : ACTIVE_DURATION;
+    this.timer = state === 'warning' ? BOMBARDMENT_TIMING.warning : BOMBARDMENT_TIMING.active;
     this.shellTimer = 0;
     this.marker.visible = true;
     this.syncMarkerToTerrain(game);
@@ -291,7 +304,7 @@ export class BombardmentSystem {
       return;
     }
     this.state = 'warning';
-    this.timer = WARNING_DURATION;
+    this.timer = BOMBARDMENT_TIMING.warning;
     this.marker.visible = true;
     this.syncMarkerToTerrain(game);
     game.hud.toast('附近出现轰炸区', 'warning');
@@ -300,7 +313,7 @@ export class BombardmentSystem {
 
   private beginBombing(game: Game): void {
     this.state = 'active';
-    this.timer = ACTIVE_DURATION;
+    this.timer = BOMBARDMENT_TIMING.active;
     this.shellTimer = 0;
     game.hud.toast('轰炸开始', 'danger');
   }

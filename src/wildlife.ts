@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { applySurfaceAsset } from './assets';
-import { WATER_Y, riverZAt, type World } from './world';
+import { ROAD_PATHS, WATER_Y, riverZAt, type World } from './world';
 import { regionAt } from './regions';
 import { resolveBodyAgainstVehicle, VEHICLE_SPEC, type Vehicle } from './vehicles';
 
@@ -60,7 +60,7 @@ export const WILDLIFE_COUNTS: Readonly<Record<WildlifeKind, number>> = Object.fr
   sheep: 8,
   fish: 14,
   bird: 12,
-  tiger: 2,
+  tiger: 3,
 });
 
 const MAT = {
@@ -80,10 +80,11 @@ const MAT = {
   tigerLight: new THREE.MeshStandardMaterial({ color: 0xe9c38f, roughness: 0.92 }),
   tigerStripe: new THREE.MeshStandardMaterial({ color: 0x221c18, roughness: 0.96 }),
   tigerEye: new THREE.MeshStandardMaterial({ color: 0xe8c340, emissive: 0x9f7418, emissiveIntensity: 0.6, roughness: 0.42 }),
-  chestWood: new THREE.MeshStandardMaterial({ color: 0x68472d, roughness: 0.88 }),
-  chestDark: new THREE.MeshStandardMaterial({ color: 0x34261f, roughness: 0.9 }),
-  chestMetal: new THREE.MeshStandardMaterial({ color: 0xc79b45, emissive: 0x6f4b15, emissiveIntensity: 0.32, roughness: 0.42, metalness: 0.58 }),
-  chestGlow: new THREE.MeshStandardMaterial({ color: 0x9ed66d, emissive: 0x6ebc4e, emissiveIntensity: 1.2, roughness: 0.55 }),
+  chestWood: new THREE.MeshStandardMaterial({ color: 0xb66d24, emissive: 0x5a2507, emissiveIntensity: 0.32, roughness: 0.62 }),
+  chestDark: new THREE.MeshStandardMaterial({ color: 0x4a2415, roughness: 0.82 }),
+  chestMetal: new THREE.MeshStandardMaterial({ color: 0xffcf43, emissive: 0xc76a08, emissiveIntensity: 1.05, roughness: 0.2, metalness: 0.86 }),
+  chestGlow: new THREE.MeshStandardMaterial({ color: 0xffe36d, emissive: 0xffa000, emissiveIntensity: 2.1, roughness: 0.18, metalness: 0.42 }),
+  chestGem: new THREE.MeshStandardMaterial({ color: 0x8ff9ff, emissive: 0x25bddd, emissiveIntensity: 1.8, roughness: 0.15, metalness: 0.18 }),
   chestLeafA: new THREE.MeshStandardMaterial({ color: 0x4e6b38, roughness: 0.98 }),
   chestLeafB: new THREE.MeshStandardMaterial({ color: 0x77804a, roughness: 0.98 }),
 };
@@ -368,6 +369,44 @@ function buildForestTreasure(): { group: THREE.Group; lid: THREE.Group; loot: TH
   lid.add(lidTrim);
   group.add(lid);
 
+  // 宝箱关闭时也有清晰的稀有物识别度: 蓝宝石锁芯、金色辉光和环绕闪点。
+  const lockGem = mesh(new THREE.OctahedronGeometry(0.095, 1), MAT.chestGem, 0, 0.5, 0.665, 0.9, 1.2, 0.45);
+  lockGem.name = 'treasure-lock-gem';
+  group.add(lockGem);
+  for (let index = 0; index < 12; index++) {
+    const angle = index / 12 * Math.PI * 2;
+    const spark = mesh(
+      new THREE.OctahedronGeometry(index % 3 === 0 ? 0.045 : 0.03, 0),
+      index % 4 === 0 ? MAT.chestGem : MAT.chestGlow,
+      Math.cos(angle) * (0.88 + (index % 2) * 0.12),
+      0.34 + (index % 4) * 0.2,
+      Math.sin(angle) * (0.62 + (index % 3) * 0.08),
+    );
+    spark.name = 'treasure-spark';
+    spark.userData.baseY = spark.position.y;
+    spark.userData.phase = index * 0.71;
+    group.add(spark);
+  }
+  const aura = new THREE.PointLight(0xffb72f, 2.4, 11, 1.7);
+  aura.name = 'treasure-aura-light';
+  aura.position.set(0, 1.05, 0.1);
+  group.add(aura);
+  const halo = new THREE.Mesh(
+    new THREE.RingGeometry(0.72, 1.16, 48),
+    new THREE.MeshBasicMaterial({
+      color: 0xffc438,
+      transparent: true,
+      opacity: 0.3,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  halo.name = 'treasure-golden-halo';
+  halo.position.y = 0.035;
+  halo.rotation.x = -Math.PI / 2;
+  group.add(halo);
+
   const lining = mesh(new THREE.BoxGeometry(1.25, 0.075, 0.7), MAT.chestDark, 0, 0.76, 0);
   lining.name = 'treasure-lining';
   group.add(lining);
@@ -489,7 +528,22 @@ export class WildlifeSystem {
       const nearbyTrees = this.world.cyls.filter((collider) => collider.tag === 'tree' &&
         Math.hypot(x - collider.x, z - collider.z) >= 3.2 &&
         Math.hypot(x - collider.x, z - collider.z) <= 22).length;
-      if (ground <= WATER_Y + 4.5 || slope > 0.34 || bushBlocked || nearbyTrees < 4 ||
+      const buildingDistance = this.world.buildings.plots.reduce((nearest, plot) => {
+        const dx = Math.max(plot.minX - x, 0, x - plot.maxX);
+        const dz = Math.max(plot.minZ - z, 0, z - plot.maxZ);
+        return Math.min(nearest, Math.hypot(dx, dz));
+      }, Number.POSITIVE_INFINITY);
+      let roadDistance = Number.POSITIVE_INFINITY;
+      for (const path of ROAD_PATHS) for (let index = 0; index < path.length - 1; index++) {
+        const a = path[index] as readonly [number, number];
+        const b = path[index + 1] as readonly [number, number];
+        const vx = b[0] - a[0];
+        const vz = b[1] - a[1];
+        const t = Math.max(0, Math.min(1, ((x - a[0]) * vx + (z - a[1]) * vz) / (vx * vx + vz * vz)));
+        roadDistance = Math.min(roadDistance, Math.hypot(x - a[0] - vx * t, z - a[1] - vz * t));
+      }
+      if (ground <= WATER_Y + 4.5 || slope > 0.34 || bushBlocked || nearbyTrees < 5 ||
+        buildingDistance < 55 || roadDistance < 18 ||
         !this.world.pointFree(x, z, 2.3, WATER_Y + 0.35, 16)) continue;
       chosenX = x;
       chosenZ = z;
@@ -497,9 +551,7 @@ export class WildlifeSystem {
       break;
     }
     if (!found) {
-      // 极端生成结果仍使用林场中心附近的确定性地面，保持系统可用且坐标有限。
-      chosenX = 18;
-      chosenZ = -212;
+      throw new Error('树林宝箱没有找到远离建筑和道路的安全生成点');
     }
     const ground = this.world.getHeight(chosenX, chosenZ);
     const built = buildForestTreasure();
@@ -628,6 +680,19 @@ export class WildlifeSystem {
     onTigerAttack?: TigerAttackHandler,
   ): void {
     this.time += dt;
+    for (const spark of this.treasure.group.children.filter((child) => child.name === 'treasure-spark')) {
+      const phase = Number(spark.userData.phase ?? 0);
+      spark.position.y = Number(spark.userData.baseY ?? 0.5) + Math.sin(this.time * 2.6 + phase) * 0.09;
+      spark.rotation.y += dt * (1.3 + phase * 0.08);
+      spark.scale.setScalar(0.72 + (Math.sin(this.time * 4.2 + phase) * 0.5 + 0.5) * 0.5);
+    }
+    const aura = this.treasure.group.getObjectByName('treasure-aura-light') as THREE.PointLight | undefined;
+    if (aura) aura.intensity = 2.15 + Math.sin(this.time * 2.1) * 0.38;
+    const halo = this.treasure.group.getObjectByName('treasure-golden-halo');
+    if (halo) {
+      halo.rotation.z = this.time * 0.22;
+      halo.scale.setScalar(0.96 + Math.sin(this.time * 1.8) * 0.045);
+    }
     if (this.treasure.opened && this.treasure.lidT < 1) {
       this.treasure.lidT = Math.min(1, this.treasure.lidT + dt * 2.3);
       this.treasure.lid.rotation.x = -1.72 * this.treasure.lidT;
