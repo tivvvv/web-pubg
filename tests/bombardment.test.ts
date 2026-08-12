@@ -1,8 +1,13 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { BOMBARDMENT_TIMING, bombardmentEscapeVector } from '../src/bombardment';
+import { BOMBARDMENT_BOUNDARY_HALF_WIDTH, BOMBARDMENT_TIMING, bombardmentEscapeVector } from '../src/bombardment';
 
 describe('轰炸区避险方向', () => {
+  it('贴地高亮边界带具备足够辨识宽度', () => {
+    expect(BOMBARDMENT_BOUNDARY_HALF_WIDTH).toBeGreaterThanOrEqual(0.8);
+    expect(BOMBARDMENT_BOUNDARY_HALF_WIDTH).toBeLessThanOrEqual(1.2);
+  });
+
   it('首轮和后续轰炸保留充足搜索与转移间隔', () => {
     expect(BOMBARDMENT_TIMING.initialCooldownMin).toBeGreaterThanOrEqual(50);
     expect(BOMBARDMENT_TIMING.initialCooldownMax).toBeGreaterThan(BOMBARDMENT_TIMING.initialCooldownMin);

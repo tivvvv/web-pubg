@@ -183,13 +183,29 @@ export class Minimap {
       const bz = this.toMap(bombardment.z);
       const br = (bombardment.radius / (WORLD_HALF * 2)) * s;
       ctx.save();
-      ctx.fillStyle = bombardment.state === 'active' ? 'rgba(215,38,27,0.34)' : 'rgba(205,45,32,0.2)';
+      const hazard = ctx.createRadialGradient(bx, bz, br * 0.1, bx, bz, br);
+      if (bombardment.state === 'active') {
+        hazard.addColorStop(0, 'rgba(235,45,27,0.18)');
+        hazard.addColorStop(0.72, 'rgba(218,35,24,0.3)');
+        hazard.addColorStop(1, 'rgba(255,38,26,0.48)');
+      } else {
+        hazard.addColorStop(0, 'rgba(220,65,38,0.08)');
+        hazard.addColorStop(0.75, 'rgba(220,55,35,0.16)');
+        hazard.addColorStop(1, 'rgba(255,88,56,0.3)');
+      }
+      ctx.fillStyle = hazard;
       ctx.strokeStyle = bombardment.state === 'active' ? '#ff3e2e' : 'rgba(255,91,70,0.95)';
       ctx.lineWidth = bombardment.state === 'active' ? 2 : 1.5;
       if (bombardment.state === 'warning') ctx.setLineDash([3, 2]);
       ctx.beginPath();
       ctx.arc(bx, bz, br, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineWidth = 0.8;
+      ctx.strokeStyle = bombardment.state === 'active' ? 'rgba(255,210,170,0.8)' : 'rgba(255,175,140,0.58)';
+      ctx.beginPath();
+      ctx.arc(bx, bz, br * 0.84, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }

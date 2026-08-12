@@ -112,6 +112,21 @@ function interiorRouteExists(
 }
 
 describe('地图与建筑终极几何巡检', () => {
+  it('全地图每个五米网格都能返回有限的地形高度和坡度', () => {
+    const world = createWorld();
+    for (let z = -350; z <= 350; z += 5) {
+      for (let x = -350; x <= 350; x += 5) {
+        const height = world.getHeight(x, z);
+        const slope = world.slopeAt(x, z);
+        expect(Number.isFinite(height), `地形 ${x},${z} 返回非有限高度`).toBe(true);
+        expect(Number.isFinite(slope), `地形 ${x},${z} 返回非有限坡度`).toBe(true);
+        expect(height, `地形 ${x},${z} 低于地图允许范围`).toBeGreaterThanOrEqual(-7);
+        expect(height, `地形 ${x},${z} 高于地图允许范围`).toBeLessThanOrEqual(17);
+        expect(slope, `地形 ${x},${z} 返回负坡度`).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
   it('全部建筑原型都有落位且建筑安全边界互不重叠', () => {
     const world = createWorld();
     const plots = world.buildings.plots as Plot[];
@@ -241,6 +256,32 @@ describe('地图与建筑终极几何巡检', () => {
     }
   });
 
+  it('每栋建筑的每一层都有可站立且能被屋顶遮蔽的室内区域', () => {
+    const world = createWorld();
+    for (const [plotIndex, plot] of (world.buildings.plots as Plot[]).entries()) {
+      const storeys = plot.arch === 'apartment' ? plot.storeys ?? 3
+        : plot.arch === 'cottage2' || plot.arch === 'terrace' ? 2 : 1;
+      const ix0 = plot.minX + 2;
+      const ix1 = plot.maxX - 2;
+      const iz0 = plot.minZ + 2;
+      const iz1 = plot.maxZ - 2;
+      for (let level = 0; level < storeys; level++) {
+        const feetY = plot.flatH + 0.28 + level * (2.9 + 0.24);
+        let walkable = 0;
+        let sheltered = 0;
+        for (let gx = 1; gx <= 6; gx++) for (let gz = 1; gz <= 6; gz++) {
+          const x = ix0 + (ix1 - ix0) * gx / 7;
+          const z = iz0 + (iz1 - iz0) * gz / 7;
+          if (!world.navPointFree(x, z, feetY, 0.32, false)) continue;
+          walkable++;
+          if (world.isShelteredAt(x, z, feetY)) sheltered++;
+        }
+        expect(walkable, `建筑 ${plotIndex} ${plot.arch} 第 ${level + 1} 层没有可站立区域`).toBeGreaterThan(0);
+        expect(sheltered, `建筑 ${plotIndex} ${plot.arch} 第 ${level + 1} 层缺少有效屋顶遮蔽`).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it('磐石城拥有两栋不同高度且屋顶可达的高层建筑', () => {
     const world = createWorld();
     const towers = (world.buildings.plots as Plot[])
@@ -309,6 +350,33 @@ describe('地图与建筑终极几何巡检', () => {
         }
       }
     }
+  });
+
+  it('高楼楼梯跳跃撞到楼板时停止上升而不会被横向推出外墙', () => {
+    const world = createWorld();
+    const tower = (world.buildings.plots as Plot[]).find((plot) => plot.arch === 'apartment');
+    expect(tower).toBeDefined();
+    if (!tower) return;
+    const firstFloorY = tower.flatH + 0.28;
+    const ceiling = world.aabbs.find((collider) => (
+      collider.tag === 'floor' &&
+      Math.abs(collider.minY - (firstFloorY + 2.9)) < 0.05 &&
+      collider.minX >= tower.minX + 1.8 && collider.maxX <= tower.maxX - 1.8
+    ));
+    expect(ceiling).toBeDefined();
+    if (!ceiling) return;
+    const x = (ceiling.minX + ceiling.maxX) * 0.5;
+    const z = (ceiling.minZ + ceiling.maxZ) * 0.5;
+    const previousFeetY = ceiling.minY - 1.76;
+    const position = new THREE.Vector3(x, previousFeetY + 0.16, z);
+
+    expect(world.resolveCharacterCeiling(position, 0.38, previousFeetY)).toBe(true);
+    expect(position.y + 1.7).toBeLessThan(ceiling.minY);
+    world.resolveCollision(position, 0.38);
+    expect(position.x).toBeCloseTo(x, 6);
+    expect(position.z).toBeCloseTo(z, 6);
+    expect(position.x).toBeGreaterThan(tower.minX + 2);
+    expect(position.x).toBeLessThan(tower.maxX - 2);
   });
 
   it('所有双层住宅和排屋的楼梯在三条行走线上都有连续净空', () => {

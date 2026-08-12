@@ -7,6 +7,7 @@ import type { WeatherKind } from './environment';
 import type { ScopeMode } from './gunplay';
 import { SQUAD_ORDER_LABELS, type SquadOrderKind } from './squadcommands';
 import type { PlayerFlowTone } from './playerflow';
+import { MATCH_PLAYER_COUNT } from './matchbalance';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -212,7 +213,7 @@ export class Hud {
 
   setDeath(stats: GameStats, detail: string): void {
     el('death-reason').textContent = detail;
-    el('death-placement').textContent = `#${stats.placement} / 24`;
+    el('death-placement').textContent = `#${stats.placement} / ${MATCH_PLAYER_COUNT}`;
     el('death-kills').textContent = String(stats.kills);
     el('death-damage').textContent = String(Math.round(stats.damage));
     el('death-time').textContent = fmtTime(stats.timeSec);

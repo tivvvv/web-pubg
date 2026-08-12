@@ -32,6 +32,7 @@ describe('固定回归场景入口', () => {
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&traverse=up&arch=terrace');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&traverse=up&arch=cottage2&stance=crouch');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&traverse=up&arch=apartment&plot=last');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&traverse=up&arch=apartment&plot=last&jump=1');
     for (const arch of ['terrace', 'barn', 'shop', 'gym']) {
       expect(RELEASE_SCENARIO_ROUTES).toContain(`scenario=stairs&view=facade&arch=${arch}`);
     }

@@ -1064,11 +1064,15 @@ export class Character {
   applyMove(vx: number, vz: number, dt: number, world: World): void {
     const oldX = this.pos.x;
     const oldZ = this.pos.z;
+    const oldY = this.pos.y;
     const wasGrounded = this.grounded;
     this.pos.x += vx * dt;
     this.pos.z += vz * dt;
     this.vy -= 22 * dt;
     this.pos.y += this.vy * dt;
+    // 先处理从下方撞击楼板。若直接交给水平碰撞，大面积楼板会沿最短轴把
+    // 跳跃中的角色推出整栋高楼，表现为在楼梯上跳一下便穿过外墙。
+    if (this.vy > 0 && world.resolveCharacterCeiling(this.pos, this.radius, oldY)) this.vy = 0;
     world.resolveCollision(this.pos, this.radius);
     const ground = world.groundHeight(this.pos.x, this.pos.z, this.pos.y + 0.1);
     this.groundH = ground;

@@ -97,6 +97,31 @@ export interface VehicleCollisionBody {
   readonly alive: boolean;
 }
 
+export interface VehicleWreckImpulse {
+  vx: number;
+  vy: number;
+  vz: number;
+  yaw: number;
+  pitch: number;
+  roll: number;
+}
+
+// 确定性的爆炸冲量便于测试，也保证同一车型的抛飞力度稳定。保留少量原车速，
+// 再向车身侧上方掀起，使残骸能被看清而不是垂直起落。
+export function vehicleWreckImpulse(kind: VehicleKind, yaw: number, speed: number): VehicleWreckImpulse {
+  const massScale = kind === 'moto' ? 1.22 : kind === 'buggy' ? 1.08 : 0.94;
+  const forward = clamp(speed, -12, 20) * 0.26;
+  const side = (kind === 'moto' ? 4.4 : kind === 'buggy' ? 3.7 : 3.15) * massScale;
+  return {
+    vx: Math.sin(yaw) * forward + Math.cos(yaw) * side,
+    vy: (kind === 'moto' ? 9.2 : kind === 'buggy' ? 8.1 : 7.2) * massScale,
+    vz: Math.cos(yaw) * forward - Math.sin(yaw) * side,
+    yaw: (kind === 'moto' ? 3.9 : 2.5) * massScale,
+    pitch: (kind === 'moto' ? 5.4 : kind === 'buggy' ? 4.1 : 3.2) * massScale,
+    roll: (kind === 'moto' ? -6.2 : -3.7) * massScale,
+  };
+}
+
 // 角色脚底圆与载具水平 OBB 的精确推出。碰撞跟随车身朝向，避免用包围圆时
 // 在车头/车尾两侧产生明显空气墙，也避免停放载具只有射线命中却能被人物穿过。
 export function resolveBodyAgainstVehicle(
@@ -252,6 +277,13 @@ export class Vehicle {
   readonly pos: THREE.Vector3;
   readonly group = new THREE.Group();
   wreckCollider: Collider | null = null;
+  wreckAirT = 0;
+  wreckVx = 0;
+  wreckVy = 0;
+  wreckVz = 0;
+  wreckYawV = 0;
+  wreckPitchV = 0;
+  wreckRollV = 0;
   private wheels: THREE.Object3D[] = [];
   private steerWheels: THREE.Object3D[] = [];
   private mats: THREE.MeshStandardMaterial[] = [];
@@ -695,12 +727,32 @@ export class VehicleManager {
     }
   }
 
-  // 爆炸: 半径伤害 + 残骸变暗 + 静态碰撞 + 强制下车
+  private registerWreckCollider(v: Vehicle, world: World): void {
+    if (v.wreckCollider) return;
+    const collider: Collider = {
+      kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9,
+      y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock',
+    };
+    world.addCollider(collider);
+    v.wreckCollider = collider;
+  }
+
+  // 爆炸: 半径伤害 + 油箱殉爆 + 残骸抛飞翻滚 + 强制下车
   private explode(v: Vehicle, game: Game): void {
+    const speedBeforeBlast = v.speed;
     v.exploded = true;
     v.dead = true;
     v.speed = 0;
-    game.effects.explosion(v.pos, 1.15);
+    const impulse = vehicleWreckImpulse(v.kind, v.yaw, speedBeforeBlast);
+    v.wreckAirT = 3.2;
+    v.wreckVx = impulse.vx;
+    v.wreckVy = impulse.vy;
+    v.wreckVz = impulse.vz;
+    v.wreckYawV = impulse.yaw;
+    v.wreckPitchV = impulse.pitch;
+    v.wreckRollV = impulse.roll;
+    v.fireT = 0;
+    game.effects.vehicleExplosion(v.pos, v.kind === 'moto' ? 0.9 : 1.08);
     game.soundAt(v.pos, (d, p) => game.audio.explosion(d, p));
     game.addBlastFrom(v.pos);
     for (const c of game.chars) {
@@ -710,13 +762,7 @@ export class VehicleManager {
       game.damageChar(c, 100 - 85 * (d / 8), false, v.driver, '载具爆炸', true);
     }
     v.darken();
-    // 残骸成为静态障碍
-    const collider: Collider = {
-      kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9,
-      y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock',
-    };
-    game.world.addCollider(collider);
-    v.wreckCollider = collider;
+    // 残骸落稳前保持动态，避免静态碰撞还留在爆炸原点。
     if (v.driver) game.forceExitVehicle(v.driver, 55);
   }
 
@@ -726,12 +772,7 @@ export class VehicleManager {
     v.dead = true;
     v.speed = 0;
     v.darken();
-    const collider: Collider = {
-      kind: 'cyl', x: v.pos.x, z: v.pos.z, r: VEHICLE_SPEC[v.kind].radius * 0.9,
-      y0: v.pos.y - 1, y1: v.pos.y + 1.4, tag: 'rock',
-    };
-    game.world.addCollider(collider);
-    v.wreckCollider = collider;
+    this.registerWreckCollider(v, game.world);
     if (v.driver?.isPlayer) game.hud.toast('车辆进水熄火');
     if (v.driver) game.forceExitVehicle(v.driver, 0);
   }
@@ -749,6 +790,51 @@ export class VehicleManager {
         if (v.burnT <= 0) {
           v.burnT = -1;
           this.explode(v, game);
+        }
+      }
+      if (v.exploded && v.wreckAirT > 0) {
+        const oldX = v.pos.x;
+        const oldZ = v.pos.z;
+        v.wreckAirT = Math.max(0, v.wreckAirT - dt);
+        v.fireT -= dt;
+        if (v.fireT <= 0 && v.wreckAirT > 0.65) {
+          v.fireT = 0.14;
+          game.effects.vehicleFire(v.pos);
+        }
+        v.wreckVy -= 18 * dt;
+        v.pos.x += v.wreckVx * dt;
+        v.pos.y += v.wreckVy * dt;
+        v.pos.z += v.wreckVz * dt;
+        v.yaw += v.wreckYawV * dt;
+        v.pitch += v.wreckPitchV * dt;
+        v.roll += v.wreckRollV * dt;
+        if (game.world.resolveVehicle(v.pos, VEHICLE_SPEC[v.kind].radius * 0.82)) {
+          v.wreckVx = -(v.pos.x - oldX) * 3.2;
+          v.wreckVz = -(v.pos.z - oldZ) * 3.2;
+          v.wreckYawV *= -0.42;
+        }
+        const ground = game.world.groundHeight(v.pos.x, v.pos.z, v.pos.y + 1.2);
+        if (v.pos.y <= ground) {
+          v.pos.y = ground;
+          if (Math.abs(v.wreckVy) > 2.2 && v.wreckAirT > 0.35) {
+            const impact = clamp(Math.abs(v.wreckVy) / 10, 0.25, 1);
+            v.wreckVy = Math.abs(v.wreckVy) * 0.26;
+            v.wreckVx *= 0.58;
+            v.wreckVz *= 0.58;
+            v.wreckYawV *= 0.58;
+            v.wreckPitchV *= 0.46;
+            v.wreckRollV *= 0.46;
+            game.effects.landingDust(v.pos, impact);
+            game.soundAt(v.pos, (distance, pan) => game.audio.vehicleImpact(distance, pan), 90);
+          } else {
+            v.wreckAirT = 0;
+          }
+        }
+        if (v.wreckAirT <= 0) {
+          v.pos.y = game.world.groundHeight(v.pos.x, v.pos.z, v.pos.y + 1.2);
+          v.pitch = clamp(v.pitch, -0.62, 0.62);
+          v.roll = clamp(v.roll, -1.18, 1.18);
+          this.registerWreckCollider(v, game.world);
         }
       }
       v.sync();

@@ -36,6 +36,7 @@ const MAIN_BRIDGE_HALF_WIDTH = 2.7;
 export const SUN_SHADOW_MAP_SIZE = 2048;
 export const CHARACTER_COLLISION_HEIGHT = 1.7;
 export const PLATFORM_TOP_SNAP_TOLERANCE = 0.12;
+const CEILING_CONTACT_GAP = 0.025;
 
 export function characterOverlapsColliderHeight(feetY: number, minY: number, maxY: number): boolean {
   return feetY < maxY - 0.02 && feetY + CHARACTER_COLLISION_HEIGHT > minY;
@@ -4724,10 +4725,14 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
   }
 
   isShelteredAt(x: number, z: number, feetY: number): boolean {
+    // 普通住宅层高约 3m，但体育馆等挑空建筑的实体屋面会高出角色近 9m。
+    // 遮蔽检测需要覆盖这类完整室内空间，否则雨声、枪声混响和天气效果会在
+    // 体育馆大厅内错误按室外处理。上限仍保持有限，避免把高空桥梁误当屋顶。
+    const maxRoofDistance = 12;
     for (const b of this.aabbGrid.at(x, z)) {
       if (b.off || (b.tag !== 'floor' && b.tag !== 'roof')) continue;
       if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
-      if (b.minY > feetY + 1.2 && b.minY < feetY + 5.2) return true;
+      if (b.minY > feetY + 1.2 && b.minY < feetY + maxRoofDistance) return true;
     }
     return false;
   }
@@ -4777,6 +4782,27 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
       }
     }
     return hit;
+  }
+
+  // 2D 圆 vs 静态碰撞体推出；楼板可站立，但侧面与角色身体相交时仍参与阻挡。
+  resolveCharacterCeiling(p: THREE.Vector3, radius: number, previousFeetY: number): boolean {
+    if (p.y <= previousFeetY) return false;
+    const previousTop = previousFeetY + CHARACTER_COLLISION_HEIGHT;
+    const nextTop = p.y + CHARACTER_COLLISION_HEIGHT;
+    let ceiling = Infinity;
+    for (const b of this.aabbGrid.at(p.x, p.z)) {
+      if (b.off || (b.tag !== 'floor' && b.tag !== 'roof')) continue;
+      // 只处理这一帧从下向上穿过的楼板底面。水平圆需要真实压进楼板范围，
+      // 不能因为半径擦到梯井边缘就在开放洞口中错误撞头。
+      if (previousTop > b.minY + CEILING_CONTACT_GAP || nextTop < b.minY) continue;
+      const overlapX = p.x > b.minX + radius * 0.12 && p.x < b.maxX - radius * 0.12;
+      const overlapZ = p.z > b.minZ + radius * 0.12 && p.z < b.maxZ - radius * 0.12;
+      if (!overlapX || !overlapZ) continue;
+      ceiling = Math.min(ceiling, b.minY);
+    }
+    if (!Number.isFinite(ceiling)) return false;
+    p.y = Math.min(p.y, ceiling - CHARACTER_COLLISION_HEIGHT - CEILING_CONTACT_GAP);
+    return true;
   }
 
   // 2D 圆 vs 静态碰撞体推出；楼板可站立，但侧面与角色身体相交时仍参与阻挡。

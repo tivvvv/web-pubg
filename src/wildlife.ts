@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { applySurfaceAsset } from './assets';
 import { ROAD_PATHS, WATER_Y, riverZAt, type World } from './world';
-import { regionAt } from './regions';
+import { regionById } from './regions';
 import { resolveBodyAgainstVehicle, VEHICLE_SPEC, type Vehicle } from './vehicles';
 
 export type WildlifeKind = 'cow' | 'sheep' | 'fish' | 'bird' | 'tiger';
@@ -13,6 +13,16 @@ export interface ForestTreasure {
   readonly loot: THREE.Group;
   opened: boolean;
   lidT: number;
+}
+
+export interface ForestCoreMetrics {
+  readonly nearbyTrees: number;
+  readonly coveredTreeSectors: number;
+  readonly buildingDistance: number;
+  readonly roadDistance: number;
+  readonly lumberyardDistance: number;
+  readonly dryLandSectors: number;
+  readonly shorelineClearance: number;
 }
 
 export interface WildlifeEntity {
@@ -573,6 +583,86 @@ function raySphere(
   return near >= 0 ? near : -b + root >= 0 ? -b + root : Infinity;
 }
 
+function pointToSegmentDistance(
+  x: number,
+  z: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): number {
+  const vx = bx - ax;
+  const vz = bz - az;
+  const lengthSq = vx * vx + vz * vz;
+  const t = lengthSq > 0
+    ? Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / lengthSq))
+    : 0;
+  return Math.hypot(x - ax - vx * t, z - az - vz * t);
+}
+
+/**
+ * 用实际树木包围度和人造设施距离判断林区核心, 而不是误用行政区域圆心.
+ * 该指标同时供生成器和回归测试使用, 防止再次把林缘空地当成丛林中心.
+ */
+export function forestCoreMetrics(world: World, x: number, z: number): ForestCoreMetrics {
+  let nearbyTrees = 0;
+  let treeSectorMask = 0;
+  for (const collider of world.cyls) {
+    if (collider.tag !== 'tree') continue;
+    const dx = collider.x - x;
+    const dz = collider.z - z;
+    const distance = Math.hypot(dx, dz);
+    if (distance < 3.2 || distance > 30) continue;
+    nearbyTrees++;
+    const angle = (Math.atan2(dz, dx) + Math.PI * 2) % (Math.PI * 2);
+    treeSectorMask |= 1 << Math.floor(angle / (Math.PI * 0.25));
+  }
+
+  const buildingDistance = world.buildings.plots.reduce((nearest, plot) => {
+    const dx = Math.max(plot.minX - x, 0, x - plot.maxX);
+    const dz = Math.max(plot.minZ - z, 0, z - plot.maxZ);
+    return Math.min(nearest, Math.hypot(dx, dz));
+  }, Number.POSITIVE_INFINITY);
+
+  let roadDistance = Number.POSITIVE_INFINITY;
+  for (const path of ROAD_PATHS) {
+    for (let index = 0; index < path.length - 1; index++) {
+      const a = path[index] as readonly [number, number];
+      const b = path[index + 1] as readonly [number, number];
+      roadDistance = Math.min(roadDistance, pointToSegmentDistance(x, z, a[0], a[1], b[0], b[1]));
+    }
+  }
+
+  const lumberyard = world.mapSites.find((site) => site.id === 'mistwood-lumberyard');
+  const lumberyardDistance = lumberyard
+    ? Math.hypot(x - lumberyard.resolvedX, z - lumberyard.resolvedZ)
+    : Number.POSITIVE_INFINITY;
+  let dryLandSectors = 0;
+  let shorelineClearance = 72;
+  for (let sector = 0; sector < 8; sector++) {
+    const angle = sector / 8 * Math.PI * 2;
+    const px = x + Math.cos(angle) * 22;
+    const pz = z + Math.sin(angle) * 22;
+    if (world.getHeight(px, pz) > WATER_Y + 1.2) dryLandSectors++;
+    for (let radius = 8; radius <= 72; radius += 4) {
+      const sampleX = x + Math.cos(angle) * radius;
+      const sampleZ = z + Math.sin(angle) * radius;
+      if (world.getHeight(sampleX, sampleZ) > WATER_Y + 0.8) continue;
+      shorelineClearance = Math.min(shorelineClearance, radius);
+      break;
+    }
+  }
+  return {
+    nearbyTrees,
+    coveredTreeSectors: treeSectorMask.toString(2).replace(/0/g, '').length,
+    buildingDistance,
+    roadDistance,
+    lumberyardDistance,
+    dryLandSectors,
+    shorelineClearance,
+  };
+}
+
 export class WildlifeSystem {
   readonly root = new THREE.Group();
   readonly entities: WildlifeEntity[] = [];
@@ -627,47 +717,52 @@ export class WildlifeSystem {
   }
 
   private createForestTreasure(): ForestTreasure {
-    let chosenX = 0;
-    let chosenZ = -200;
-    let found = false;
-    for (let attempt = 0; attempt < 900; attempt++) {
-      const ring = 28 + (attempt % 16) * 3.8;
+    const forest = regionById('mistwood');
+    const deepTrees = this.world.cyls.filter((collider) => {
+      // 实际连续林带向雾松林标注区西北侧延伸, 不能再被区域圆形边界截断.
+      if (collider.tag !== 'tree' || collider.x > -60 || collider.z > -190) return false;
+      const metrics = forestCoreMetrics(this.world, collider.x, collider.z);
+      return metrics.nearbyTrees >= 24 && metrics.buildingDistance >= 70 && metrics.roadDistance >= 80 &&
+        metrics.lumberyardDistance >= 120 && metrics.dryLandSectors === 8 && metrics.shorelineClearance >= 44;
+    });
+    // 以真正处在连续密林中的树木质心作为搜索锚点. 这通常位于雾松林西北腹地,
+    // 与南侧道路入口和北境木场保持明显距离.
+    const coreX = deepTrees.length > 0
+      ? deepTrees.reduce((sum, tree) => sum + tree.x, 0) / deepTrees.length
+      : forest.x - 144;
+    const coreZ = deepTrees.length > 0
+      ? deepTrees.reduce((sum, tree) => sum + tree.z, 0) / deepTrees.length
+      : forest.z - 25;
+    let chosenX = coreX;
+    let chosenZ = coreZ;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let attempt = 0; attempt < 3200; attempt++) {
+      const ring = Math.sqrt(attempt / 3199) * 78;
       const angle = attempt * 2.399963 + 0.42;
-      const x = Math.cos(angle) * ring;
-      const z = -200 + Math.sin(angle) * ring * 0.82;
-      if (regionAt(x, z)?.id !== 'mistwood') continue;
+      const x = coreX + Math.cos(angle) * ring;
+      const z = coreZ + Math.sin(angle) * ring;
+      if (x > -60 || z > -190) continue;
       const ground = this.world.getHeight(x, z);
       const slope = Math.max(
         Math.abs(this.world.getHeight(x + 1.4, z) - this.world.getHeight(x - 1.4, z)),
         Math.abs(this.world.getHeight(x, z + 1.4) - this.world.getHeight(x, z - 1.4)),
       ) / 2.8;
-      const bushBlocked = this.world.bushes.some((bush) => Math.hypot(x - bush.x, z - bush.z) < bush.r + 2.15);
-      const nearbyTrees = this.world.cyls.filter((collider) => collider.tag === 'tree' &&
-        Math.hypot(x - collider.x, z - collider.z) >= 3.2 &&
-        Math.hypot(x - collider.x, z - collider.z) <= 22).length;
-      const buildingDistance = this.world.buildings.plots.reduce((nearest, plot) => {
-        const dx = Math.max(plot.minX - x, 0, x - plot.maxX);
-        const dz = Math.max(plot.minZ - z, 0, z - plot.maxZ);
-        return Math.min(nearest, Math.hypot(dx, dz));
-      }, Number.POSITIVE_INFINITY);
-      let roadDistance = Number.POSITIVE_INFINITY;
-      for (const path of ROAD_PATHS) for (let index = 0; index < path.length - 1; index++) {
-        const a = path[index] as readonly [number, number];
-        const b = path[index + 1] as readonly [number, number];
-        const vx = b[0] - a[0];
-        const vz = b[1] - a[1];
-        const t = Math.max(0, Math.min(1, ((x - a[0]) * vx + (z - a[1]) * vz) / (vx * vx + vz * vz)));
-        roadDistance = Math.min(roadDistance, Math.hypot(x - a[0] - vx * t, z - a[1] - vz * t));
-      }
-      if (ground <= WATER_Y + 4.5 || slope > 0.34 || bushBlocked || nearbyTrees < 5 ||
-        buildingDistance < 55 || roadDistance < 18 ||
-        !this.world.pointFree(x, z, 2.3, WATER_Y + 0.35, 16)) continue;
+      const bushBlocked = this.world.bushes.some((bush) => Math.hypot(x - bush.x, z - bush.z) < bush.r + 1.55);
+      const metrics = forestCoreMetrics(this.world, x, z);
+      if (ground <= WATER_Y + 4.5 || slope > 0.4 || bushBlocked ||
+        metrics.nearbyTrees < 28 || metrics.coveredTreeSectors < 7 || metrics.dryLandSectors < 8 ||
+        metrics.buildingDistance < 70 || metrics.roadDistance < 80 || metrics.lumberyardDistance < 120 ||
+        metrics.shorelineClearance < 44 ||
+        !this.world.pointFree(x, z, 1.55, WATER_Y + 0.35, 16)) continue;
+      const score = Math.hypot(x - coreX, z - coreZ) * 0.6 + slope * 20 -
+        metrics.nearbyTrees * 2.4 - metrics.coveredTreeSectors * 3.2 -
+        Math.min(metrics.buildingDistance, 110) * 0.08 - Math.min(metrics.lumberyardDistance, 130) * 0.06;
+      if (score >= bestScore) continue;
+      bestScore = score;
       chosenX = x;
       chosenZ = z;
-      found = true;
-      break;
     }
-    if (!found) {
+    if (!Number.isFinite(bestScore)) {
       throw new Error('树林宝箱没有找到远离建筑和道路的安全生成点');
     }
     const ground = this.world.getHeight(chosenX, chosenZ);

@@ -16,7 +16,7 @@ import { fireModeOf } from './gunplay';
 import type { HealId } from './heals';
 import { auditReleaseState } from './releaseaudit';
 import { ASSET_CATALOG_VERSION } from './assetcatalog';
-import type { WildlifeKind } from './wildlife';
+import { forestCoreMetrics, type WildlifeKind } from './wildlife';
 import {
   MatchStabilityMonitor, parseBoundedTestInteger, validateRoundReset,
   type StabilityActorSample, type StabilityResourceSnapshot,
@@ -35,6 +35,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=stairs&traverse=up&arch=terrace',
   'scenario=stairs&traverse=up&arch=apartment&plot=last',
   'scenario=stairs&traverse=up&arch=apartment&flight=2',
+  'scenario=stairs&traverse=up&arch=apartment&plot=last&jump=1',
   'scenario=stairs&view=entrance&arch=cottage2',
   'scenario=stairs&view=entrance&arch=apartment&plot=last&side=inside&open=both',
   'scenario=stairs&view=entrance&arch=barn&side=inside',
@@ -77,6 +78,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=parachute&collision=apartment',
   'scenario=parachute&stress=1',
   'scenario=vehicle&drive=1',
+  'scenario=vehicle&explode=1',
   'scenario=deathcrate',
   'scenario=bombardment',
   'scenario=bombardment&phase=active',
@@ -168,6 +170,10 @@ function scenarioBuildingPlot(game: Game, params: URLSearchParams) {
   if (params.get('slice') === '1') {
     return game.world.buildings.plots[game.world.buildings.verticalSlicePlotIndex];
   }
+  const requestedIndex = Number(params.get('plotIndex'));
+  if (Number.isInteger(requestedIndex) && requestedIndex >= 0 && requestedIndex < game.world.buildings.plots.length) {
+    return game.world.buildings.plots[requestedIndex];
+  }
   const matches = game.world.buildings.plots.filter((candidate) => candidate.arch === scenarioBuildingArch(params));
   return params.get('plot') === 'last' ? matches[matches.length - 1] : matches[0];
 }
@@ -185,6 +191,33 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.buildingAssetInstances = String(game.world.buildings.assetUsage.totalInstances);
   panel.dataset.mapLootSpotCount = String(game.world.mapLootSpots.length);
   panel.dataset.buildingVisualInstances = String(game.world.buildings.visualInstanceCount);
+  panel.dataset.buildingPlotCount = String(game.world.buildings.plots.length);
+  panel.dataset.buildingPlots = JSON.stringify(game.world.buildings.plots.map((plot, index) => ({
+    index,
+    arch: plot.arch,
+    storeys: buildingStoreys(plot),
+    x: Number(((plot.minX + plot.maxX) * 0.5).toFixed(1)),
+    z: Number(((plot.minZ + plot.maxZ) * 0.5).toFixed(1)),
+  })));
+  panel.dataset.shelterAudit = JSON.stringify(game.world.buildings.plots.flatMap((plot, index) => {
+    const ix0 = plot.minX + 2;
+    const ix1 = plot.maxX - 2;
+    const iz0 = plot.minZ + 2;
+    const iz1 = plot.maxZ - 2;
+    return Array.from({ length: buildingStoreys(plot) }, (_, level) => {
+      const y = plot.flatH + 0.28 + level * (2.9 + 0.24);
+      let samples = 0;
+      let sheltered = 0;
+      for (let gx = 1; gx <= 4; gx++) for (let gz = 1; gz <= 4; gz++) {
+        const x = ix0 + (ix1 - ix0) * gx / 5;
+        const z = iz0 + (iz1 - iz0) * gz / 5;
+        if (!game.world.navPointFree(x, z, y, 0.32, false)) continue;
+        samples++;
+        if (game.world.isShelteredAt(x, z, y)) sheltered++;
+      }
+      return { index, level: level + 1, samples, sheltered };
+    });
+  }));
   panel.dataset.buildingDetailInstances = String(game.world.buildings.modelDetailInstanceCount);
   panel.dataset.europeanFacadeDetails = String(game.world.buildings.europeanFacadeDetailCount);
   panel.dataset.europeanFacadeByArch = JSON.stringify(game.world.buildings.europeanFacadeDetailsByArch);
@@ -226,6 +259,20 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
     game.wildlife.treasure.pos.y,
     game.wildlife.treasure.pos.z,
   ].map((value) => value.toFixed(2)).join(',');
+  const forestCore = forestCoreMetrics(
+    game.world,
+    game.wildlife.treasure.pos.x,
+    game.wildlife.treasure.pos.z,
+  );
+  panel.dataset.forestTreasureCore = JSON.stringify({
+    trees: forestCore.nearbyTrees,
+    sectors: forestCore.coveredTreeSectors,
+    buildings: Number(forestCore.buildingDistance.toFixed(1)),
+    roads: Number(forestCore.roadDistance.toFixed(1)),
+    lumberyard: Number(forestCore.lumberyardDistance.toFixed(1)),
+    dryLandSectors: forestCore.dryLandSectors,
+    shoreline: forestCore.shorelineClearance,
+  });
   panel.dataset.forestTreasureOpened = String(game.wildlife.treasure.opened);
   const churchSite = game.world.landmarks.find((site) => site.kind === 'church');
   panel.dataset.churchSite = churchSite
@@ -277,6 +324,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.botDropTargets = JSON.stringify(
     game.bots.map((bot) => ({ x: Number(bot.dropTarget.x.toFixed(1)), z: Number(bot.dropTarget.z.toFixed(1)) })),
   );
+  panel.dataset.flightRoute = `${game.flightRouteId}:${game.flightAngle.toFixed(4)}:${game.flightOffset.toFixed(1)}`;
   panel.dataset.botDifficultyTiers = game.bots.map((bot) => bot.difficultyTier).join(',');
   panel.dataset.botDifficultyCounts = JSON.stringify(
     Object.fromEntries(
@@ -416,7 +464,12 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   if (id === 'stairs') {
     const plot = scenarioBuildingPlot(game, params);
     if (plot) {
+      panel.dataset.buildingPlotIndex = String(game.world.buildings.plots.indexOf(plot));
       panel.dataset.buildingArch = plot.arch;
+      panel.dataset.buildingStoreys = String(buildingStoreys(plot));
+      panel.dataset.inspectedFloor = params.get('view') === 'upper'
+        ? String(Math.max(2, Math.min(buildingStoreys(plot), Math.trunc(Number(params.get('floor')) || 2))))
+        : params.get('view') === 'roof' ? 'roof' : '1';
       panel.dataset.buildingBounds = [plot.minX + 2, plot.minZ + 2, plot.maxX - 2, plot.maxZ - 2]
         .map((value) => value.toFixed(2)).join(',');
     }
@@ -588,6 +641,18 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.aliveEnemies = String(game.chars.filter((actor) => actor.team === 'enemy' && actor.alive).length);
       if (controller.driving) {
         panel.dataset.vehicleState = `${controller.driving.kind}:${controller.driving.speed.toFixed(2)}:${controller.driving.hp.toFixed(1)}`;
+      } else if (id === 'vehicle') {
+        const inspectedVehicle = game.vehicles.list.find((vehicle) => vehicle.group.visible);
+        panel.dataset.vehicleState = inspectedVehicle ? [
+          inspectedVehicle.kind,
+          inspectedVehicle.hp.toFixed(1),
+          inspectedVehicle.burnT.toFixed(2),
+          inspectedVehicle.exploded ? 'exploded' : 'intact',
+          inspectedVehicle.wreckAirT.toFixed(2),
+          inspectedVehicle.pos.y.toFixed(2),
+          inspectedVehicle.pitch.toFixed(2),
+          inspectedVehicle.roll.toFixed(2),
+        ].join(':') : 'missing';
       } else {
         panel.dataset.vehicleState = 'on-foot';
       }
@@ -1187,6 +1252,10 @@ function setupStairs(game: Game): void {
       }
       game.input.keys.add('KeyW');
       window.setTimeout(() => game.input.keys.delete('KeyW'), 1500);
+      if (params.get('jump') === '1') {
+        window.setTimeout(() => game.input.keys.add('Space'), 420);
+        window.setTimeout(() => game.input.keys.delete('Space'), 620);
+      }
     }
     return;
   }
@@ -1567,6 +1636,13 @@ function setupVehicle(game: Game): void {
   vehicle.sync();
   player.yaw = dir.yaw;
   player.pitch = 0.02;
+  if (new URLSearchParams(window.location.search).get('explode') === '1') {
+    vehicle.hp = 0;
+    vehicle.burnT = 0.65;
+    player.char.pos.x -= dir.x * 7.5;
+    player.char.pos.z -= dir.z * 7.5;
+    player.char.pos.y = game.world.groundHeight(player.char.pos.x, player.char.pos.z, 30);
+  }
   if (new URLSearchParams(window.location.search).get('drive') === '1') {
     player.enterVehicle(vehicle, game);
     game.input.keys.add('KeyW');

@@ -44,6 +44,7 @@ const BLAST_RADIUS = 9;
 const SHELL_CAP = 7;
 const CRATER_CAP = 18;
 const RING_SEGMENTS = 64;
+export const BOMBARDMENT_BOUNDARY_HALF_WIDTH = 0.9;
 const UP = new THREE.Vector3(0, 1, 0);
 const CIRCLE_NORMAL = new THREE.Vector3(0, 0, 1);
 
@@ -109,9 +110,12 @@ export class BombardmentSystem {
   private areaMat: THREE.MeshBasicMaterial;
   private outerMat: THREE.LineBasicMaterial;
   private innerMat: THREE.LineBasicMaterial;
+  private boundaryMat: THREE.MeshBasicMaterial;
   private postMat: THREE.MeshBasicMaterial;
   private outerPos = new Float32Array((RING_SEGMENTS + 1) * 3);
   private innerPos = new Float32Array((RING_SEGMENTS + 1) * 3);
+  private boundaryPos = new Float32Array((RING_SEGMENTS + 1) * 6);
+  private boundaryMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private posts: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>[] = [];
   private shells: Shell[] = [];
   private shellCursor = 0;
@@ -124,7 +128,9 @@ export class BombardmentSystem {
   private cooldownScale = 1;
 
   constructor(scene: THREE.Scene) {
-    this.testOverride = new URLSearchParams(window.location.search).get('bombardment');
+    this.testOverride = typeof window === 'undefined'
+      ? null
+      : new URLSearchParams(window.location.search).get('bombardment');
 
     this.areaMat = new THREE.MeshBasicMaterial({
       color: 0xff2d20,
@@ -160,6 +166,36 @@ export class BombardmentSystem {
     outer.renderOrder = 4;
     inner.renderOrder = 4;
     this.marker.add(outer, inner);
+
+    const boundaryGeo = new THREE.BufferGeometry();
+    boundaryGeo.setAttribute('position', new THREE.BufferAttribute(this.boundaryPos, 3));
+    const boundaryIndices: number[] = [];
+    for (let i = 0; i < RING_SEGMENTS; i++) {
+      const a = i * 2;
+      const b = a + 1;
+      const c = a + 2;
+      const d = a + 3;
+      boundaryIndices.push(a, c, b, c, d, b);
+    }
+    boundaryGeo.setIndex(boundaryIndices);
+    this.boundaryMat = new THREE.MeshBasicMaterial({
+      color: 0xff4a2e,
+      transparent: true,
+      opacity: 0.34,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: true,
+      fog: false,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
+    });
+    this.boundaryMesh = new THREE.Mesh(boundaryGeo, this.boundaryMat);
+    this.boundaryMesh.name = 'bombardment-ground-boundary';
+    this.boundaryMesh.renderOrder = 4;
+    this.marker.add(this.boundaryMesh);
 
     this.postMat = new THREE.MeshBasicMaterial({
       color: 0xff6a4e, transparent: true, opacity: 0.7,
@@ -350,12 +386,18 @@ export class BombardmentSystem {
     for (let i = 0; i <= RING_SEGMENTS; i++) {
       const a = (i / RING_SEGMENTS) * Math.PI * 2;
       this.setRingPoint(this.outerPos, i, Math.cos(a) * RADIUS, Math.sin(a) * RADIUS, baseY, game);
-      this.setRingPoint(this.innerPos, i, Math.cos(a) * RADIUS * 0.58, Math.sin(a) * RADIUS * 0.58, baseY, game);
+      this.setRingPoint(this.innerPos, i, Math.cos(a) * (RADIUS - 1.45), Math.sin(a) * (RADIUS - 1.45), baseY, game);
+      this.setBoundaryPoint(i * 2, Math.cos(a) * (RADIUS - BOMBARDMENT_BOUNDARY_HALF_WIDTH),
+        Math.sin(a) * (RADIUS - BOMBARDMENT_BOUNDARY_HALF_WIDTH), baseY, game);
+      this.setBoundaryPoint(i * 2 + 1, Math.cos(a) * (RADIUS + BOMBARDMENT_BOUNDARY_HALF_WIDTH),
+        Math.sin(a) * (RADIUS + BOMBARDMENT_BOUNDARY_HALF_WIDTH), baseY, game);
     }
     const outer = this.marker.children[1] as THREE.Line;
     const inner = this.marker.children[2] as THREE.Line;
     (outer.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     (inner.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+    (this.boundaryMesh.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+    this.boundaryMesh.geometry.computeBoundingSphere();
     for (let i = 0; i < this.posts.length; i++) {
       const a = (i / this.posts.length) * Math.PI * 2;
       const x = Math.cos(a) * RADIUS;
@@ -375,11 +417,20 @@ export class BombardmentSystem {
     array[j + 2] = z;
   }
 
+  private setBoundaryPoint(i: number, x: number, z: number, baseY: number, game: Game): void {
+    const j = i * 3;
+    this.boundaryPos[j] = x;
+    this.boundaryPos[j + 1] = game.world.getHeight(this.center.x + x, this.center.y + z) - baseY + 0.1;
+    this.boundaryPos[j + 2] = z;
+  }
+
   private updateMarker(now: number): void {
     const pulse = 0.5 + Math.sin(now * (this.state === 'active' ? 8 : 4)) * 0.5;
     this.areaMat.opacity = (this.state === 'active' ? 0.035 : 0.018) + pulse * 0.014;
     this.outerMat.opacity = 0.58 + pulse * 0.42;
     this.innerMat.opacity = 0.24 + pulse * 0.3;
+    this.boundaryMat.color.setHex(this.state === 'active' ? 0xff2818 : 0xff6a32);
+    this.boundaryMat.opacity = (this.state === 'active' ? 0.32 : 0.2) + pulse * 0.32;
     this.postMat.opacity = 0.38 + pulse * 0.55;
   }
 
@@ -432,9 +483,7 @@ export class BombardmentSystem {
   }
 
   private impact(point: THREE.Vector3, game: Game): void {
-    game.effects.explosion(point, 1.35);
-    game.effects.burst(point, 34, 0.48, 0.34, 0.2, 9.5);
-    game.effects.burst(point, 18, 0.16, 0.15, 0.14, 4.2);
+    game.effects.artilleryExplosion(point);
     game.soundAt(point, (dist, pan) => game.audio.artilleryImpact(dist, pan));
     game.addBlastFrom(point);
     this.placeCrater(point, game);

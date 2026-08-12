@@ -5,6 +5,7 @@ import {
   resolveBodyAgainstVehicle,
   seatWorldAt,
   vehicleExitCandidates,
+  vehicleWreckImpulse,
   Vehicle,
   VehicleManager,
   VEHICLE_SPEC,
@@ -191,6 +192,58 @@ describe('载具座位 命中和损毁状态', () => {
     expect(vehicle.hp).toBe(0);
     expect(vehicle.burnT).toBe(2);
     expect(vehicle.dead).toBe(false);
+  });
+
+  it('不同车型爆炸后获得向上和侧向冲量', () => {
+    for (const kind of ['car', 'moto', 'buggy'] as const) {
+      const impulse = vehicleWreckImpulse(kind, Math.PI / 3, 14);
+      expect(impulse.vy).toBeGreaterThan(6);
+      expect(Math.hypot(impulse.vx, impulse.vz)).toBeGreaterThan(3);
+      expect(Math.abs(impulse.pitch)).toBeGreaterThan(2);
+      expect(Math.abs(impulse.roll)).toBeGreaterThan(3);
+    }
+    expect(vehicleWreckImpulse('moto', 0, 0).vy).toBeGreaterThan(
+      vehicleWreckImpulse('car', 0, 0).vy,
+    );
+  });
+
+  it('载具爆炸先抛飞翻滚并在落地后才注册残骸碰撞', () => {
+    const manager = new VehicleManager(new THREE.Scene());
+    const vehicle = new Vehicle('car', new THREE.Vector3(0, 0, 0), 0);
+    manager.list.push(vehicle);
+    vehicle.speed = 12;
+    vehicle.hp = 0;
+    vehicle.burnT = 0.001;
+    const addCollider = vi.fn();
+    const game = {
+      effects: {
+        vehicleExplosion: vi.fn(), vehicleFire: vi.fn(), landingDust: vi.fn(),
+      },
+      audio: { explosion: vi.fn(), vehicleImpact: vi.fn() },
+      soundAt: vi.fn(),
+      addBlastFrom: vi.fn(),
+      chars: [],
+      forceExitVehicle: vi.fn(),
+      world: {
+        addCollider,
+        resolveVehicle: () => false,
+        groundHeight: () => 0,
+      },
+    } as unknown as import('../src/game').Game;
+
+    manager.update(0.01, game);
+    expect(vehicle.exploded).toBe(true);
+    expect(vehicle.wreckAirT).toBeGreaterThan(0);
+    expect(vehicle.wreckVy).toBeGreaterThan(0);
+    expect(addCollider).not.toHaveBeenCalled();
+    manager.update(0.1, game);
+    expect(vehicle.pos.y).toBeGreaterThan(0);
+    expect(Math.abs(vehicle.pitch) + Math.abs(vehicle.roll)).toBeGreaterThan(0.1);
+
+    for (let step = 0; step < 80 && !vehicle.wreckCollider; step++) manager.update(0.05, game);
+    expect(vehicle.wreckCollider).toBeDefined();
+    expect(addCollider).toHaveBeenCalledOnce();
+    expect(game.effects.vehicleExplosion).toHaveBeenCalledOnce();
   });
 
   it('重开重生载具时注销上一局残骸碰撞体', () => {

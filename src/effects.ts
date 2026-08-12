@@ -660,6 +660,29 @@ export class Effects {
     this.spawnPuff(point, 0x2e2d2d, 0.9 * scale, 1.3, 2 * scale, 0.48, 0.48);
   }
 
+  // 炮弹落点使用更宽的冲击波, 土石喷射和分层烟柱, 与手雷爆炸形成明显层级差异.
+  artilleryExplosion(point: THREE.Vector3): void {
+    this.explosion(point, 1.62);
+    this.tmpPoint.set(point.x, point.y + 0.5, point.z);
+    this.burst(this.tmpPoint, 52, 1, 0.48, 0.09, 13.5);
+    this.burst(this.tmpPoint, 46, 0.46, 0.32, 0.18, 10.8);
+    this.burst(this.tmpPoint, 24, 0.14, 0.13, 0.12, 6.2);
+    this.spawnShockRing(point, 1.9, 0xffbc5e, 0.52, 25);
+    this.spawnShockRing(point, 1.3, 0xff4b24, 0.68, 18);
+    this.spawnPuff(this.tmpPoint, 0x312b27, 1.65, 1.9, 3.8, 0.68, 0.9);
+    this.spawnPuff(this.tmpPoint, 0x68584a, 1.25, 1.35, 3.1, 0.56, 1.3);
+  }
+
+  // 载具油箱殉爆比普通手雷拥有更厚的火球、金属碎片和持续黑烟。
+  vehicleExplosion(point: THREE.Vector3, scale = 1): void {
+    this.explosion(point, 1.28 * scale);
+    this.tmpPoint.set(point.x, point.y + 0.82 * scale, point.z);
+    this.burst(this.tmpPoint, Math.round(34 * scale), 1, 0.48, 0.12, 12 * scale);
+    this.burst(this.tmpPoint, Math.round(22 * scale), 0.86, 0.9, 0.96, 8.5 * scale);
+    this.spawnShockRing(this.tmpPoint, 1.18 * scale, 0xffb15a, 0.34, 18);
+    this.spawnPuff(this.tmpPoint, 0x1c1b1b, 1.2 * scale, 1.45, 3.1 * scale, 0.58, 0.62);
+  }
+
   smokePop(point: THREE.Vector3): void {
     this.spawnPuff(point, 0xc3c7c8, 0.7, 1.15, 1.7, 0.42, 0.28);
     this.spawnPuff(point, 0x9fa5a7, 0.8, 1.35, 1.9, 0.38, 0.36);

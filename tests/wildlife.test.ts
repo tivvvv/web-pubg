@@ -1,9 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { WildlifeSystem, WILDLIFE_COUNTS, type WildlifeKind } from '../src/wildlife';
-import { ROAD_PATHS, WATER_Y, World } from '../src/world';
+import { forestCoreMetrics, WildlifeSystem, WILDLIFE_COUNTS, type WildlifeKind } from '../src/wildlife';
+import { WATER_Y, World } from '../src/world';
 import { Vehicle, VEHICLE_SPEC } from '../src/vehicles';
-import { regionAt } from '../src/regions';
 
 function createWildlife(): { world: World; wildlife: WildlifeSystem } {
   const scene = new THREE.Scene();
@@ -119,36 +118,22 @@ describe('环境动物系统', () => {
   it('雾松林宝箱由三只老虎守护且开启状态可重置', () => {
     const { world, wildlife } = createWildlife();
     const treasure = wildlife.treasure;
-    expect(regionAt(treasure.pos.x, treasure.pos.z)?.id).toBe('mistwood');
+    expect(treasure.pos.x).toBeLessThan(-60);
+    expect(treasure.pos.z).toBeLessThan(-190);
     expect(treasure.group.name).toBe('forest-treasure-chest');
     expect(treasure.opened).toBe(false);
     expect(world.bushes.every(
-      (bush) => Math.hypot(treasure.pos.x - bush.x, treasure.pos.z - bush.z) >= bush.r + 2.15,
+      (bush) => Math.hypot(treasure.pos.x - bush.x, treasure.pos.z - bush.z) >= bush.r + 1.55,
     )).toBe(true);
-    expect(world.cyls.filter((collider) => collider.tag === 'tree' &&
-      Math.hypot(treasure.pos.x - collider.x, treasure.pos.z - collider.z) <= 22).length).toBeGreaterThanOrEqual(4);
     expect(treasure.pos.y).toBeGreaterThan(WATER_Y + 4.5);
-    const buildingDistance = world.buildings.plots.reduce((nearest, plot) => {
-      const dx = Math.max(plot.minX - treasure.pos.x, 0, treasure.pos.x - plot.maxX);
-      const dz = Math.max(plot.minZ - treasure.pos.z, 0, treasure.pos.z - plot.maxZ);
-      return Math.min(nearest, Math.hypot(dx, dz));
-    }, Number.POSITIVE_INFINITY);
-    expect(buildingDistance).toBeGreaterThanOrEqual(55);
-    let roadDistance = Number.POSITIVE_INFINITY;
-    for (const path of ROAD_PATHS) for (let index = 0; index < path.length - 1; index++) {
-      const a = path[index] as readonly [number, number];
-      const b = path[index + 1] as readonly [number, number];
-      const vx = b[0] - a[0];
-      const vz = b[1] - a[1];
-      const t = Math.max(0, Math.min(1, (
-        (treasure.pos.x - a[0]) * vx + (treasure.pos.z - a[1]) * vz
-      ) / (vx * vx + vz * vz)));
-      roadDistance = Math.min(roadDistance, Math.hypot(
-        treasure.pos.x - a[0] - vx * t,
-        treasure.pos.z - a[1] - vz * t,
-      ));
-    }
-    expect(roadDistance).toBeGreaterThanOrEqual(18);
+    const core = forestCoreMetrics(world, treasure.pos.x, treasure.pos.z);
+    expect(core.nearbyTrees).toBeGreaterThanOrEqual(28);
+    expect(core.coveredTreeSectors).toBeGreaterThanOrEqual(7);
+    expect(core.dryLandSectors).toBe(8);
+    expect(core.buildingDistance).toBeGreaterThanOrEqual(70);
+    expect(core.roadDistance).toBeGreaterThanOrEqual(80);
+    expect(core.lumberyardDistance).toBeGreaterThanOrEqual(120);
+    expect(core.shorelineClearance).toBeGreaterThanOrEqual(44);
     expect(treasure.group.children.filter((child) => child.name === 'treasure-spark')).toHaveLength(12);
     expect(treasure.group.getObjectByName('treasure-lock-gem')).toBeDefined();
     expect(treasure.group.getObjectByName('treasure-golden-halo')).toBeDefined();

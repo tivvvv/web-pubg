@@ -112,11 +112,14 @@ import { regionOrWilderness } from './regions';
 import {
   DROP_MAX_FLIGHT_DISTANCE,
   DROP_MIN_SEPARATION,
+  FLIGHT_ROUTES,
   MATCH_PLAYER_COUNT,
+  botJumpDistance,
   SQUAD_SIZE,
   combatDamageScale,
   emptyDropRegionCounts,
   flightLineDistance,
+  selectFlightRoute,
   selectDropRegion,
 } from './matchbalance';
 import { fireModeOf, scopeModeOf, toggleFireMode } from './gunplay';
@@ -196,7 +199,9 @@ export class Game {
   healT = -1;                            // >0 = 恢复品读条中(剩余秒)
   healKind: HealId | null = null;        // 读条中的恢复品种类
   drinkT = -1;                           // >0 = 饮料 buff 剩余秒(20s/40HP 预算)
-  flightAngle = 0;                       // 航线角(每局随机)
+  flightAngle = FLIGHT_ROUTES[0]?.angle ?? 0; // 当前预设航线方向
+  flightOffset = FLIGHT_ROUTES[0]?.offset ?? 0; // 当前航线相对地图中心的偏移
+  flightRouteId = FLIGHT_ROUTES[0]?.id ?? 'west-north';
   planeS = 0;                            // 运输机里程(玩家跳伞后继续飞离)
   private planeMesh: THREE.Group | null = null; // 运输机模型(舱内阶段可见)
   private planeProps: THREE.Object3D[] = [];    // 螺旋桨桨盘(每帧旋转)
@@ -278,7 +283,7 @@ export class Game {
     this.blobs = new THREE.InstancedMesh(
       blobGeo,
       new THREE.MeshBasicMaterial({ map: makeRadialTexture(0, 0.42), transparent: true, depthWrite: false }),
-      24,
+      MATCH_PLAYER_COUNT,
     );
     this.blobs.frustumCulled = false;
     this.blobs.renderOrder = 2;
@@ -768,7 +773,11 @@ export class Game {
   // 航线点: s 为里程(0→1000 穿越岛心, 高 200m)
   flightPoint(out: THREE.Vector3, s: number): void {
     const d = s - 500;
-    out.set(Math.cos(this.flightAngle) * d, 200, Math.sin(this.flightAngle) * d);
+    out.set(
+      Math.sin(this.flightAngle) * this.flightOffset + Math.cos(this.flightAngle) * d,
+      200,
+      -Math.cos(this.flightAngle) * this.flightOffset + Math.sin(this.flightAngle) * d,
+    );
   }
 
   // 玩家跳伞(手动/自动): 启动毒圈计时
@@ -811,9 +820,10 @@ export class Game {
 
     // 敌方落点: 按区域收益和承载人数分配, 同时受航线可达距离约束.
     // 相比全图均匀散点, 这里会形成可预期但不固定的早期争夺, 又不会把所有人堆在同一栋房内.
-    this.flightAngle = rand(0, Math.PI * 2);
-    const dirX = Math.cos(this.flightAngle);
-    const dirZ = Math.sin(this.flightAngle);
+    const flightRoute = selectFlightRoute(random());
+    this.flightAngle = flightRoute.angle;
+    this.flightOffset = flightRoute.offset;
+    this.flightRouteId = flightRoute.id;
     const pts: { x: number; z: number }[] = Array.from({ length: SQUAD_SIZE }, () => ({ x: 0, z: 0 }));
     const dropCounts = emptyDropRegionCounts();
     const dropPointFree = (x: number, z: number): boolean =>
@@ -827,7 +837,7 @@ export class Game {
     };
     let guard = 0;
     while (pts.length < TOTAL && guard++ < 5000) {
-      const region = selectDropRegion(this.flightAngle, dropCounts, random());
+      const region = selectDropRegion(this.flightAngle, dropCounts, random(), this.flightOffset);
       if (!region) break;
       let x = 0;
       let z = 0;
@@ -837,7 +847,7 @@ export class Game {
         const distance = Math.sqrt(random()) * region.radius * 0.76;
         x = region.x + Math.cos(angle) * distance;
         z = region.z + Math.sin(angle) * distance;
-        if (flightLineDistance(x, z, this.flightAngle) > DROP_MAX_FLIGHT_DISTANCE) continue;
+        if (flightLineDistance(x, z, this.flightAngle, this.flightOffset) > DROP_MAX_FLIGHT_DISTANCE) continue;
         if (regionOrWilderness(x, z).id !== region.id) continue;
         if (!dropPointFree(x, z)) continue;
         sampled = true;
@@ -853,7 +863,7 @@ export class Game {
     while (pts.length < TOTAL && guard++ < 6000) {
       const x = rand(-320, 320);
       const z = rand(-320, 320);
-      if (flightLineDistance(x, z, this.flightAngle) > DROP_MAX_FLIGHT_DISTANCE) continue;
+      if (flightLineDistance(x, z, this.flightAngle, this.flightOffset) > DROP_MAX_FLIGHT_DISTANCE) continue;
       if (!dropPointFree(x, z) || !dropPointSeparated(x, z)) continue;
       const fallbackRegion = regionOrWilderness(x, z);
       if (fallbackRegion.id !== 'wilderness') {
@@ -866,7 +876,7 @@ export class Game {
     // 极端兜底使用确定性安全网格, 仍不允许把角色塞入树木/建筑或相互重叠.
     for (let x = -300; x <= 300 && pts.length < TOTAL; x += 24) {
       for (let z = -300; z <= 300 && pts.length < TOTAL; z += 24) {
-        if (flightLineDistance(x, z, this.flightAngle) > DROP_MAX_FLIGHT_DISTANCE + 35) continue;
+        if (flightLineDistance(x, z, this.flightAngle, this.flightOffset) > DROP_MAX_FLIGHT_DISTANCE + 35) continue;
         if (!dropPointFree(x, z) || !dropPointSeparated(x, z)) continue;
         pts.push({ x, z });
       }
@@ -921,7 +931,7 @@ export class Game {
         this.scene.add(tag);
         continue;
       }
-      // 敌方 bot ×20(同机跳伞: 按投放点在航线上的投影里程错峰出舱)
+      // 敌方 bot ×46: 分层覆盖整条航线, 同时向各自选择的资源区策略性偏移.
       const difficulty = botDifficultyDeck[i - SQUAD_SIZE] ?? 'regular';
       const bot = new BotController(
         BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`,
@@ -933,7 +943,14 @@ export class Game {
       bot.char.airPose = 'sit';
       bot.char.grounded = false;
       bot.char.group.visible = false;
-      bot.jumpS = clamp(500 + p.x * dirX + p.z * dirZ + rand(-55, 55), 40, 950);
+      bot.jumpS = botJumpDistance(
+        p.x,
+        p.z,
+        this.flightAngle,
+        i - SQUAD_SIZE,
+        TOTAL - SQUAD_SIZE,
+        random(),
+      );
       bot.dropTarget.set(p.x, 0, p.z);
       if (random() < bot.difficulty.fragCarryChance) bot.char.throwables.frag = 1;
       if (random() < bot.difficulty.smokeCarryChance) bot.char.throwables.smoke = 1;
