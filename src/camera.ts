@@ -1,4 +1,4 @@
-import { clamp, lerp, smoothstep } from './utils';
+import { clamp, lerp } from './utils';
 
 export interface CameraShakeSample {
   x: number;
@@ -25,13 +25,11 @@ export function cameraMotionTarget(
   lateralInput: number,
   acceleration: number,
   aimProgress: number,
-  firstPersonBlend: number,
 ): CameraMotionSample {
   const speedF = clamp(speed / 6.9, 0, 1);
   const lateral = clamp(lateralInput, -1, 1);
   const calm = lerp(1, 0.24, clamp(aimProgress, 0, 1));
-  const viewScale = lerp(1, 0.62, clamp(firstPersonBlend, 0, 1));
-  const scale = calm * viewScale;
+  const scale = calm * 0.62;
   return {
     forward: clamp(-acceleration * 0.012, -0.11, 0.11) * scale,
     lateral: -lateral * 0.085 * scale,
@@ -60,25 +58,6 @@ export function advanceCameraSpring(
   return { value, velocity };
 }
 
-// 手动第一人称直接请求完整镜轴, 瞄具则随 ADS 进度提前平滑进入镜轴。
-export function cameraModeTarget(manualFpp: boolean, optic: boolean, aimProgress: number): number {
-  if (manualFpp) return 1;
-  if (!optic) return 0;
-  return smoothstep(0.18, 0.74, aimProgress);
-}
-
-export function advanceCameraMode(current: number, target: number, dt: number): number {
-  const rate = target > current ? 17 : 20;
-  const next = lerp(current, target, 1 - Math.exp(-rate * Math.max(0, dt)));
-  if (Math.abs(next - target) < 0.0005) return target;
-  return clamp(next, 0, 1);
-}
-
-export function advanceShoulderBlend(current: number, side: -1 | 1, dt: number): number {
-  const next = lerp(current, side, 1 - Math.exp(-13 * Math.max(0, dt)));
-  return Math.abs(next - side) < 0.001 ? side : clamp(next, -1, 1);
-}
-
 export function cameraFovTarget(
   baseFov: number,
   zoom: number,
@@ -90,21 +69,6 @@ export function cameraFovTarget(
   const movementFov = clamp(groundSprint, 0, 1) * 2.8 + clamp(swimSprint, 0, 1) * 5;
   const kickFov = clamp(shotKick, 0, 2) * lerp(1, 0.35, clamp(aimProgress, 0, 1));
   return (baseFov + movementFov + kickFov) / Math.max(1, zoom);
-}
-
-// 遮挡出现时必须当帧收进安全距离，否则镜头会短暂穿过屋顶或墙面并闪出室外。
-// 遮挡解除后仍缓慢放远，避免墙角和楼梯处来回弹镜头。
-export function smoothCameraDistance(
-  current: number,
-  allowed: number,
-  desired: number,
-  dt: number,
-): number {
-  const target = clamp(Math.min(allowed, desired), 0.25, Math.max(0.25, desired));
-  if (target < current) return target;
-  const rate = 8.5;
-  const next = lerp(current, target, 1 - Math.exp(-rate * Math.max(0, dt)));
-  return Math.abs(next - target) < 0.001 ? target : next;
 }
 
 // 使用连续波形代替逐帧随机抖动, 保留爆炸冲击感但不制造高频闪烁。

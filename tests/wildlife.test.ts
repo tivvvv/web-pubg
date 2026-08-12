@@ -33,6 +33,49 @@ describe('环境动物系统', () => {
     }
   });
 
+  it('牛羊鸟使用完整近景轮廓而不是基础几何占位物', () => {
+    const { wildlife } = createWildlife();
+    const cow = wildlife.entities.find((entity) => entity.kind === 'cow');
+    const sheep = wildlife.entities.find((entity) => entity.kind === 'sheep');
+    const bird = wildlife.entities.find((entity) => entity.kind === 'bird');
+    expect(cow && sheep && bird).toBeDefined();
+    if (!cow || !sheep || !bird) return;
+
+    const countNamed = (root: THREE.Object3D, name: string) => {
+      let count = 0;
+      root.traverse((object) => { if (object.name === name) count++; });
+      return count;
+    };
+
+    expect(cow.group.name).toBe('wildlife-cow');
+    for (const name of [
+      'cow-body', 'cow-shoulder', 'cow-neck', 'cow-head', 'cow-muzzle',
+      'cow-face-blaze', 'cow-eye-left', 'cow-eye-right', 'cow-tail-tuft', 'cow-udder',
+    ]) expect(cow.group.getObjectByName(name), name).toBeDefined();
+    expect(countNamed(cow.group, 'cow-coat-patch')).toBeGreaterThanOrEqual(2);
+    expect(countNamed(cow.group, 'cow-hoof')).toBe(4);
+    expect(cow.limbs).toHaveLength(5);
+
+    expect(sheep.group.name).toBe('wildlife-sheep');
+    for (const name of [
+      'sheep-wool-core', 'sheep-head', 'sheep-muzzle', 'sheep-eye-left',
+      'sheep-eye-right', 'sheep-ear-left', 'sheep-ear-right', 'sheep-tail',
+    ]) expect(sheep.group.getObjectByName(name), name).toBeDefined();
+    expect(countNamed(sheep.group, 'sheep-wool-tuft')).toBe(8);
+    expect(countNamed(sheep.group, 'sheep-hoof')).toBe(4);
+    expect(sheep.limbs).toHaveLength(4);
+
+    expect(bird.group.name).toBe('wildlife-bird');
+    for (const name of [
+      'bird-body', 'bird-breast', 'bird-head', 'bird-beak', 'bird-eye-left',
+      'bird-eye-right', 'bird-wing-left', 'bird-wing-right',
+    ]) expect(bird.group.getObjectByName(name), name).toBeDefined();
+    expect(countNamed(bird.group, 'bird-wing-coverts')).toBe(2);
+    expect(countNamed(bird.group, 'bird-primary-feather')).toBe(6);
+    expect(countNamed(bird.group, 'bird-tail-feather')).toBe(3);
+    expect(bird.limbs).toHaveLength(2);
+  });
+
   it('射线只命中最近的存活动物且死亡后不再挡弹', () => {
     const { wildlife } = createWildlife();
     const cow = wildlife.entities.find((entity) => entity.kind === 'cow');

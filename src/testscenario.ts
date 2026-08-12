@@ -52,6 +52,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=swim&auto=1',
   'scenario=botswim',
   'scenario=combat&weapon=rifle&burst=8&ads=1',
+  'scenario=combat&weapon=rifle&sight=none&burst=0',
   'scenario=combat&weapon=akm&burst=8',
   'scenario=combat&weapon=lmg&burst=12',
   'scenario=combat&weapon=smg&burst=10',
@@ -72,6 +73,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=squadcommand&order=focus',
   'scenario=squadcommand&order=aim',
   'scenario=parachute',
+  'scenario=parachute&phase=plane',
   'scenario=parachute&collision=apartment',
   'scenario=parachute&stress=1',
   'scenario=vehicle&drive=1',
@@ -617,7 +619,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
           Math.hypot(item.group.position.x - character.pos.x, item.group.position.z - character.pos.z) < 3.2 &&
           Math.abs(item.baseY - character.pos.y - 1) < 0.65
         )).map((item) => item.kind).join(',');
-        panel.dataset.combatCameraMode = controller.aiming ? 'ads' : game.viewFpp ? 'fpp' : 'tpp';
+        panel.dataset.combatCameraMode = controller.aiming ? 'ads' : 'fpp';
         panel.dataset.combatShotRecent = String(game.nowSec - character.lastShotT < 0.5);
         panel.dataset.combatLoudShotRecent = String(game.nowSec - character.lastLoudShotT < 0.5);
       }
@@ -1075,7 +1077,7 @@ function setupStairs(game: Game): void {
     const tallFacade = plot.arch === 'apartment' && (plot.storeys ?? 3) > 3;
     const facadeDistance = tallFacade ? 15.5 : 7.5;
     const candidates = [
-      // 垂直切片镜头略偏离门轴, 避免第三人称角色遮住门廊、雨棚和砖石细节。
+      // 垂直切片观察点略偏离门轴，避免门廊立柱遮住砖石细节。
       { x: cx + showcaseOffset, z: cz - halfZ - facadeDistance },
       { x: cx - showcaseOffset, z: cz + halfZ + facadeDistance },
       { x: cx - halfX - facadeDistance, z: cz },
@@ -1106,7 +1108,6 @@ function setupStairs(game: Game): void {
     const x = ix0 + (ix1 - ix0) * 0.5;
     const z = iz0 + (iz1 - iz0) * 0.34;
     setGroundPlayer(game, x, z);
-    game.viewFpp = true;
     const player = game.playerCtl;
     if (player) {
       const targetX = ix1 - 1.55;
@@ -1327,13 +1328,14 @@ function setupBotSwim(game: Game): void {
 
 function setupCombat(game: Game): void {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('fpp') === '1') game.viewFpp = true;
   const weaponParam = params.get('weapon');
   const weaponId = weaponParam && weaponParam in WEAPONS ? weaponParam as keyof typeof WEAPONS : 'rifle';
   const def = WEAPONS[weaponId];
   const sightParam = params.get('sight');
-  let sight: AttachmentId | null = sightParam === 'reddot' || sightParam === 'scope4' ? sightParam : 'scope2';
-  if (!canAttach(weaponId, sight)) sight = canAttach(weaponId, 'reddot') ? 'reddot' : null;
+  let sight: AttachmentId | null = sightParam === 'none'
+    ? null
+    : sightParam === 'reddot' || sightParam === 'scope4' ? sightParam : 'scope2';
+  if (sight && !canAttach(weaponId, sight)) sight = canAttach(weaponId, 'reddot') ? 'reddot' : null;
   const muzzleParam = params.get('muzzle');
   const requestedMuzzle = muzzleParam === 'suppressor' || muzzleParam === 'none' ? muzzleParam : 'comp';
   const muzzle: AttachmentId | null =
@@ -1817,6 +1819,17 @@ function setupParachute(game: Game, params: URLSearchParams): void {
   parkEnemies(game);
   const player = game.playerCtl;
   if (!player) return;
+  if (params.get('phase') === 'plane') {
+    player.descent = 'plane';
+    player.planeS = 500;
+    game.flightPoint(player.char.pos, player.planeS);
+    player.char.swimming = false;
+    player.char.swimDip = 0;
+    player.char.grounded = false;
+    player.char.airPose = null;
+    player.char.group.visible = false;
+    return;
+  }
   if (params.get('stress') === '1') {
     const lane = testLane(game);
     const x = (lane[0] + lane[2]) * 0.5;
@@ -1940,7 +1953,6 @@ function setupEndgame(game: Game): void {
   };
   player.char.ammo.rifle = 90;
   player.char.curSlot = 0;
-  game.viewFpp = true;
   player.yaw = Math.atan2(targetX - playerX, targetZ - playerZ);
   for (const bot of game.bots) {
     bot.char.alive = false;
@@ -1966,7 +1978,7 @@ function setupEndgame(game: Game): void {
       game.input.firePressed = true;
       window.requestAnimationFrame(fireUntilFinished);
     };
-    // 等待第三人称肩部镜头与 ADS 完成融合后再自动射击, 避免首帧视差造成假失败。
+    // 等待第一人称 ADS 与武器姿态稳定后再自动射击，避免首帧过渡造成假失败。
     window.setTimeout(() => window.requestAnimationFrame(fireUntilFinished), 900);
   }
 }
@@ -2016,7 +2028,8 @@ function setupWildlife(game: Game): void {
   const target = candidates[kind === 'bird' ? Math.min(4, candidates.length - 1) : 0];
   const player = game.playerCtl;
   if (!target || !player) return;
-  if (kind === 'bird') target.speed = 0;
+  // 模型验收场景冻结目标并收起武器，保证近景轮廓不会被第一人称枪模遮挡。
+  target.speed = 0;
   const targetPosition = target.group.position;
   const overlapTest = params.get('overlap') === '1' && (kind === 'cow' || kind === 'sheep' || kind === 'tiger');
   let spawnX = targetPosition.x;
@@ -2037,21 +2050,20 @@ function setupWildlife(game: Game): void {
     if (found) break;
   }
   setGroundPlayer(game, spawnX, spawnZ);
-  player.char.guns[0] = {
-    def: WEAPONS.rifle,
-    mag: 30,
-    att: { ...emptyAttachments(), sight: 'scope2' },
-  };
-  player.char.ammo.rifle = 90;
-  player.char.curSlot = 0;
+  target.decisionTimer = 999;
+  if (kind === 'cow' || kind === 'sheep' || kind === 'tiger') {
+    target.heading = Math.atan2(spawnX - targetPosition.x, spawnZ - targetPosition.z);
+    target.group.rotation.y = target.heading;
+  }
+  player.char.guns[0] = null;
+  player.char.curSlot = 3;
   player.yaw = Math.atan2(targetPosition.x - spawnX, targetPosition.z - spawnZ);
   const horizontal = Math.hypot(targetPosition.x - spawnX, targetPosition.z - spawnZ);
   const aimPitch = Math.atan2(
     targetPosition.y + target.centerY - (player.char.pos.y + player.char.eyeHeight()),
     Math.max(0.1, horizontal),
   );
-  // 第三人称肩位对高空目标会放大仰角，测试镜头稍作补偿以把飞鸟留在画面中心。
-  player.pitch = kind === 'bird' ? aimPitch * 0.54 : aimPitch;
+  player.pitch = aimPitch;
   if (params.get('fire') === '1') {
     const fireUntilDead = (): void => {
       if (!target.alive || game.stateStr !== 'playing') {

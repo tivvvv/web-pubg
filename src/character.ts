@@ -2,12 +2,14 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { applySurfaceAsset } from './assets';
-import type { AmmoType, ArmorState, GunAttachments, GunState, MeleeState, ThrowableId } from './types';
+import type { AmmoType, ArmorState, GunAttachments, GunState, MeleeState, ThrowableId, WeaponId } from './types';
 import type { HealId } from './heals';
 import { MELEE } from './weapons';
 import { buildHelmetModel, buildVestModel } from './armor';
 import { buildPackModel, type PackLevel } from './backpack';
-import { buildWeaponModel, attachWeaponMods, type WeaponModel, type WeaponModelId } from './weaponmodels';
+import {
+  buildWeaponModel, attachWeaponMods, FIREARM_MODEL_SCALE, type WeaponModel, type WeaponModelId,
+} from './weaponmodels';
 import type { World } from './world';
 import { WATER_Y } from './world';
 import { clamp, lerp } from './utils';
@@ -20,6 +22,42 @@ export const SWIM_SPRINT_SPEED = 4.8;
 export const SWIM_ENTER_DEPTH = 1.1;
 export const SWIM_EXIT_DEPTH = 0.45;
 export const GROUND_SNAP_DISTANCE = 0.22;
+
+export interface FirstPersonWeaponPose {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  roll: number;
+  scale: number;
+}
+
+// 右下方持枪构图：枪托靠近屏幕右下，枪口向准星轻微内收；不同长度枪型保持相近视觉占比。
+const FIRST_PERSON_HIP_POSE: Record<WeaponId, FirstPersonWeaponPose> = {
+  pistol: { x: -0.2, y: 1.14, z: 0.5, yaw: 0.14, roll: -0.025, scale: 1.34 },
+  smg: { x: -0.26, y: 1.08, z: 0.6, yaw: 0.17, roll: -0.026, scale: 1.28 },
+  rifle: { x: -0.3, y: 1.04, z: 0.61, yaw: 0.18, roll: -0.024, scale: 1.3 },
+  akm: { x: -0.3, y: 1.04, z: 0.62, yaw: 0.18, roll: -0.024, scale: 1.3 },
+  lmg: { x: -0.33, y: 0.99, z: 0.68, yaw: 0.2, roll: -0.03, scale: 1.22 },
+  dmr: { x: -0.31, y: 1.03, z: 0.65, yaw: 0.18, roll: -0.022, scale: 1.27 },
+  sniper: { x: -0.32, y: 1.0, z: 0.72, yaw: 0.17, roll: -0.018, scale: 1.2 },
+  shotgun: { x: -0.3, y: 1.03, z: 0.65, yaw: 0.18, roll: -0.022, scale: 1.26 },
+};
+
+export function firstPersonWeaponPose(id: WeaponId, aimProgress: number, hasOptic: boolean): FirstPersonWeaponPose {
+  const hip = FIRST_PERSON_HIP_POSE[id];
+  const ads = clamp(aimProgress, 0, 1);
+  const adsX = id === 'pistol' ? -0.1 : -0.14;
+  const adsY = id === 'pistol' ? 1.23 : hasOptic ? 1.15 : 1.18;
+  return {
+    x: lerp(hip.x, adsX, ads),
+    y: lerp(hip.y, adsY, ads),
+    z: lerp(hip.z, id === 'pistol' ? 0.62 : 0.82, ads),
+    yaw: lerp(hip.yaw, id === 'pistol' ? 0.04 : 0.06, ads),
+    roll: lerp(hip.roll, -0.008, ads),
+    scale: lerp(hip.scale, id === 'pistol' ? 1.16 : 1.05, ads),
+  };
+}
 
 export function shouldSnapToGround(wasGrounded: boolean, verticalVelocity: number, gap: number): boolean {
   return wasGrounded && verticalVelocity <= 0 && gap >= 0 && gap <= GROUND_SNAP_DISTANCE;
@@ -234,6 +272,7 @@ export interface HumanParts {
   kneeL: THREE.Group;
   kneeR: THREE.Group;
   gun: THREE.Group;      // 手部锚点(当前持械模型挂在这里)
+  viewHands: THREE.Group; // 仅本地第一人称显示的紧凑握枪手套和袖口
   held: WeaponModel | null; // 当前持械模型(含 muzzle/mag)
   muzzleFallback: THREE.Object3D; // 徒手时的枪口兜底点
 }
@@ -630,6 +669,36 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
   // 手部锚点(武器模型挂载点, 模型原点=握把, 指向 +Z 前方)
   const gun = new THREE.Group();
   gun.position.set(0.19, 1.26, 0.34);
+  const viewHands = new THREE.Group();
+  viewHands.name = 'first-person-weapon-hands';
+  viewHands.visible = false;
+  const addViewHand = (
+    side: 'left' | 'right',
+    x: number,
+    y: number,
+    z: number,
+    sleeveX: number,
+    sleeveY: number,
+    sleeveZ: number,
+  ): void => {
+    const sleeve = new THREE.Mesh(GEO.forearm, shirt);
+    sleeve.name = `first-person-sleeve-${side}`;
+    sleeve.position.set(sleeveX, sleeveY, sleeveZ);
+    sleeve.scale.set(0.72, 0.82, 0.72);
+    sleeve.rotation.x = side === 'left' ? -0.72 : -0.38;
+    sleeve.castShadow = true;
+    viewHands.add(sleeve);
+    const hand = new THREE.Mesh(GEO.hand, MAT.glove);
+    hand.name = `first-person-hand-${side}`;
+    hand.position.set(x, y, z);
+    hand.scale.setScalar(0.78);
+    hand.rotation.set(0.12, side === 'left' ? -0.18 : 0.16, side === 'left' ? 0.08 : -0.08);
+    hand.castShadow = true;
+    viewHands.add(hand);
+  };
+  addViewHand('right', 0.055, -0.085, -0.015, 0.12, -0.2, -0.12);
+  addViewHand('left', -0.065, -0.035, 0.31, -0.13, -0.14, 0.19);
+  gun.add(viewHands);
   const muzzleFallback = new THREE.Object3D();
   muzzleFallback.position.set(0, 0.02, 0.4);
   gun.add(muzzleFallback);
@@ -641,7 +710,7 @@ export function buildHumanoid(shirtColor: number, variant = 0): { group: THREE.G
       inner, body, torso, head,
       armL, armR, elbowL: leftArm.elbow, elbowR: rightArm.elbow,
       legL, legR, kneeL: leftLeg.knee, kneeR: rightLeg.knee,
-      gun, held: null, muzzleFallback,
+      gun, viewHands, held: null, muzzleFallback,
     },
   };
 }
@@ -734,6 +803,7 @@ export class Character {
   kills = 0;
   reload01 = 0;        // 换弹进度 0..1(0=未换弹), 玩家控制器每帧写入
   aimPitch = 0;        // ADS 时枪械俯仰(玩家控制器写入), bot 恒 0
+  firstPersonAim = 0;  // 本地第一人称 ADS 插值，驱动视图模型向镜轴收敛
   gunKick = 0;         // 开枪瞬间的枪身后坐位移
   moveLean = 0;        // 左右移动时的身体侧倾 -1..1
   actionPose: CharacterAction | null = null; // 短交互动作, 由拾取/开门/切枪/恢复触发
@@ -877,11 +947,12 @@ export class Character {
     return m.getWorldPosition(out);
   }
 
-  // 第一人称切换: 仅保留不会穿入相机的手臂和武器，趴姿低机位完全隐藏自身模型。
+  // 第一人称状态只保留不会穿入相机的必要前景物，趴姿低机位完全隐藏自身模型。
   setFirstPerson(fpp: boolean): void {
     this.firstPerson = fpp;
     this.syncOwnModelVisibility();
-    this.parts.gun.position.set(fpp ? 0.16 : 0.19, fpp ? 1.28 : 1.26, fpp ? 0.54 : 0.34);
+    const pose = FIRST_PERSON_HIP_POSE.rifle;
+    this.parts.gun.position.set(fpp ? pose.x : 0.19, fpp ? pose.y : 1.26, fpp ? pose.z : 0.34);
   }
 
   private syncOwnModelVisibility(): void {
@@ -892,9 +963,13 @@ export class Character {
     p.torso.visible = visible.body;
     p.legL.visible = visible.body;
     p.legR.visible = visible.body;
-    p.armL.visible = visible.hands;
-    p.armR.visible = visible.hands;
+    // 方块人完整手臂从眼位看会放大并遮挡准星。持枪和空降/驾驶时隐藏自身手臂，
+    // 只在徒手地面状态显示双拳；其他角色仍按完整第三方模型渲染。
+    const firstPersonArms = this.firstPerson && !p.held && !this.airPose && !this.swimming && !this.knocked;
+    p.armL.visible = visible.hands && (!this.firstPerson || firstPersonArms);
+    p.armR.visible = visible.hands && (!this.firstPerson || firstPersonArms);
     p.gun.visible = visible.hands;
+    p.viewHands.visible = visible.hands && this.firstPerson && !!p.held && !this.airPose && !this.swimming && !this.knocked;
     if (this.helmetMesh) this.helmetMesh.visible = visible.head;
     if (this.vestMesh) this.vestMesh.visible = visible.body;
     if (this.packMesh) this.packMesh.visible = visible.body;
@@ -1067,6 +1142,9 @@ export class Character {
           : this.curSlot === 4 ? this.throwKind
             : null;
     this.swapHeld(wantId, gun ? gun.att : null);
+    // 第一人称使用独立的视图模型比例，增强枪械轮廓和操作反馈，不改变世界模型与碰撞尺寸。
+    const viewPose = gun ? firstPersonWeaponPose(gun.def.id, this.firstPersonAim, gun.att.sight !== null) : null;
+    if (p.held && gun) p.held.group.scale.setScalar(this.firstPerson ? viewPose!.scale : FIREARM_MODEL_SCALE);
     // 护具外观(装备/等级变化时重建)
     const aKey = (this.helmet?.level ?? 0) * 100 + (this.vest?.level ?? 0) * 10 + (this.pack?.level ?? 0);
     if (aKey !== this.armorKey) {
@@ -1077,12 +1155,21 @@ export class Character {
     this.syncOwnModelVisibility();
     // 枪姿态: ADS 俯仰 + 换弹下压; 弹匣中段脱落/回装
     const reloadDip = this.reload01 > 0 ? Math.sin(Math.min(1, this.reload01) * Math.PI) * 0.55 : 0;
+    const viewMotion = this.firstPerson && viewPose ? (1 - this.firstPersonAim) * this.locomotionF : 0;
+    const weaponSwayX = Math.sin(this.walkPhase) * 0.012 * viewMotion;
+    const weaponSwayY = Math.abs(Math.cos(this.walkPhase)) * -0.01 * viewMotion;
     p.gun.position.set(
-      this.firstPerson ? 0.16 : 0.19,
-      (this.firstPerson ? 1.28 : 1.26) - this.gunKick * 0.12,
-      (this.firstPerson ? 0.54 : 0.34) - this.gunKick,
+      this.firstPerson && viewPose ? viewPose.x + weaponSwayX : 0.19,
+      (this.firstPerson && viewPose ? viewPose.y + weaponSwayY : 1.26) - this.gunKick * 0.12,
+      (this.firstPerson && viewPose ? viewPose.z : 0.34) - this.gunKick,
     );
-    p.gun.rotation.set(-this.aimPitch + reloadDip - this.gunKick * 0.55, 0, 0);
+    p.gun.rotation.set(
+      -this.aimPitch + reloadDip - this.gunKick * 0.55,
+      this.firstPerson && viewPose ? viewPose.yaw : 0,
+      this.firstPerson && viewPose ? viewPose.roll - weaponSwayX * 0.7 : 0,
+    );
+    p.viewHands.position.set(0, 0, 0);
+    p.viewHands.scale.setScalar(this.firstPerson && viewPose ? lerp(1.08, 1, this.firstPersonAim) : 1);
     if (p.held?.mag) {
       p.held.mag.visible = this.reload01 < 0.4 || this.reload01 > 0.68;
     }

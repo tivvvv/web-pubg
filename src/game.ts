@@ -193,7 +193,6 @@ export class Game {
   promptDeathCrate: DeathCrate | null = null; // 当前可搜索的死亡盒
   promptAlly: Character | null = null;    // 当前可救援的倒地队友提示
   backpackOpen = false;
-  viewFpp = false;                     // 第一人称(V 切换, 会话内跨对局记忆)
   healT = -1;                            // >0 = 恢复品读条中(剩余秒)
   healKind: HealId | null = null;        // 读条中的恢复品种类
   drinkT = -1;                           // >0 = 饮料 buff 剩余秒(20s/40HP 预算)
@@ -412,13 +411,10 @@ export class Game {
       return;
     }
     if (this.state !== 'playing' || !this.player?.alive || this.backpackOpen) return;
-    // 空降阶段: 仅 V 视角与 F 跳伞可用
+    // 空降阶段仅允许 F 跳伞，镜头始终保持第一人称。
     const descent = this.player.descent;
     if (descent) {
-      if (a === 'viewmode') {
-        this.viewFpp = !this.viewFpp;
-        this.hud.toast(this.viewFpp ? '第一人称' : '第三人称');
-      } else if (a === 'pickup' && descent === 'plane') {
+      if (a === 'pickup' && descent === 'plane') {
         this.player.startFreefall(this);
       }
       return;
@@ -450,11 +446,6 @@ export class Game {
       }
       case 'slot5': this.selectThrowable(); break;
       case 'heal': this.quickHeal(this.player.char); break;
-      case 'viewmode':
-        this.viewFpp = !this.viewFpp;
-        this.hud.toast(this.viewFpp ? '第一人称' : '第三人称');
-        break;
-      case 'shoulder': this.player.swapShoulder(this); break;
       case 'crouch': {
         // C: 站⇄蹲; 趴→蹲
         const c = this.player.char;
@@ -490,11 +481,7 @@ export class Game {
     if (!player) return;
     this.tmpOrigin.copy(player.camera.position);
     player.getViewDir(this.tmpDir);
-    // 与开火使用同一条第三人称肩部校正射线, 保证准星锁敌和子弹落点一致.
-    player.char.eyePos(this.tmpEnd);
-    if (player.cameraBlend < 0.98) this.tmpEnd.y -= 0.04;
-    this.tmpEnd.addScaledVector(this.tmpDir, 14);
-    this.tmpDir.subVectors(this.tmpEnd, this.tmpOrigin).normalize();
+    // 第一人称标记与开火共用相机镜轴，保证准星目标和实际落点一致。
     hitscan(this.world, this.chars, player.char, this.tmpOrigin, this.tmpDir, 180, this.staticHit, this.shotRes);
     const hit = this.shotRes;
     const focus = hit.char?.team === 'enemy'
@@ -899,7 +886,8 @@ export class Game {
     this.player.vy = 0;
     this.player.char.grounded = false;
     this.flightPoint(this.player.char.pos, 0);
-    this.player.yaw = this.flightAngle + Math.PI / 2;
+    // 第一人称离舱时沿运输机真实前进方向起跳，避免切换到自由落体的首帧横向旋转。
+    this.player.yaw = Math.atan2(Math.cos(this.flightAngle), Math.sin(this.flightAngle));
     this.chars.push(this.player.char);
     this.charsGroup.add(this.player.char.group);
     // 运输机模型(低模军机, 舱内阶段跟随航线, 跳伞后飞离)
@@ -1404,10 +1392,7 @@ export class Game {
     const player = this.player as PlayerController;
     this.tmpOrigin.copy(player.camera.position);
     player.getViewDir(this.tmpDir);
-    player.char.eyePos(this.tmpEnd);
-    if (player.cameraBlend < 0.98) this.tmpEnd.y -= 0.04;
-    this.tmpEnd.addScaledVector(this.tmpDir, 14);
-    this.tmpDir.subVectors(this.tmpEnd, this.tmpOrigin).normalize(); // 本帧准星方向 + 第三人称肩部视差
+    // 固定第一人称直接使用本帧相机镜轴，不再进行肩部视差校正。
     return this.fireWeapon(player.char, this.tmpOrigin, this.tmpDir, player.spreadRad);
   }
 

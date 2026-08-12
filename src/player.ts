@@ -1,4 +1,4 @@
-// 玩家: 第一/第三人称可切换(V) + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力 + 投掷
+// 玩家: 固定第一人称 + 移动/跳跃 + 武器/近战操控 + 拾取提示 + 后坐力 + 投掷
 import * as THREE from 'three';
 import {
   CANOPY_DEPLOY_VELOCITY, Character, moveAirDescentHorizontal, stepAirDescentVelocity, SWIM_SPEED, SWIM_SPRINT_SPEED,
@@ -21,9 +21,7 @@ import {
   smoothAimProgress, WEAPON_RECOIL,
 } from './gunplay';
 import {
-  advanceCameraMode, advanceCameraSpring, advanceShoulderBlend, cameraFovTarget, cameraModeTarget,
-  cameraMotionTarget, sampleCameraShake,
-  smoothCameraDistance, type CameraShakeSample,
+  advanceCameraSpring, cameraFovTarget, cameraMotionTarget, sampleCameraShake, type CameraShakeSample,
 } from './camera';
 import {
   chooseInteractionCandidate, equipmentComparison, interactionSelfOcclusionTolerance, isAutomaticPickupKind,
@@ -35,6 +33,7 @@ import type { Crate } from './airdrop';
 import type { DeathCrate } from './deathcrate';
 import type { LootItem } from './loot';
 import type { ForestTreasure } from './wildlife';
+import { TRANSPORT_PLANE_FIRST_PERSON_FORWARD } from './planemodel';
 import { resolveMovementDirection, wadingSpeedMultiplier } from './movement';
 
 const BASE_FOV = 75;
@@ -44,7 +43,6 @@ const FREEFALL_STEER_RESPONSE = 5; // 自由落体转向响应
 const CANOPY_STEER_SPEED = 12;
 const CANOPY_STEER_RESPONSE = 1.6;
 const AIR_STEER_DRAG = 1.2; // 松开方向键后保留少量惯性
-const CAMERA_PROBE_OFFSETS = [0, -0.14, 0.14] as const;
 
 // 在水中按住开火键时锁住扳机，离水后必须先松开再按，避免边界帧误开枪。
 export function updateSwimFireLatch(latched: boolean, swimming: boolean, fireHeld: boolean): boolean {
@@ -78,7 +76,6 @@ export class PlayerController {
   private fireTimer = 0;
   private reloadT = 0;
   private reloadTotal = 0;
-  private camDist = 3.4;
   private fov = BASE_FOV;
   private hv = new THREE.Vector2(); // 空降水平速度
   private moveVel = new THREE.Vector2(); // 玩家地面/游泳水平惯性
@@ -97,9 +94,6 @@ export class PlayerController {
   private landDip = 0;
   private landVelocity = 0;
   private shotFovKick = 0;
-  private cameraModeF = 0;
-  private shoulderSide: -1 | 1 = 1;
-  private shoulderBlend = 1;
   private cameraShakeT = 0;
   private cameraShake: CameraShakeSample = { x: 0, y: 0, z: 0, roll: 0 };
   private vehicleLookYaw = 0;
@@ -119,17 +113,12 @@ export class PlayerController {
   spreadRad = 0.004;
 
   private viewDir = new THREE.Vector3();
-  private pivot = new THREE.Vector3();
-  private camTarget = new THREE.Vector3();
-  private camDir = new THREE.Vector3();
   private lookAt = new THREE.Vector3();
   private throwDir = new THREE.Vector3();
   private throwOrigin = new THREE.Vector3();
   private tmpSwim = new THREE.Vector3();
   private planeNext = new THREE.Vector3();
   private fppCameraPos = new THREE.Vector3();
-  private tppCameraPos = new THREE.Vector3();
-  private camProbe = new THREE.Vector3();
   private camProbeDir = new THREE.Vector3();
   private interactionOrigin = new THREE.Vector3();
   private interactionPos = new THREE.Vector3();
@@ -137,6 +126,7 @@ export class PlayerController {
 
   constructor(shirtColor: number) {
     this.char = new Character('你', true, shirtColor);
+    this.char.setFirstPerson(true);
     this.camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.1, 900);
   }
 
@@ -149,11 +139,11 @@ export class PlayerController {
   }
 
   get cameraBlend(): number {
-    return this.cameraModeF;
+    return 1;
   }
 
   get cameraDistance(): number {
-    return this.camDist;
+    return 0;
   }
 
   get interactionTargetKind(): InteractionKind | null {
@@ -162,12 +152,6 @@ export class PlayerController {
 
   get interactionTargetDistance(): number {
     return this.interactionTarget ? this.interactionDistance : -1;
-  }
-
-  swapShoulder(game: Game): void {
-    if (game.viewFpp || this.cameraModeF > 0.92 || this.driving || this.descent) return;
-    this.shoulderSide = this.shoulderSide === 1 ? -1 : 1;
-    game.hud.toast(this.shoulderSide === 1 ? '右肩视角' : '左肩视角');
   }
 
   update(dt: number, input: Input, game: Game): void {
@@ -181,7 +165,7 @@ export class PlayerController {
     if (!c.alive || this.descent || this.driving || c.vault) {
       this.aiming = false;
       this.aimF = 0;
-      c.setFirstPerson(false);
+      c.setFirstPerson(true);
     }
     if (!c.alive) {
       if (this.driving) this.exitVehicle(game, false);
@@ -249,6 +233,7 @@ export class PlayerController {
       gun !== null && !c.swimming && !c.knocked;
     if (gun) this.aimF = smoothAimProgress(this.aimF, this.aiming, gun.def.id, dt);
     else this.aimF = lerp(this.aimF, 0, 1 - Math.exp(-16 * dt));
+    c.firstPersonAim = aimBlend(this.aimF);
     this.aimTime += dt;
 
     // ---- 移动 ----
@@ -829,14 +814,9 @@ export class PlayerController {
     this.interactionDistance = 0;
   }
 
-  // 投掷起点: TPP 从胸前出手, FPP 从眼位前方出手(不穿脸); 均随姿态高度
-  private throwStart(c: Character, out: THREE.Vector3, dir: THREE.Vector3, fpp: boolean): void {
-    if (fpp) {
-      out.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.07, c.pos.z).addScaledVector(dir, 0.35);
-    } else {
-      c.chestPos(out);
-      out.addScaledVector(dir, 0.4);
-    }
+  // 第一人称投掷从眼位前方出手，避免投掷物穿过自身模型或近墙误碰。
+  private throwStart(c: Character, out: THREE.Vector3, dir: THREE.Vector3): void {
+    out.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.07, c.pos.z).addScaledVector(dir, 0.35);
   }
 
   // 投掷物: 按住左键蓄力瞄准(轨迹预览), 松开投出; 蓄力 0.8s 达满速
@@ -851,7 +831,7 @@ export class PlayerController {
       this.holdT += dt;
       const speed = THROW_SPEED * (0.6 + 0.4 * Math.min(1, this.holdT / 0.8));
       this.getViewDir(this.throwDir);
-      this.throwStart(c, this.throwOrigin, this.throwDir, game.viewFpp);
+      this.throwStart(c, this.throwOrigin, this.throwDir);
       game.grenades.showPreview(game.world, this.throwOrigin, this.throwDir, speed);
       return false;
     }
@@ -861,7 +841,7 @@ export class PlayerController {
       game.grenades.hidePreview();
       const speed = THROW_SPEED * (0.6 + 0.4 * Math.min(1, this.holdT / 0.8));
       this.getViewDir(this.throwDir);
-      this.throwStart(c, this.throwOrigin, this.throwDir, game.viewFpp);
+      this.throwStart(c, this.throwOrigin, this.throwDir);
       game.throwGrenade(c, c.throwKind, this.throwOrigin, this.throwDir, speed);
       c.throwables[c.throwKind]--;
       c.swingT = 1; // 挥臂动作
@@ -1017,7 +997,6 @@ export class PlayerController {
     this.vehicleLookYaw = 0;
     this.vehicleLookPitch = 0.08;
     this.vehicleLookIdleT = 0;
-    this.cameraModeF = 0;
     seatWorld(v, c.pos);
     c.yaw = v.yaw;
     this.yaw = v.yaw;
@@ -1072,7 +1051,7 @@ export class PlayerController {
     game.hud.flashInteraction('vehicle');
     v.speed = 0;
     this.driving = null;
-    // 给下车后的再次交互留出短暂防误触窗口，并让追车镜头自然回到角色。
+    // 给下车后的再次交互留出短暂防误触窗口，并让视线自然回到角色前方。
     if (!forced) {
       this.interactionLockT = Math.max(this.interactionLockT, 0.3);
       this.interactionFocusT = Math.max(this.interactionFocusT, 0.38);
@@ -1104,43 +1083,37 @@ export class PlayerController {
     game.audio.engineSet(Math.abs(v.speed) / spec.vmax);
   }
 
-  // 追逐相机(车后上方, 与 TPP 同款防穿)
+  // 驾驶舱/车把第一人称镜头。机位绑定驾驶座而不是车后追逐点，
+  // 各车型使用独立眼高，避免轿车穿顶或摩托车视线落进仪表台。
   private driveCamera(dt: number, game: Game, v: Vehicle): void {
     const viewYaw = v.yaw + this.vehicleLookYaw;
     const cp = Math.cos(this.vehicleLookPitch);
     const dirX = Math.sin(viewYaw) * cp;
     const dirY = Math.sin(this.vehicleLookPitch);
     const dirZ = Math.cos(viewYaw) * cp;
-    const dist = v.kind === 'car' ? 6.2 : v.kind === 'buggy' ? 5.7 : 5.0;
-    this.pivot.set(v.pos.x, v.pos.y + 1.4, v.pos.z);
-    this.camTarget.set(
-      this.pivot.x - dirX * dist,
-      this.pivot.y + 0.72 - dirY * dist,
-      this.pivot.z - dirZ * dist,
+    // 驾驶座根节点位于坐垫附近。机位需越过座椅靠背并高于仪表台，
+    // 否则第一人称会落进座椅几何；摩托则适当降低以看见车把。
+    const eyeOffset = v.kind === 'moto' ? 1.02 : v.kind === 'buggy' ? 1.08 : 1.24;
+    const forwardOffset = v.kind === 'moto' ? 0.34 : v.kind === 'buggy' ? 0.36 : 0.32;
+    this.char.setFirstPerson(true);
+    this.camera.position.set(
+      this.char.pos.x + Math.sin(v.yaw) * forwardOffset,
+      this.char.pos.y + eyeOffset,
+      this.char.pos.z + Math.cos(v.yaw) * forwardOffset,
     );
-    this.camDir.subVectors(this.camTarget, this.pivot);
-    const len = this.camDir.length();
-    if (len > 0.001) {
-      this.camDir.divideScalar(len);
-      const allowed = this.cameraAllowedDistance(game, this.pivot, this.camDir, len, 0.28);
-      this.camDist = smoothCameraDistance(this.camDist, allowed, len, dt);
-    }
-    this.camera.position.copy(this.pivot).addScaledVector(this.camDir, this.camDist);
-    const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.3;
-    if (this.camera.position.y < minY) this.camera.position.y = minY;
     this.cameraShakeT += dt;
-    sampleCameraShake(this.cameraShake, this.cameraShakeT, game.shakeAmp * 0.16);
+    sampleCameraShake(this.cameraShake, this.cameraShakeT, game.shakeAmp * 0.13);
     this.camera.position.x += this.cameraShake.x;
     this.camera.position.y += this.cameraShake.y;
     this.camera.position.z += this.cameraShake.z;
     this.lookAt.set(
-      this.pivot.x + dirX * 8,
-      this.pivot.y + dirY * 8,
-      this.pivot.z + dirZ * 8,
+      this.camera.position.x + dirX * 12,
+      this.camera.position.y + dirY * 12,
+      this.camera.position.z + dirZ * 12,
     );
     this.camera.lookAt(this.lookAt);
     this.camera.rotateZ(this.cameraShake.roll);
-    this.fov = lerp(this.fov, BASE_FOV + Math.abs(v.speed) * 0.5, Math.min(1, dt * 6));
+    this.fov = lerp(this.fov, BASE_FOV + Math.min(5, Math.abs(v.speed) * 0.34), Math.min(1, dt * 6));
     if (Math.abs(this.fov - this.camera.fov) > 0.05) {
       this.camera.fov = this.fov;
       this.camera.updateProjectionMatrix();
@@ -1220,7 +1193,7 @@ export class PlayerController {
     return out;
   }
 
-  // 舱内追击机位: 右后上方看运输机, 鼠标可小幅偏移视线
+  // 运输机驾驶舱第一人称观察位，鼠标只在舷窗范围内小幅转头。
   private planeLookYaw = 0;
   private planeLookPitch = 0;
   private planeCamera(dt: number, dx: number, dy: number, game: Game): void {
@@ -1229,14 +1202,24 @@ export class PlayerController {
     const A = game.flightAngle;
     const fx = Math.cos(A);
     const fz = Math.sin(A);
-    const rx = -fz;
-    const rz = fx;
     const p = this.char.pos;
-    this.camera.position.set(p.x - fx * 17 + rx * 7.5, p.y + 4.6, p.z - fz * 17 + rz * 7.5);
-    this.lookAt.set(p.x + fx * 6, p.y - 0.5, p.z + fz * 6);
+    const heading = Math.atan2(fx, fz) + this.planeLookYaw;
+    const cp = Math.cos(this.planeLookPitch);
+    const lookX = Math.sin(heading) * cp;
+    const lookY = Math.sin(this.planeLookPitch);
+    const lookZ = Math.cos(heading) * cp;
+    // 运输机没有可渲染的舱内空间，相机必须越过不透明机鼻；否则会被机身内表面完全遮黑。
+    this.camera.position.set(
+      p.x + fx * TRANSPORT_PLANE_FIRST_PERSON_FORWARD,
+      p.y - 0.24,
+      p.z + fz * TRANSPORT_PLANE_FIRST_PERSON_FORWARD,
+    );
+    this.lookAt.set(
+      this.camera.position.x + lookX * 14,
+      this.camera.position.y + lookY * 14,
+      this.camera.position.z + lookZ * 14,
+    );
     this.camera.lookAt(this.lookAt);
-    this.camera.rotateY(this.planeLookYaw);
-    this.camera.rotateX(this.planeLookPitch);
     const targetFov = BASE_FOV;
     this.fov = lerp(this.fov, targetFov, Math.min(1, dt * 10));
     if (Math.abs(this.fov - this.camera.fov) > 0.05) {
@@ -1250,11 +1233,7 @@ export class PlayerController {
     const dir = this.getViewDir(this.viewDir);
     const gun = c.heldGun();
     const zoom = gun ? lerp(1, sightZoomOf(gun), aimBlend(this.aimF)) : 1;
-    const optic = !!gun && (gun.def.id === 'sniper' || gun.att.sight !== null);
-    const cameraTargetF = cameraModeTarget(game.viewFpp, optic, this.aimF);
-    this.cameraModeF = advanceCameraMode(this.cameraModeF, cameraTargetF, dt);
-    // 镜头开始向眼位靠近时先隐藏头身, 避免过渡中穿过自身模型。
-    c.setFirstPerson(this.cameraModeF > 0.12);
+    c.setFirstPerson(true);
 
     if (c.reviveTarget) {
       this.interactionFocus.set(
@@ -1280,9 +1259,8 @@ export class PlayerController {
       c.moveLean,
       cameraAcceleration,
       ads,
-      this.cameraModeF,
     );
-    const motionRate = 1 - Math.exp(-dt * (this.cameraModeF > 0.8 ? 13 : 8.5));
+    const motionRate = 1 - Math.exp(-dt * 13);
     this.cameraMotionForward = lerp(this.cameraMotionForward, cameraMotion.forward, motionRate);
     this.cameraMotionLateral = lerp(this.cameraMotionLateral, cameraMotion.lateral, motionRate);
     this.cameraMotionVertical = lerp(this.cameraMotionVertical, cameraMotion.vertical, motionRate);
@@ -1303,60 +1281,24 @@ export class PlayerController {
     const swimRoll = c.swimming
       ? Math.sin(c.swimT * 1.8) * clamp(c.speed2d / SWIM_SPRINT_SPEED, 0, 1) * 0.012
       : 0;
-    const targetRoll = swimRoll - c.moveLean * lerp(0.009, 0.018, this.cameraModeF) + this.cameraMotionRoll;
+    const targetRoll = swimRoll - c.moveLean * 0.018 + this.cameraMotionRoll;
     this.camRoll = lerp(this.camRoll, targetRoll, Math.min(1, dt * 9));
     const verticalFeel = this.camBob - this.landDip;
 
-    // 同时计算第三人称和眼位机位, 再按镜轴进度混合, 消除 ADS 和 V 切换时的瞬移。
+    // 唯一的玩家镜头固定在眼位，移动惯性仅施加厘米级偏移，不再计算任何追肩机位。
     this.fppCameraPos.set(c.pos.x, c.pos.y + c.eyeHeight() + verticalFeel, c.pos.z);
-    this.pivot.set(c.pos.x, c.pos.y + c.eyeHeight() - 0.04, c.pos.z);
-    this.pivot.y += verticalFeel * 0.42;
     const horizontalForwardX = Math.sin(this.yaw);
     const horizontalForwardZ = Math.cos(this.yaw);
     const horizontalRightX = -horizontalForwardZ;
     const horizontalRightZ = horizontalForwardX;
-    for (const cameraAnchor of [this.fppCameraPos, this.pivot]) {
-      cameraAnchor.x += horizontalForwardX * this.cameraMotionForward + horizontalRightX * this.cameraMotionLateral;
-      cameraAnchor.y += this.cameraMotionVertical;
-      cameraAnchor.z += horizontalForwardZ * this.cameraMotionForward + horizontalRightZ * this.cameraMotionLateral;
-    }
+    this.fppCameraPos.x += horizontalForwardX * this.cameraMotionForward + horizontalRightX * this.cameraMotionLateral;
+    this.fppCameraPos.y += this.cameraMotionVertical;
+    this.fppCameraPos.z += horizontalForwardZ * this.cameraMotionForward + horizontalRightZ * this.cameraMotionLateral;
     if (this.descent === 'freefall') {
-      this.pivot.x -= this.hv.x * 0.07;
-      this.pivot.z -= this.hv.y * 0.07;
+      this.fppCameraPos.x -= this.hv.x * 0.018;
+      this.fppCameraPos.z -= this.hv.y * 0.018;
     }
-
-    const indoor = game.world.inPlot(c.pos.x, c.pos.z, -1.65);
-    const adsDist = gun?.def === WEAPONS.sniper ? 1.5 : 1.9;
-    const baseDistance = lerp(indoor ? 2.5 : 3.4, adsDist, ads);
-    const targetDist = Math.max(1.35, baseDistance - this.interactionFocusF * 0.28);
-    const shoulder = lerp(indoor ? 0.4 : 0.5, 0.55, ads) * (1 - this.interactionFocusF * 0.18);
-    this.shoulderBlend = advanceShoulderBlend(this.shoulderBlend, this.shoulderSide, dt);
-
-    this.camDir.copy(dir).multiplyScalar(-1);
-    this.camTarget.copy(this.pivot).addScaledVector(this.camDir, targetDist);
-    const rx = -dir.z;
-    const rz = dir.x;
-    const rl = Math.hypot(rx, rz) || 1;
-    this.camTarget.x += (rx / rl) * shoulder * this.shoulderBlend;
-    this.camTarget.z += (rz / rl) * shoulder * this.shoulderBlend;
-    this.camTarget.y += indoor ? 0.07 : 0.22;
-
-    this.camDir.subVectors(this.camTarget, this.pivot);
-    const wantLen = this.camDir.length();
-    if (wantLen > 0.001) {
-      this.camDir.divideScalar(wantLen);
-      const allowed = this.cameraAllowedDistance(game, this.pivot, this.camDir, wantLen, 0.22);
-      this.camDist = smoothCameraDistance(this.camDist, allowed, wantLen, dt);
-    }
-    this.tppCameraPos.copy(this.pivot).addScaledVector(this.camDir, this.camDist);
-    this.camera.position.lerpVectors(this.tppCameraPos, this.fppCameraPos, this.cameraModeF);
-
-    const minY = game.world.getHeight(this.camera.position.x, this.camera.position.z) + 0.28;
-    if (this.cameraModeF < 0.98 && this.camera.position.y < minY) this.camera.position.y = minY;
-    if (this.cameraModeF < 0.98 && this.camera.position.y < WATER_Y + 0.16 &&
-      game.world.getHeight(this.camera.position.x, this.camera.position.z) < WATER_Y) {
-      this.camera.position.y = WATER_Y + 0.16;
-    }
+    this.camera.position.copy(this.fppCameraPos);
     this.cameraShakeT += dt;
     sampleCameraShake(this.cameraShake, this.cameraShakeT, game.shakeAmp * 0.16);
     this.camera.position.x += this.cameraShake.x;
@@ -1365,7 +1307,7 @@ export class PlayerController {
     // 射击时保持镜轴严格一致，非战斗交互时轻微看向目标，强化开门、拾取和救援反馈。
     this.lookAt.copy(this.camera.position).addScaledVector(dir, 14);
     if (this.interactionFocusF > 0.001 && !this.aiming) {
-      this.lookAt.lerp(this.interactionFocus, this.interactionFocusF * (1 - this.cameraModeF * 0.45) * 0.2);
+      this.lookAt.lerp(this.interactionFocus, this.interactionFocusF * 0.11);
     }
     this.camera.lookAt(this.lookAt);
     this.camera.rotateZ(this.camRoll + this.cameraShake.roll);
@@ -1392,27 +1334,4 @@ export class PlayerController {
     }
   }
 
-  private cameraAllowedDistance(
-    game: Game,
-    pivot: THREE.Vector3,
-    direction: THREE.Vector3,
-    desired: number,
-    padding: number,
-  ): number {
-    let allowed = desired;
-    const rx = -direction.z;
-    const rz = direction.x;
-    const rl = Math.hypot(rx, rz) || 1;
-    for (const offset of CAMERA_PROBE_OFFSETS) {
-      this.camProbe.copy(pivot);
-      this.camProbe.x += rx / rl * offset;
-      this.camProbe.z += rz / rl * offset;
-      const terrainT = game.world.raycastTerrain(this.camProbe, direction, desired);
-      if (terrainT < allowed) allowed = terrainT;
-      if (game.world.raycastStatics(this.camProbe, direction, desired, game.staticHit)) {
-        allowed = Math.min(allowed, game.staticHit.t);
-      }
-    }
-    return Math.max(0.25, allowed - padding);
-  }
 }

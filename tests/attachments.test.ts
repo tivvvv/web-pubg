@@ -33,7 +33,7 @@ describe('武器配件规则', () => {
     expect(dotted.group.getObjectsByProperty('name', 'extmag-rib')).toHaveLength(3);
   });
 
-  it('八类枪械均达到第四版模型细节预算并保留独立轮廓', () => {
+  it('八类枪械均达到第五版模型细节预算并保留独立轮廓', () => {
     const ids = ['pistol', 'smg', 'rifle', 'akm', 'lmg', 'dmr', 'sniper', 'shotgun'] as const;
     for (const id of ids) {
       const model = buildWeaponModel(id);
@@ -48,12 +48,17 @@ describe('武器配件规则', () => {
         const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
         objectMaterials.forEach((material) => materials.add(material));
       });
-      expect(model.group.userData.assetQuality).toBe('firearm-v4');
+      expect(model.group.userData.assetQuality).toBe('firearm-v5');
       expect(model.group.getObjectByName('muzzle-bore')).toBeTruthy();
       expect(model.group.getObjectByName('trigger-guard')).toBeTruthy();
       expect(model.group.getObjectByName('receiver-markings')).toBeTruthy();
+      expect(model.group.getObjectByName('firearm-premium-finish')).toBeTruthy();
+      expect(model.group.getObjectsByProperty('name', 'receiver-inlay-panel')).toHaveLength(2);
+      expect(model.group.getObjectsByProperty('name', 'receiver-highlight-edge')).toHaveLength(2);
+      expect(model.group.getObjectByName('finish-fasteners')).toBeTruthy();
+      expect(model.group.getObjectByName('serial-engraving')).toBeTruthy();
       expect(model.group.getObjectsByProperty('name', 'selector-indicator')).toHaveLength(2);
-      expect(physicalParts, `${id} 的结构零件不足`).toBeGreaterThanOrEqual(25);
+      expect(physicalParts, `${id} 的结构零件不足`).toBeGreaterThanOrEqual(38);
       expect(maxGeometryVertices, `${id} 仍使用过粗几何`).toBeGreaterThanOrEqual(100);
       expect(materials.size, `${id} 的材质分区不足`).toBeGreaterThanOrEqual(4);
     }

@@ -1,6 +1,10 @@
 // 低模军用运输机(航线投放/空投共用, 单实例)
 import * as THREE from 'three';
 
+// 运输机模型以 +Z 为机头。第一人称视点必须越过不透明机鼻，避免相机落在机身内部导致黑屏。
+export const TRANSPORT_PLANE_NOSE_TIP_Z = 8.4;
+export const TRANSPORT_PLANE_FIRST_PERSON_FORWARD = 8.75;
+
 // 低模军用运输机: 机身/高置主翼/尾翼/4 发螺旋桨(旋转桨盘) + 尾部跳板的暗示
 // 共享材质, 单实例; 返回桨盘供每帧旋转
 export function buildTransportPlane(): { group: THREE.Group; props: THREE.Object3D[] } {

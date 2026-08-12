@@ -35,15 +35,20 @@ const TRIGGER_GUARD = new THREE.TorusGeometry(1, 0.12, 7, 18, Math.PI);
 
 // 共享材质: 深金属 / 亮金属 / 聚合物 / 木色家具
 const MAT_DK = new THREE.MeshStandardMaterial({
-  color: 0x343b43, emissive: 0x10151a, emissiveIntensity: 0.22, roughness: 0.34, metalness: 0.72,
+  color: 0x46535f, emissive: 0x151c23, emissiveIntensity: 0.34, roughness: 0.3, metalness: 0.76,
 }); // 深金属(机匣/枪管)
 const MAT_LT = new THREE.MeshStandardMaterial({ color: 0xaeb8c2, roughness: 0.26, metalness: 0.86 }); // 亮金属(刃口/导轨/枪口)
-const MAT_PO = new THREE.MeshStandardMaterial({ color: 0x464d55, roughness: 0.8, metalness: 0.04 }); // 聚合物(护木/枪托/握把)
+const MAT_PO = new THREE.MeshStandardMaterial({ color: 0x535d67, roughness: 0.72, metalness: 0.06 }); // 聚合物(护木/枪托/握把)
 const MAT_TN = new THREE.MeshStandardMaterial({ color: 0x9a7a52, roughness: 0.82, metalness: 0.02 }); // 木色/沙色家具
-const MAT_BLACK = new THREE.MeshStandardMaterial({ color: 0x090b0d, roughness: 0.58, metalness: 0.62 });
+const MAT_BLACK = new THREE.MeshStandardMaterial({ color: 0x171c21, roughness: 0.5, metalness: 0.66 });
 const MAT_RUBBER = new THREE.MeshStandardMaterial({ color: 0x171a1d, roughness: 0.94, metalness: 0.01 });
 const MAT_WOOD_DARK = new THREE.MeshStandardMaterial({ color: 0x63452f, roughness: 0.9, metalness: 0.01 });
 const MAT_BRASS = new THREE.MeshStandardMaterial({ color: 0xc59a45, roughness: 0.34, metalness: 0.72 });
+const MAT_RAIL = new THREE.MeshStandardMaterial({ color: 0x68737d, roughness: 0.32, metalness: 0.8 });
+const MAT_EDGE = new THREE.MeshStandardMaterial({ color: 0x80909d, roughness: 0.28, metalness: 0.82 });
+const MAT_BLUE_STEEL = new THREE.MeshStandardMaterial({ color: 0x3f6072, roughness: 0.36, metalness: 0.7 });
+const MAT_OLIVE = new THREE.MeshStandardMaterial({ color: 0x58654a, roughness: 0.62, metalness: 0.22 });
+const MAT_WOOD_HI = new THREE.MeshStandardMaterial({ color: 0xb28154, roughness: 0.68, metalness: 0.02 });
 const MAT_FG = new THREE.MeshStandardMaterial({ color: 0x39543a, roughness: 0.68, metalness: 0.18 }); // 手雷墨绿
 const MAT_BD = new THREE.MeshStandardMaterial({ color: 0xc8503c, roughness: 0.62, metalness: 0.12 }); // 烟雾弹色带
 const MAT_LENS = new THREE.MeshStandardMaterial({
@@ -62,6 +67,11 @@ applySurfaceAsset(MAT_PO, 'fabric', 4, 0.5);
 applySurfaceAsset(MAT_TN, 'wood', 4.8, 0.85);
 applySurfaceAsset(MAT_WOOD_DARK, 'wood', 5.4, 0.92);
 applySurfaceAsset(MAT_RUBBER, 'fabric', 5.2, 0.34);
+applySurfaceAsset(MAT_RAIL, 'metal', 8.5, 0.7);
+applySurfaceAsset(MAT_EDGE, 'metal', 9, 0.62);
+applySurfaceAsset(MAT_BLUE_STEEL, 'metal', 6.8, 0.72);
+applySurfaceAsset(MAT_OLIVE, 'fabric', 5.8, 0.42);
+applySurfaceAsset(MAT_WOOD_HI, 'wood', 6.2, 0.9);
 applySurfaceAsset(MAT_FG, 'metal', 5, 0.45);
 applySurfaceAsset(MAT_BD, 'metal', 5, 0.45);
 
@@ -140,7 +150,7 @@ function railTeeth(parent: THREE.Group, y: number, zStart: number, count: number
   detailInstances(
     parent,
     BOX,
-    MAT_LT,
+    MAT_RAIL,
     Array.from({ length: count }, (_, index) => (
       [width, 0.007, 0.012, 0, y, zStart + index * spacing] as DetailTransform
     )),
@@ -222,10 +232,79 @@ function muzzleFinish(parent: THREE.Group, x: number, y: number, z: number, radi
   bore.name = 'muzzle-bore';
 }
 
+interface FirearmFinishProfile {
+  halfWidth: number;
+  y: number;
+  z: number;
+  length: number;
+  stockZ: number;
+  material: THREE.Material;
+}
+
+const FIREARM_FINISH: Record<WeaponId, FirearmFinishProfile> = {
+  rifle: { halfWidth: 0.057, y: 0.036, z: 0.1, length: 0.17, stockZ: -0.23, material: MAT_BLUE_STEEL },
+  akm: { halfWidth: 0.06, y: 0.038, z: 0.085, length: 0.16, stockZ: -0.28, material: MAT_WOOD_HI },
+  lmg: { halfWidth: 0.067, y: 0.042, z: 0.09, length: 0.19, stockZ: -0.3, material: MAT_OLIVE },
+  dmr: { halfWidth: 0.05, y: 0.04, z: 0.08, length: 0.15, stockZ: -0.29, material: MAT_WOOD_HI },
+  smg: { halfWidth: 0.057, y: 0.045, z: 0.055, length: 0.14, stockZ: -0.16, material: MAT_BLUE_STEEL },
+  sniper: { halfWidth: 0.057, y: 0.043, z: 0.065, length: 0.14, stockZ: -0.27, material: MAT_OLIVE },
+  pistol: { halfWidth: 0.042, y: 0.04, z: 0.015, length: 0.085, stockZ: -0.055, material: MAT_BLUE_STEEL },
+  shotgun: { halfWidth: 0.062, y: 0.04, z: -0.015, length: 0.07, stockZ: -0.29, material: MAT_WOOD_HI },
+};
+
+// 第五版统一精修层：侧面嵌板、切边高光、编号刻线、螺钉和背带环。
+// 这些细节位于第一人称最常见的右侧三分之四视角，也让地面模型在近距离更容易辨认。
+function addFirearmFinish(group: THREE.Group, id: WeaponId): void {
+  const profile = FIREARM_FINISH[id];
+  const finish = new THREE.Group();
+  finish.name = 'firearm-premium-finish';
+  for (const side of [-1, 1]) {
+    const panel = b(
+      finish, profile.material, 0.0035, 0.027, profile.length,
+      side * profile.halfWidth, profile.y, profile.z,
+    );
+    panel.name = 'receiver-inlay-panel';
+    const edge = b(
+      finish, MAT_EDGE, 0.005, 0.005, profile.length * 1.04,
+      side * (profile.halfWidth - 0.007), profile.y + 0.039, profile.z,
+    );
+    edge.name = 'receiver-highlight-edge';
+  }
+  const screwTransforms: DetailTransform[] = [];
+  for (const side of [-1, 1]) {
+    for (const offset of [-0.34, 0, 0.34]) {
+      screwTransforms.push([
+        0.005, 0.008, 0.005,
+        side * (profile.halfWidth + 0.004), profile.y + 0.002, profile.z + profile.length * offset,
+        0, 0, Math.PI / 2,
+      ]);
+    }
+  }
+  detailInstances(finish, CYL, MAT_BRASS, screwTransforms, 'finish-fasteners');
+  detailInstances(finish, BOX, MAT_LT, [
+    [0.003, 0.0035, profile.length * 0.42, profile.halfWidth + 0.005, profile.y + 0.018, profile.z],
+    [0.003, 0.0035, profile.length * 0.25, profile.halfWidth + 0.005, profile.y + 0.008, profile.z + 0.012],
+    [0.003, 0.0035, profile.length * 0.12, profile.halfWidth + 0.005, profile.y - 0.002, profile.z + 0.022],
+  ], 'serial-engraving');
+  if (id !== 'pistol') {
+    const loop = new THREE.Mesh(new THREE.TorusGeometry(0.018, 0.003, 7, 14), MAT_EDGE);
+    loop.name = 'sling-loop';
+    loop.rotation.y = Math.PI / 2;
+    loop.position.set(profile.halfWidth + 0.012, profile.y - 0.025, profile.stockZ);
+    loop.castShadow = true;
+    finish.add(loop);
+  } else {
+    const backstrap = b(finish, MAT_RUBBER, 0.044, 0.065, 0.008, 0, -0.055, -0.061, 0.22);
+    backstrap.name = 'pistol-backstrap';
+  }
+  group.add(finish);
+}
+
 function markFirearmQuality(group: THREE.Group, id: WeaponId): void {
+  addFirearmFinish(group, id);
   group.name = `weapon-${id}`;
   group.userData.weaponId = id;
-  group.userData.assetQuality = 'firearm-v4';
+  group.userData.assetQuality = 'firearm-v5';
 }
 
 function muzzleAt(g: THREE.Group, x: number, y: number, z: number): THREE.Object3D {

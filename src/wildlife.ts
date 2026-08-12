@@ -66,15 +66,21 @@ export const WILDLIFE_COUNTS: Readonly<Record<WildlifeKind, number>> = Object.fr
 const MAT = {
   cow: new THREE.MeshStandardMaterial({ color: 0x6a4430, roughness: 0.92 }),
   cowDark: new THREE.MeshStandardMaterial({ color: 0x29201b, roughness: 0.95 }),
+  cowLight: new THREE.MeshStandardMaterial({ color: 0xe0d2b5, roughness: 0.94 }),
   muzzle: new THREE.MeshStandardMaterial({ color: 0xb98d72, roughness: 0.9 }),
   horn: new THREE.MeshStandardMaterial({ color: 0xd8c9a0, roughness: 0.8 }),
+  hoof: new THREE.MeshStandardMaterial({ color: 0x26211d, roughness: 0.98 }),
+  animalEye: new THREE.MeshStandardMaterial({ color: 0x151310, roughness: 0.45, metalness: 0.08 }),
   wool: new THREE.MeshStandardMaterial({ color: 0xd8d4c4, roughness: 1 }),
+  woolShade: new THREE.MeshStandardMaterial({ color: 0xbcb9ad, roughness: 1 }),
   sheepDark: new THREE.MeshStandardMaterial({ color: 0x38352f, roughness: 0.96 }),
   fishA: new THREE.MeshStandardMaterial({ color: 0xf0b248, roughness: 0.46, metalness: 0.08 }),
   fishB: new THREE.MeshStandardMaterial({ color: 0x5bd4d0, roughness: 0.42, metalness: 0.12 }),
   fin: new THREE.MeshStandardMaterial({ color: 0x397c83, roughness: 0.58, side: THREE.DoubleSide }),
   bird: new THREE.MeshStandardMaterial({ color: 0x3f4648, roughness: 0.85, side: THREE.DoubleSide }),
   birdLight: new THREE.MeshStandardMaterial({ color: 0x9b9b8d, roughness: 0.9, side: THREE.DoubleSide }),
+  birdDark: new THREE.MeshStandardMaterial({ color: 0x242b30, roughness: 0.88, side: THREE.DoubleSide }),
+  birdBreast: new THREE.MeshStandardMaterial({ color: 0xc7bca6, roughness: 0.92, side: THREE.DoubleSide }),
   beak: new THREE.MeshStandardMaterial({ color: 0xd29c3b, roughness: 0.74 }),
   tiger: new THREE.MeshStandardMaterial({ color: 0xd47a24, roughness: 0.88 }),
   tigerLight: new THREE.MeshStandardMaterial({ color: 0xe9c38f, roughness: 0.92 }),
@@ -90,6 +96,10 @@ const MAT = {
 };
 applySurfaceAsset(MAT.tiger, 'fabric', 5.2, 0.22);
 applySurfaceAsset(MAT.tigerLight, 'fabric', 5.8, 0.18);
+applySurfaceAsset(MAT.cow, 'fabric', 4.8, 0.3);
+applySurfaceAsset(MAT.cowDark, 'fabric', 5.2, 0.26);
+applySurfaceAsset(MAT.wool, 'fabric', 6.4, 0.24);
+applySurfaceAsset(MAT.woolShade, 'fabric', 6.8, 0.22);
 applySurfaceAsset(MAT.chestWood, 'wood', 3.4, 0.78);
 applySurfaceAsset(MAT.chestDark, 'wood', 4.6, 0.68);
 applySurfaceAsset(MAT.chestMetal, 'metal', 5.8, 0.72);
@@ -112,30 +122,75 @@ function mesh(
 
 function buildCow(variant: number): { group: THREE.Group; limbs: THREE.Object3D[] } {
   const group = new THREE.Group();
+  group.name = 'wildlife-cow';
   const bodyMat = variant % 2 === 0 ? MAT.cow : MAT.cowDark;
-  group.add(mesh(new THREE.DodecahedronGeometry(0.55, 1), bodyMat, 0, 0.95, 0, 1.55, 0.9, 0.92));
-  group.add(mesh(new THREE.DodecahedronGeometry(0.36, 1), bodyMat, 0, 1.12, 0.88, 0.86, 0.82, 0.95));
-  group.add(mesh(new THREE.BoxGeometry(0.48, 0.26, 0.34), MAT.muzzle, 0, 1.02, 1.18));
-  // 不规则深色斑块打破单色玩具感。
-  for (const [x, y, z, sx, sy] of [[-0.55, 1.08, -0.22, 0.38, 0.3], [0.48, 0.78, 0.18, 0.3, 0.26]] as const) {
-    group.add(mesh(new THREE.DodecahedronGeometry(0.25, 0), variant % 2 === 0 ? MAT.cowDark : MAT.cow, x, y, z, sx, sy, 0.18));
+  const body = mesh(new THREE.SphereGeometry(0.58, 16, 10), bodyMat, 0, 0.94, -0.03, 1.42, 0.88, 1.2);
+  body.name = 'cow-body';
+  group.add(body);
+  const shoulder = mesh(new THREE.SphereGeometry(0.43, 14, 9), bodyMat, 0, 1.02, 0.54, 1.16, 1.04, 0.98);
+  shoulder.name = 'cow-shoulder';
+  group.add(shoulder);
+  const neck = mesh(new THREE.SphereGeometry(0.31, 12, 8), bodyMat, 0, 1.16, 0.78, 0.92, 1.15, 0.86);
+  neck.name = 'cow-neck';
+  group.add(neck);
+  const head = mesh(new THREE.DodecahedronGeometry(0.36, 2), bodyMat, 0, 1.25, 1.02, 0.92, 0.88, 1.02);
+  head.name = 'cow-head';
+  group.add(head);
+  const muzzle = mesh(new THREE.BoxGeometry(0.46, 0.24, 0.34), MAT.muzzle, 0, 1.1, 1.3);
+  muzzle.name = 'cow-muzzle';
+  group.add(muzzle);
+  const blaze = mesh(new THREE.BoxGeometry(0.17, 0.3, 0.025), MAT.cowLight, 0, 1.34, 1.325);
+  blaze.name = 'cow-face-blaze';
+  group.add(blaze);
+  // 贴近身体侧面的斑块使用压扁椭球，避免旧版悬浮小球的玩具感。
+  for (const [x, y, z, sx, sy] of [[-0.57, 1.06, -0.25, 0.42, 0.34], [0.57, 0.83, 0.15, 0.34, 0.28]] as const) {
+    const patch = mesh(new THREE.SphereGeometry(0.25, 10, 7), variant % 2 === 0 ? MAT.cowDark : MAT.cowLight, x, y, z, sx, sy, 0.12);
+    patch.name = 'cow-coat-patch';
+    group.add(patch);
   }
   for (const side of [-1, 1]) {
     const horn = mesh(new THREE.ConeGeometry(0.07, 0.28, 7), MAT.horn, side * 0.25, 1.45, 0.97);
+    horn.name = side < 0 ? 'cow-horn-left' : 'cow-horn-right';
     horn.rotation.z = side * 0.72;
     group.add(horn);
     const ear = mesh(new THREE.ConeGeometry(0.11, 0.25, 6), bodyMat, side * 0.34, 1.34, 0.87);
+    ear.name = side < 0 ? 'cow-ear-left' : 'cow-ear-right';
     ear.rotation.z = side * 1.25;
     group.add(ear);
+    const eye = mesh(new THREE.SphereGeometry(0.043, 8, 6), MAT.animalEye, side * 0.185, 1.31, 1.31);
+    eye.name = side < 0 ? 'cow-eye-left' : 'cow-eye-right';
+    group.add(eye);
   }
+  for (const side of [-1, 1]) {
+    const nostril = mesh(new THREE.SphereGeometry(0.025, 7, 5), MAT.cowDark, side * 0.105, 1.13, 1.48, 1, 0.72, 0.5);
+    nostril.name = 'cow-nostril';
+    group.add(nostril);
+  }
+  const udder = mesh(new THREE.SphereGeometry(0.2, 10, 7), MAT.muzzle, 0, 0.55, -0.04, 1.2, 0.62, 0.9);
+  udder.name = 'cow-udder';
+  group.add(udder);
   const limbs: THREE.Object3D[] = [];
-  for (const x of [-0.44, 0.44]) for (const z of [-0.35, 0.35]) {
-    const leg = mesh(new THREE.BoxGeometry(0.16, 0.72, 0.16), MAT.cowDark, x, 0.38, z);
+  for (const x of [-0.42, 0.42]) for (const z of [-0.42, 0.42]) {
+    const leg = new THREE.Group();
+    leg.position.set(x, 0.72, z);
+    leg.name = 'cow-leg';
+    leg.add(mesh(new THREE.BoxGeometry(0.17, 0.42, 0.17), bodyMat, 0, -0.2, 0));
+    leg.add(mesh(new THREE.BoxGeometry(0.145, 0.27, 0.145), MAT.cowDark, 0, -0.53, 0));
+    const hoof = mesh(new THREE.BoxGeometry(0.18, 0.12, 0.25), MAT.hoof, 0, -0.69, 0.04);
+    hoof.name = 'cow-hoof';
+    leg.add(hoof);
     group.add(leg);
     limbs.push(leg);
   }
-  const tail = mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.7, 7), bodyMat, 0, 1.02, -0.82);
-  tail.rotation.x = 0.58;
+  const tail = new THREE.Group();
+  tail.name = 'cow-tail';
+  tail.position.set(0, 1.13, -0.82);
+  const tailCord = mesh(new THREE.CylinderGeometry(0.03, 0.045, 0.64, 7), bodyMat, 0, -0.28, -0.14);
+  tailCord.rotation.x = 0.46;
+  tail.add(tailCord);
+  const tailTuft = mesh(new THREE.ConeGeometry(0.1, 0.24, 7), MAT.cowDark, 0, -0.6, -0.3);
+  tailTuft.name = 'cow-tail-tuft';
+  tail.add(tailTuft);
   group.add(tail);
   limbs.push(tail);
   return { group, limbs };
@@ -143,23 +198,50 @@ function buildCow(variant: number): { group: THREE.Group; limbs: THREE.Object3D[
 
 function buildSheep(): { group: THREE.Group; limbs: THREE.Object3D[] } {
   const group = new THREE.Group();
-  group.add(mesh(new THREE.IcosahedronGeometry(0.58, 1), MAT.wool, 0, 0.82, 0, 1.22, 0.92, 0.88));
-  // 多团羊毛让轮廓不再是单球。
-  for (const [x, y, z, s] of [[-0.42, 0.98, 0.02, 0.36], [0.38, 1.02, -0.08, 0.34], [0, 1.18, -0.25, 0.32]] as const) {
-    group.add(mesh(new THREE.IcosahedronGeometry(0.42, 1), MAT.wool, x, y, z, s / 0.42, s / 0.42, s / 0.42));
+  group.name = 'wildlife-sheep';
+  const core = mesh(new THREE.IcosahedronGeometry(0.58, 2), MAT.woolShade, 0, 0.82, -0.04, 1.18, 0.88, 1.02);
+  core.name = 'sheep-wool-core';
+  group.add(core);
+  // 大小与高度错开的毛团形成连续卷毛轮廓，不再只有一个多面球。
+  for (const [x, y, z, s, shade] of [
+    [-0.4, 0.94, 0.22, 0.42, 0], [0, 1.08, 0.26, 0.45, 1], [0.4, 0.92, 0.2, 0.4, 0],
+    [-0.42, 0.96, -0.22, 0.4, 1], [0, 1.13, -0.3, 0.43, 0], [0.4, 0.98, -0.22, 0.39, 1],
+    [-0.28, 0.72, -0.38, 0.35, 0], [0.28, 0.73, -0.4, 0.34, 1],
+  ] as const) {
+    const tuft = mesh(new THREE.IcosahedronGeometry(0.42, 1), shade ? MAT.woolShade : MAT.wool, x, y, z, s / 0.42, s / 0.42, s / 0.42);
+    tuft.name = 'sheep-wool-tuft';
+    group.add(tuft);
   }
-  group.add(mesh(new THREE.DodecahedronGeometry(0.28, 1), MAT.sheepDark, 0, 0.94, 0.68, 0.78, 0.92, 1.1));
+  const head = mesh(new THREE.DodecahedronGeometry(0.29, 2), MAT.sheepDark, 0, 0.99, 0.75, 0.82, 0.95, 1.12);
+  head.name = 'sheep-head';
+  group.add(head);
+  const muzzle = mesh(new THREE.BoxGeometry(0.25, 0.16, 0.2), MAT.muzzle, 0, 0.88, 0.98);
+  muzzle.name = 'sheep-muzzle';
+  group.add(muzzle);
   for (const side of [-1, 1]) {
     const ear = mesh(new THREE.ConeGeometry(0.09, 0.2, 6), MAT.sheepDark, side * 0.22, 1.08, 0.67);
+    ear.name = side < 0 ? 'sheep-ear-left' : 'sheep-ear-right';
     ear.rotation.z = side * 1.22;
     group.add(ear);
+    const eye = mesh(new THREE.SphereGeometry(0.035, 8, 6), MAT.animalEye, side * 0.145, 1.05, 0.99);
+    eye.name = side < 0 ? 'sheep-eye-left' : 'sheep-eye-right';
+    group.add(eye);
   }
   const limbs: THREE.Object3D[] = [];
-  for (const x of [-0.32, 0.32]) for (const z of [-0.25, 0.25]) {
-    const leg = mesh(new THREE.BoxGeometry(0.11, 0.52, 0.11), MAT.sheepDark, x, 0.3, z);
+  for (const x of [-0.31, 0.31]) for (const z of [-0.3, 0.3]) {
+    const leg = new THREE.Group();
+    leg.name = 'sheep-leg';
+    leg.position.set(x, 0.55, z);
+    leg.add(mesh(new THREE.BoxGeometry(0.12, 0.38, 0.12), MAT.sheepDark, 0, -0.18, 0));
+    const hoof = mesh(new THREE.BoxGeometry(0.14, 0.1, 0.2), MAT.hoof, 0, -0.42, 0.035);
+    hoof.name = 'sheep-hoof';
+    leg.add(hoof);
     group.add(leg);
     limbs.push(leg);
   }
+  const tail = mesh(new THREE.IcosahedronGeometry(0.18, 1), MAT.wool, 0, 0.92, -0.66, 1, 0.9, 1.15);
+  tail.name = 'sheep-tail';
+  group.add(tail);
   return { group, limbs };
 }
 
@@ -183,21 +265,56 @@ function buildFish(variant: number): { group: THREE.Group; limbs: THREE.Object3D
 
 function buildBird(variant: number): { group: THREE.Group; limbs: THREE.Object3D[] } {
   const group = new THREE.Group();
+  group.name = 'wildlife-bird';
   const material = variant % 3 === 0 ? MAT.birdLight : MAT.bird;
-  group.add(mesh(new THREE.SphereGeometry(0.24, 10, 7), material, 0, 0, 0, 0.78, 0.54, 1.35));
-  group.add(mesh(new THREE.SphereGeometry(0.14, 9, 6), material, 0, 0.05, 0.32));
+  const body = mesh(new THREE.SphereGeometry(0.24, 14, 9), material, 0, 0, 0, 0.84, 0.62, 1.42);
+  body.name = 'bird-body';
+  group.add(body);
+  const breast = mesh(new THREE.SphereGeometry(0.19, 12, 8), MAT.birdBreast, 0, -0.055, 0.18, 0.72, 0.68, 0.9);
+  breast.name = 'bird-breast';
+  group.add(breast);
+  const head = mesh(new THREE.SphereGeometry(0.15, 12, 8), material, 0, 0.08, 0.34);
+  head.name = 'bird-head';
+  group.add(head);
   const beak = mesh(new THREE.ConeGeometry(0.07, 0.22, 6), MAT.beak, 0, 0.02, 0.51);
+  beak.name = 'bird-beak';
   beak.rotation.x = Math.PI / 2;
   group.add(beak);
+  for (const side of [-1, 1]) {
+    const eye = mesh(new THREE.SphereGeometry(0.025, 7, 5), MAT.animalEye, side * 0.105, 0.115, 0.455);
+    eye.name = side < 0 ? 'bird-eye-left' : 'bird-eye-right';
+    group.add(eye);
+  }
   const wings: THREE.Object3D[] = [];
   for (const side of [-1, 1]) {
     const pivot = new THREE.Group();
+    pivot.name = side < 0 ? 'bird-wing-left' : 'bird-wing-right';
     pivot.position.x = side * 0.12;
-    const wing = mesh(new THREE.ConeGeometry(0.38, 0.92, 3), material, side * 0.36, 0, -0.04);
-    wing.rotation.z = side * Math.PI / 2;
+    const wing = mesh(new THREE.SphereGeometry(0.25, 10, 6), material, side * 0.34, 0, -0.08, 1.5, 0.16, 0.78);
+    wing.name = 'bird-wing-coverts';
     pivot.add(wing);
+    for (let feather = 0; feather < 3; feather++) {
+      const primary = mesh(
+        new THREE.ConeGeometry(0.08, 0.52 + feather * 0.08, 4),
+        feather === 2 ? MAT.birdDark : material,
+        side * (0.48 + feather * 0.1),
+        -0.015,
+        -0.1 - feather * 0.07,
+      );
+      primary.name = 'bird-primary-feather';
+      primary.rotation.z = side * Math.PI / 2;
+      primary.rotation.y = side * (0.1 + feather * 0.08);
+      pivot.add(primary);
+    }
     group.add(pivot);
     wings.push(pivot);
+  }
+  for (const side of [-1, 0, 1]) {
+    const tail = mesh(new THREE.ConeGeometry(0.075, 0.48 - Math.abs(side) * 0.06, 4), side === 0 ? MAT.birdDark : material, side * 0.1, 0, -0.48);
+    tail.name = 'bird-tail-feather';
+    tail.rotation.x = -Math.PI / 2;
+    tail.rotation.z = side * 0.18;
+    group.add(tail);
   }
   return { group, limbs: wings };
 }

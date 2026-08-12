@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { advancePoseBlend, Character, locomotionPose, meleeMotionPose, ownModelVisibility } from '../src/character';
+import {
+  advancePoseBlend, Character, firstPersonWeaponPose, locomotionPose, meleeMotionPose, ownModelVisibility,
+} from '../src/character';
 import { emptyAttachments } from '../src/attachments';
 import { environmentLighting, environmentSurfaceDetail, environmentVisualProfile } from '../src/environment';
 import { RENDER_QUALITY } from '../src/rendering';
 import { WEAPONS } from '../src/weapons';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
 import { squadNameTagPresentation, weaponPickupSlot } from '../src/game';
+import { TRANSPORT_PLANE_FIRST_PERSON_FORWARD, TRANSPORT_PLANE_NOSE_TIP_Z } from '../src/planemodel';
 
 describe('画面回归保护', () => {
   it('吉利服只能装备一次且具备完整的斗篷和枝叶轮廓', () => {
@@ -127,6 +130,69 @@ describe('画面回归保护', () => {
     expect(ownModelVisibility(true, 1)).toEqual({ head: false, body: false, hands: true });
     expect(ownModelVisibility(true, 1.1)).toEqual({ head: false, body: false, hands: false });
     expect(ownModelVisibility(true, 2)).toEqual({ head: false, body: false, hands: false });
+  });
+
+  it('全流程只保留第一人称镜头且不存在第三人称切换入口', () => {
+    const playerSource = readFileSync(join(process.cwd(), 'src/player.ts'), 'utf8');
+    const inputSource = readFileSync(join(process.cwd(), 'src/input.ts'), 'utf8');
+    const cameraSource = readFileSync(join(process.cwd(), 'src/camera.ts'), 'utf8');
+    const gameSource = readFileSync(join(process.cwd(), 'src/game.ts'), 'utf8');
+    const scenarioSource = readFileSync(join(process.cwd(), 'src/testscenario.ts'), 'utf8');
+
+    expect(playerSource).not.toContain('setFirstPerson(false)');
+    expect(playerSource).not.toContain('tppCameraPos');
+    expect(playerSource).not.toContain('cameraAllowedDistance');
+    expect(playerSource).not.toContain('shoulderBlend');
+    expect(gameSource).not.toContain('viewFpp');
+    expect(inputSource).not.toContain("'viewmode'");
+    expect(inputSource).not.toContain("'shoulder'");
+    expect(inputSource).not.toContain('KeyV');
+    expect(inputSource).not.toContain('KeyQ');
+    expect(cameraSource).not.toContain('cameraModeTarget');
+    expect(cameraSource).not.toContain('smoothCameraDistance');
+    expect(scenarioSource).not.toContain("'tpp'");
+  });
+
+  it('第一人称持枪模型避开准星且不会露出完整角色手臂', () => {
+    const character = new Character('第一人称持枪测试', true, 0x335577);
+    character.guns[0] = { def: WEAPONS.rifle, mag: 30, att: emptyAttachments() };
+    character.curSlot = 0;
+    character.setFirstPerson(true);
+    character.syncModel(1 / 60, false);
+
+    expect(character.parts.held).toBeDefined();
+    expect(character.parts.armL.visible).toBe(false);
+    expect(character.parts.armR.visible).toBe(false);
+    expect(character.parts.gun.visible).toBe(true);
+    expect(character.parts.viewHands.visible).toBe(true);
+    expect(character.parts.viewHands.getObjectByName('first-person-hand-left')).toBeDefined();
+    expect(character.parts.viewHands.getObjectByName('first-person-hand-right')).toBeDefined();
+    const pose = firstPersonWeaponPose('rifle', 0, false);
+    expect(character.parts.gun.position.x).toBeCloseTo(pose.x);
+    expect(character.parts.gun.position.y).toBeCloseTo(pose.y);
+    expect(character.parts.gun.position.z).toBeCloseTo(pose.z);
+    expect(character.parts.gun.rotation.y).toBeCloseTo(pose.yaw);
+    expect(character.parts.held?.group.scale.x).toBeCloseTo(pose.scale);
+  });
+
+  it('不同枪型使用独立右下方构图且 ADS 不遮挡镜轴', () => {
+    const pistol = firstPersonWeaponPose('pistol', 0, false);
+    const lmg = firstPersonWeaponPose('lmg', 0, false);
+    const rifleAds = firstPersonWeaponPose('rifle', 1, true);
+    expect(pistol.scale).toBeGreaterThan(lmg.scale);
+    expect(lmg.z).toBeGreaterThan(pistol.z);
+    expect(pistol.x).toBeLessThan(0);
+    expect(lmg.yaw).toBeGreaterThan(0);
+    expect(rifleAds.x).toBeLessThan(-0.1);
+    expect(rifleAds.y).toBeLessThan(1.2);
+    expect(rifleAds.yaw).toBeGreaterThan(0);
+    expect(Math.abs(rifleAds.roll)).toBeLessThan(Math.abs(lmg.roll));
+  });
+
+  it('运输机第一人称视点越过不透明机鼻且测试路由覆盖登机阶段', () => {
+    const scenarioSource = readFileSync(join(process.cwd(), 'src/testscenario.ts'), 'utf8');
+    expect(TRANSPORT_PLANE_FIRST_PERSON_FORWARD).toBeGreaterThan(TRANSPORT_PLANE_NOSE_TIP_Z + 0.2);
+    expect(scenarioSource).toContain("'scenario=parachute&phase=plane'");
   });
 
   it('空降, 乘车和击倒姿态以有限速率进入和退出', () => {
