@@ -816,7 +816,9 @@ export class Game {
       this.scene.remove(this.planeMesh);
       this.planeMesh = null;
     }
+    if (this.player) this.scene.remove(this.player.camera);
     this.player = new PlayerController(0x3a6ea5);
+    this.scene.add(this.player.camera);
 
     // 敌方落点: 按区域收益和承载人数分配, 同时受航线可达距离约束.
     // 相比全图均匀散点, 这里会形成可预期但不固定的早期争夺, 又不会把所有人堆在同一栋房内.
@@ -1252,7 +1254,7 @@ export class Game {
     this.loot.update(dt);
     this.deathCrates.update(dt);
     this.effects.update(dt);
-    this.wildlife.update(dt, this.chars, (target, damage, tiger) => this.handleTigerAttack(target, damage, tiger));
+    this.wildlife.update(dt, this.chars, (target, damage, attacker) => this.handleWildlifeAttack(target, damage, attacker));
     this.wildlife.resolveVehicleCollisions(this.vehicles.list);
     this.grenades.update(dt, this);
     this.vehicles.update(dt, this);
@@ -1892,15 +1894,17 @@ export class Game {
 
   // ---- 伤害/击杀 ----
 
-  private handleTigerAttack(target: WildlifeCharacterBody, damage: number, tiger: WildlifeEntity): void {
+  private handleWildlifeAttack(target: WildlifeCharacterBody, damage: number, attacker: WildlifeEntity): void {
     const victim = target as Character;
     if (!victim.alive) return;
     this.tmpEnd.set(victim.pos.x, victim.pos.y + victim.chestHeight(), victim.pos.z);
     this.effects.impactBlood(this.tmpEnd);
-    this.soundAt(tiger.group.position, (dist, pan, occluded) => {
-      this.audio.tigerAttack(dist, pan, occluded);
+    this.soundAt(attacker.group.position, (dist, pan, occluded) => {
+      if (attacker.kind === 'crocodile') this.audio.crocodileAttack(dist, pan, occluded);
+      else this.audio.tigerAttack(dist, pan, occluded);
     }, 18);
-    this.damageChar(victim, damage, false, null, '老虎', false, tiger.group.position);
+    const source = attacker.kind === 'crocodile' ? '鳄鱼' : '老虎';
+    this.damageChar(victim, damage, false, null, source, false, attacker.group.position);
   }
 
   damageChar(

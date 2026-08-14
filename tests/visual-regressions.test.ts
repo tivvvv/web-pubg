@@ -11,7 +11,11 @@ import { RENDER_QUALITY } from '../src/rendering';
 import { WEAPONS } from '../src/weapons';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
 import { squadNameTagPresentation, weaponPickupSlot } from '../src/game';
-import { TRANSPORT_PLANE_FIRST_PERSON_FORWARD, TRANSPORT_PLANE_NOSE_TIP_Z } from '../src/planemodel';
+import {
+  buildTransportJumpBayView,
+  TRANSPORT_PLANE_JUMP_BAY_BACK,
+  TRANSPORT_PLANE_JUMP_BAY_HEIGHT_FROM_CHARACTER,
+} from '../src/planemodel';
 
 describe('画面回归保护', () => {
   it('吉利服只能装备一次且具备完整的斗篷和枝叶轮廓', () => {
@@ -189,9 +193,20 @@ describe('画面回归保护', () => {
     expect(Math.abs(rifleAds.roll)).toBeLessThan(Math.abs(lmg.roll));
   });
 
-  it('运输机第一人称视点越过不透明机鼻且测试路由覆盖登机阶段', () => {
+  it('运输机第一人称站在尾部跳伞舱并具备敞开舱门参照', () => {
     const scenarioSource = readFileSync(join(process.cwd(), 'src/testscenario.ts'), 'utf8');
-    expect(TRANSPORT_PLANE_FIRST_PERSON_FORWARD).toBeGreaterThan(TRANSPORT_PLANE_NOSE_TIP_Z + 0.2);
+    expect(TRANSPORT_PLANE_JUMP_BAY_BACK).toBeGreaterThan(6.4);
+    expect(TRANSPORT_PLANE_JUMP_BAY_HEIGHT_FROM_CHARACTER).toBeGreaterThan(-0.8);
+    const jumpBay = buildTransportJumpBayView();
+    expect(jumpBay.name).toBe('transport-jump-bay-view');
+    expect(jumpBay.visible).toBe(false);
+    expect(jumpBay.getObjectByName('jump-bay-ramp')).toBeDefined();
+    expect(jumpBay.getObjectByName('jump-bay-red-light')).toBeDefined();
+    expect(jumpBay.getObjectByName('jump-bay-green-light')).toBeDefined();
+    expect(jumpBay.children.filter((child) => child.name === 'jump-bay-door-post')).toHaveLength(2);
+    expect(jumpBay.children.filter((child) => child.name === 'jump-bay-rib')).toHaveLength(6);
+    expect(jumpBay.children.filter((child) => child.name === 'jump-bay-warning-stripe')).toHaveLength(7);
+    expect(jumpBay.getObjectByName('cockpit-dashboard')).toBeUndefined();
     expect(scenarioSource).toContain("'scenario=parachute&phase=plane'");
   });
 

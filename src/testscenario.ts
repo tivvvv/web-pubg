@@ -95,6 +95,8 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=wildlife&kind=fish',
   'scenario=wildlife&kind=bird',
   'scenario=wildlife&kind=tiger',
+  'scenario=wildlife&kind=crocodile',
+  'scenario=wildlife&kind=crocodile&attack=1',
   'scenario=wildlife&kind=treasure',
   'scenario=wildlife&kind=ghillie',
   'scenario=maptour&region=stonegate',
@@ -134,7 +136,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   zone: '毒圈回归: 圈外持续受伤, 进入圈内后立即停止伤害',
   endgame: '结算回归: 淘汰最后一名敌人后进入胜利界面',
   defeat: '失败回归: 玩家被淘汰后进入失败界面并可重新开始',
-  wildlife: '生态回归: 检查牛羊, 水下鱼群, 飞鸟和守护老虎的模型, 活动范围与命中死亡',
+  wildlife: '生态回归: 检查牛羊, 鱼群, 飞鸟, 老虎和河流鳄鱼的模型, 活动范围与命中死亡',
   maptour: '地图巡查: 使用 region=区域 id 依次检查六区主地标, 补给点和转移路线',
 };
 
@@ -258,7 +260,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.openWindows = String(game.world.buildings.openWindowCount);
   panel.dataset.crossWindows = String(game.world.buildings.crossWindowCount);
   panel.dataset.churchBreakableGlass = String(game.world.churchBreakableGlassCount);
-  panel.dataset.wildlifeCounts = (['cow', 'sheep', 'fish', 'bird', 'tiger'] as const)
+  panel.dataset.wildlifeCounts = (['cow', 'sheep', 'fish', 'bird', 'tiger', 'crocodile'] as const)
     .map((kind) => `${kind}:${game.wildlife.count(kind, true)}/${game.wildlife.count(kind)}`)
     .join(',');
   panel.dataset.forestTreasure = [
@@ -2183,13 +2185,34 @@ function setupWildlife(game: Game): void {
     }
     return;
   }
-  const kind: WildlifeKind = rawKind === 'sheep' || rawKind === 'fish' || rawKind === 'bird' || rawKind === 'tiger'
+  const kind: WildlifeKind = rawKind === 'sheep' || rawKind === 'fish' || rawKind === 'bird' || rawKind === 'tiger' || rawKind === 'crocodile'
     ? rawKind
     : 'cow';
   const candidates = game.wildlife.entities.filter((entity) => entity.kind === kind && entity.alive);
   const target = candidates[kind === 'bird' ? Math.min(4, candidates.length - 1) : 0];
   const player = game.playerCtl;
   if (!target || !player) return;
+  if (kind === 'crocodile' && params.get('attack') === '1') {
+    player.descent = null;
+    player.vy = 0;
+    const c = player.char;
+    c.alive = true;
+    c.hp = 100;
+    c.knocked = false;
+    c.airPose = null;
+    c.group.visible = true;
+    c.grounded = false;
+    c.swimming = true;
+    c.pos.set(target.group.position.x, WATER_Y - 0.78, target.group.position.z + 4.4);
+    c.groundH = WATER_Y - 0.03;
+    c.guns[0] = null;
+    c.curSlot = 3;
+    player.yaw = Math.atan2(target.group.position.x - c.pos.x, target.group.position.z - c.pos.z);
+    player.pitch = 0.02;
+    target.attackCooldown = 0;
+    target.decisionTimer = 0;
+    return;
+  }
   // 模型验收场景冻结目标并收起武器，保证近景轮廓不会被第一人称枪模遮挡。
   target.speed = 0;
   const targetPosition = target.group.position;
@@ -2213,7 +2236,7 @@ function setupWildlife(game: Game): void {
   }
   setGroundPlayer(game, spawnX, spawnZ);
   target.decisionTimer = 999;
-  if (kind === 'cow' || kind === 'sheep' || kind === 'tiger') {
+  if (kind === 'cow' || kind === 'sheep' || kind === 'tiger' || kind === 'crocodile') {
     target.heading = Math.atan2(spawnX - targetPosition.x, spawnZ - targetPosition.z);
     target.group.rotation.y = target.heading;
   }

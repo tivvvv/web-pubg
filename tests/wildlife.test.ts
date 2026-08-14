@@ -11,7 +11,7 @@ function createWildlife(): { world: World; wildlife: WildlifeSystem } {
 }
 
 describe('环境动物系统', () => {
-  it('牛羊鱼鸟和守护老虎按规划数量生成在对应生态层', () => {
+  it('牛羊鱼鸟老虎和鳄鱼按规划数量生成在对应生态层', () => {
     const { world, wildlife } = createWildlife();
     for (const kind of Object.keys(WILDLIFE_COUNTS) as WildlifeKind[]) {
       expect(wildlife.count(kind)).toBe(WILDLIFE_COUNTS[kind]);
@@ -23,6 +23,9 @@ describe('环境动物系统', () => {
       if (entity.kind === 'fish') {
         expect(y).toBeLessThan(WATER_Y);
         expect(world.getHeight(x, z)).toBeLessThan(WATER_Y - 0.35);
+      } else if (entity.kind === 'crocodile') {
+        expect(y).toBeLessThan(WATER_Y);
+        expect(world.getHeight(x, z)).toBeLessThan(WATER_Y - 0.48);
       } else if (entity.kind === 'bird') {
         expect(y - world.getHeight(x, z)).toBeGreaterThan(12);
       } else {
@@ -93,7 +96,7 @@ describe('环境动物系统', () => {
     expect(wildlife.raycast(origin, direction, 12)?.entity).not.toBe(cow);
   });
 
-  it('五种动物都可死亡并能在重开对局时完整复位', () => {
+  it('所有动物都可死亡并能在重开对局时完整复位', () => {
     const { wildlife } = createWildlife();
     for (const kind of Object.keys(WILDLIFE_COUNTS) as WildlifeKind[]) {
       const entity = wildlife.entities.find((candidate) => candidate.kind === kind);
@@ -205,6 +208,62 @@ describe('环境动物系统', () => {
     expect(attackCount).toBe(2);
   });
 
+  it('河流鳄鱼使用完整模型且战斗力接近老虎', () => {
+    const { wildlife } = createWildlife();
+    const crocodiles = wildlife.entities.filter((entity) => entity.kind === 'crocodile');
+    expect(crocodiles).toHaveLength(4);
+    const crocodile = crocodiles[0];
+    expect(crocodile).toBeDefined();
+    if (!crocodile) return;
+    expect(crocodile.group.name).toBe('river-crocodile');
+    for (const name of [
+      'crocodile-body', 'crocodile-belly', 'crocodile-neck', 'crocodile-head',
+      'crocodile-skull', 'crocodile-snout-tip', 'crocodile-upper-lip',
+      'crocodile-mouth', 'crocodile-tongue', 'crocodile-lower-lip',
+      'crocodile-lower-jaw', 'crocodile-lower-jaw-pivot',
+      'crocodile-eye-left', 'crocodile-eye-right', 'crocodile-tail',
+    ]) expect(crocodile.group.getObjectByName(name), name).toBeDefined();
+    const namedCount = (name: string) => {
+      let count = 0;
+      crocodile.group.traverse((object) => { if (object.name === name) count++; });
+      return count;
+    };
+    expect(namedCount('crocodile-scute')).toBe(12);
+    expect(namedCount('crocodile-tooth')).toBe(18);
+    expect(namedCount('crocodile-tail-segment')).toBe(5);
+    expect(crocodile.maxHp).toBe(140);
+  });
+
+  it('鳄鱼在河中追击游泳者并按近战冷却造成伤害', () => {
+    const { wildlife } = createWildlife();
+    const crocodile = wildlife.entities.find((entity) => entity.kind === 'crocodile');
+    expect(crocodile).toBeDefined();
+    if (!crocodile) return;
+    for (const other of wildlife.entities) {
+      if (other.kind === 'crocodile' && other !== crocodile) other.alive = false;
+    }
+    const target = {
+      alive: true,
+      swimming: true,
+      radius: 0.4,
+      pos: crocodile.group.position.clone().add(new THREE.Vector3(0, 0.3, 1.5)),
+    };
+    let attackCount = 0;
+    let totalDamage = 0;
+    wildlife.update(0.016, [target], (_victim, damage, attacker) => {
+      expect(attacker).toBe(crocodile);
+      attackCount++;
+      totalDamage += damage;
+    });
+    expect(attackCount).toBe(1);
+    expect(totalDamage).toBe(16);
+    expect(crocodile.group.getObjectByName('crocodile-lower-jaw-pivot')?.rotation.x).toBeGreaterThan(0);
+    wildlife.update(0.8, [target], () => attackCount++);
+    expect(attackCount).toBe(1);
+    wildlife.update(0.72, [target], () => attackCount++);
+    expect(attackCount).toBe(2);
+  });
+
   it('长时间活动保持有限坐标且不会离开各自生态范围', () => {
     const { world, wildlife } = createWildlife();
     for (let step = 0; step < 1200; step++) wildlife.update(1 / 30);
@@ -214,6 +273,10 @@ describe('环境动物系统', () => {
       if (entity.kind === 'fish') {
         expect(y).toBeLessThan(WATER_Y);
         expect(world.getHeight(x, z)).toBeLessThan(WATER_Y - 0.35);
+      } else if (entity.kind === 'crocodile') {
+        expect(y).toBeLessThan(WATER_Y);
+        expect(world.getHeight(x, z)).toBeLessThan(WATER_Y - 0.48);
+        expect(Math.hypot(x - entity.anchor.x, z - entity.anchor.z)).toBeLessThanOrEqual(13);
       } else if (entity.kind === 'bird') {
         expect(Math.hypot(x - entity.anchor.x, z - entity.anchor.z)).toBeLessThanOrEqual(24);
       } else {

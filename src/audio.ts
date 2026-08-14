@@ -586,6 +586,25 @@ export class AudioSys {
     }
   }
 
+  // 鳄鱼近身撕咬: 更低沉的闭合冲击叠加水花，保持与老虎吼声可辨识。
+  crocodileAttack(dist: number, pan: number, occluded = false): void {
+    if (!this.ctx) return;
+    const d = Math.max(0, dist);
+    if (d >= 18) return;
+    const edge = Math.pow(1 - d / 18, 1.4);
+    const gain = edge / (1 + Math.pow(d / 5, 1.85)) * (occluded ? 0.34 : 1);
+    if (gain <= 0.001) return;
+    const lowpass = occluded ? 680 : Math.round(1800 - Math.min(1, d / 18) * 980);
+    this.thump(0.38 * gain, pan, 92, 38, 0.14);
+    this.noiseBurst(0.19 * gain, pan, lowpass, 0.48, 0.16);
+    this.blip(106, 54, 0.15, 0.11 * gain, 'square');
+    if (this.publishTestState) {
+      document.body.dataset.lastSpatialSound = 'crocodile';
+      document.body.dataset.lastSpatialGain = gain.toFixed(3);
+      document.body.dataset.lastSpatialLowpass = String(lowpass);
+    }
+  }
+
   motionWhoosh(dist: number, pan: number, kind: 'throw' | 'vault', occluded = false): void {
     const profile = motionWhooshDistanceProfile(dist, occluded);
     if (profile.gain <= 0.001) return;

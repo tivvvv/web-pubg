@@ -4,7 +4,7 @@ import { ROAD_PATHS, WATER_Y, riverZAt, type World } from './world';
 import { regionById } from './regions';
 import { resolveBodyAgainstVehicle, VEHICLE_SPEC, type Vehicle } from './vehicles';
 
-export type WildlifeKind = 'cow' | 'sheep' | 'fish' | 'bird' | 'tiger';
+export type WildlifeKind = 'cow' | 'sheep' | 'fish' | 'bird' | 'tiger' | 'crocodile';
 
 export interface ForestTreasure {
   readonly group: THREE.Group;
@@ -63,7 +63,7 @@ export interface WildlifeCharacterBody {
   readonly pos: THREE.Vector3;
 }
 
-export type TigerAttackHandler = (target: WildlifeCharacterBody, damage: number, tiger: WildlifeEntity) => void;
+export type WildlifeAttackHandler = (target: WildlifeCharacterBody, damage: number, attacker: WildlifeEntity) => void;
 
 export const WILDLIFE_COUNTS: Readonly<Record<WildlifeKind, number>> = Object.freeze({
   cow: 5,
@@ -71,6 +71,7 @@ export const WILDLIFE_COUNTS: Readonly<Record<WildlifeKind, number>> = Object.fr
   fish: 14,
   bird: 12,
   tiger: 3,
+  crocodile: 4,
 });
 
 const MAT = {
@@ -96,6 +97,13 @@ const MAT = {
   tigerLight: new THREE.MeshStandardMaterial({ color: 0xe9c38f, roughness: 0.92 }),
   tigerStripe: new THREE.MeshStandardMaterial({ color: 0x221c18, roughness: 0.96 }),
   tigerEye: new THREE.MeshStandardMaterial({ color: 0xe8c340, emissive: 0x9f7418, emissiveIntensity: 0.6, roughness: 0.42 }),
+  crocodile: new THREE.MeshStandardMaterial({ color: 0x53613a, roughness: 0.96, flatShading: true }),
+  crocodileDark: new THREE.MeshStandardMaterial({ color: 0x263322, roughness: 0.98, flatShading: true }),
+  crocodileBelly: new THREE.MeshStandardMaterial({ color: 0x9b9867, roughness: 0.92, flatShading: true }),
+  crocodileEye: new THREE.MeshStandardMaterial({ color: 0xe6c94c, emissive: 0x8f7415, emissiveIntensity: 0.55, roughness: 0.38 }),
+  crocodileTooth: new THREE.MeshStandardMaterial({ color: 0xeee2c5, roughness: 0.8 }),
+  crocodileMouth: new THREE.MeshStandardMaterial({ color: 0x351d1a, roughness: 0.9, flatShading: true }),
+  crocodileTongue: new THREE.MeshStandardMaterial({ color: 0x7d3e38, roughness: 0.88, flatShading: true }),
   chestWood: new THREE.MeshStandardMaterial({ color: 0xb66d24, emissive: 0x5a2507, emissiveIntensity: 0.32, roughness: 0.62 }),
   chestDark: new THREE.MeshStandardMaterial({ color: 0x4a2415, roughness: 0.82 }),
   chestMetal: new THREE.MeshStandardMaterial({ color: 0xffcf43, emissive: 0xc76a08, emissiveIntensity: 1.05, roughness: 0.2, metalness: 0.86 }),
@@ -106,6 +114,8 @@ const MAT = {
 };
 applySurfaceAsset(MAT.tiger, 'fabric', 5.2, 0.22);
 applySurfaceAsset(MAT.tigerLight, 'fabric', 5.8, 0.18);
+applySurfaceAsset(MAT.crocodile, 'foliage', 6.2, 0.34);
+applySurfaceAsset(MAT.crocodileDark, 'foliage', 7.1, 0.3);
 applySurfaceAsset(MAT.cow, 'fabric', 4.8, 0.3);
 applySurfaceAsset(MAT.cowDark, 'fabric', 5.2, 0.26);
 applySurfaceAsset(MAT.wool, 'fabric', 6.4, 0.24);
@@ -440,6 +450,145 @@ function buildTiger(): { group: THREE.Group; limbs: THREE.Object3D[] } {
   return { group, limbs };
 }
 
+function taperedSnoutGeometry(backWidth: number, frontWidth: number, height: number, length: number): THREE.BufferGeometry {
+  const back = backWidth * 0.5;
+  const front = frontWidth * 0.5;
+  const halfHeight = height * 0.5;
+  const positions = new Float32Array([
+    -back, -halfHeight, 0, back, -halfHeight, 0, back, halfHeight, 0, -back, halfHeight, 0,
+    -front, -halfHeight, length, front, -halfHeight, length, front, halfHeight, length, -front, halfHeight, length,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex([
+    0, 2, 1, 0, 3, 2,
+    4, 5, 6, 4, 6, 7,
+    0, 4, 7, 0, 7, 3,
+    1, 2, 6, 1, 6, 5,
+    3, 7, 6, 3, 6, 2,
+    0, 1, 5, 0, 5, 4,
+  ]);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function buildCrocodile(variant: number): { group: THREE.Group; limbs: THREE.Object3D[] } {
+  const group = new THREE.Group();
+  group.name = 'river-crocodile';
+  const hide = variant % 2 === 0 ? MAT.crocodile : MAT.crocodileDark;
+  const belly = mesh(new THREE.SphereGeometry(0.55, 14, 8), MAT.crocodileBelly, 0, 0.18, -0.12, 1.04, 0.34, 1.72);
+  belly.name = 'crocodile-belly';
+  group.add(belly);
+  const body = mesh(new THREE.SphereGeometry(0.6, 16, 9), hide, 0, 0.34, -0.15, 1.08, 0.52, 1.82);
+  body.name = 'crocodile-body';
+  group.add(body);
+  const neck = mesh(new THREE.DodecahedronGeometry(0.48, 1), hide, 0, 0.33, 0.82, 1.08, 0.66, 1.22);
+  neck.name = 'crocodile-neck';
+  group.add(neck);
+
+  const headPivot = new THREE.Group();
+  headPivot.name = 'crocodile-head-pivot';
+  headPivot.position.set(0, 0.28, 0.98);
+  const skull = mesh(new THREE.DodecahedronGeometry(0.42, 1), hide, 0, 0.2, 0.13, 1.12, 0.72, 0.9);
+  skull.name = 'crocodile-skull';
+  headPivot.add(skull);
+  const upperJaw = mesh(taperedSnoutGeometry(0.84, 0.56, 0.24, 1.24), hide, 0, 0.08, 0.16);
+  upperJaw.name = 'crocodile-head';
+  headPivot.add(upperJaw);
+  const snoutTip = mesh(taperedSnoutGeometry(0.57, 0.52, 0.14, 0.22), hide, 0, 0.055, 1.34);
+  snoutTip.name = 'crocodile-snout-tip';
+  headPivot.add(snoutTip);
+  const upperLip = mesh(new THREE.DodecahedronGeometry(0.3, 1), hide, 0, 0.045, 1.51, 0.94, 0.34, 0.62);
+  upperLip.name = 'crocodile-upper-lip';
+  headPivot.add(upperLip);
+  const mouth = mesh(taperedSnoutGeometry(0.75, 0.47, 0.045, 1.1), MAT.crocodileMouth, 0, -0.045, 0.26);
+  mouth.name = 'crocodile-mouth';
+  headPivot.add(mouth);
+
+  const lowerJawPivot = new THREE.Group();
+  lowerJawPivot.name = 'crocodile-lower-jaw-pivot';
+  lowerJawPivot.position.set(0, -0.04, 0.2);
+  const lowerJaw = mesh(taperedSnoutGeometry(0.74, 0.49, 0.12, 1.13), MAT.crocodileBelly, 0, -0.075, 0.04);
+  lowerJaw.name = 'crocodile-lower-jaw';
+  lowerJawPivot.add(lowerJaw);
+  const lowerLip = mesh(new THREE.DodecahedronGeometry(0.28, 1), MAT.crocodileBelly, 0, -0.07, 1.18, 0.94, 0.28, 0.58);
+  lowerLip.name = 'crocodile-lower-lip';
+  lowerJawPivot.add(lowerLip);
+  const tongue = mesh(taperedSnoutGeometry(0.59, 0.37, 0.025, 0.88), MAT.crocodileTongue, 0, -0.005, 0.15);
+  tongue.name = 'crocodile-tongue';
+  lowerJawPivot.add(tongue);
+  for (const side of [-1, 1]) {
+    const eyeMound = mesh(new THREE.SphereGeometry(0.13, 9, 6), hide, side * 0.27, 0.34, 0.23);
+    eyeMound.name = 'crocodile-eye-mound';
+    headPivot.add(eyeMound);
+    const eye = mesh(new THREE.SphereGeometry(0.043, 8, 5), MAT.crocodileEye, side * 0.285, 0.37, 0.31);
+    eye.name = side < 0 ? 'crocodile-eye-left' : 'crocodile-eye-right';
+    headPivot.add(eye);
+    const nostril = mesh(new THREE.SphereGeometry(0.027, 7, 5), MAT.crocodileDark, side * 0.17, 0.145, 1.47);
+    nostril.name = 'crocodile-nostril';
+    headPivot.add(nostril);
+  }
+  for (const side of [-1, 1]) {
+    for (let tooth = 0; tooth < 5; tooth++) {
+      const z = 0.31 + tooth * 0.21;
+      const width = 0.35 - tooth * 0.025;
+      const fang = mesh(new THREE.ConeGeometry(0.022, 0.11, 5), MAT.crocodileTooth, side * width, -0.045, z);
+      fang.name = 'crocodile-tooth';
+      fang.rotation.x = Math.PI;
+      headPivot.add(fang);
+    }
+    for (let tooth = 0; tooth < 4; tooth++) {
+      const z = 0.38 + tooth * 0.23;
+      const width = 0.315 - tooth * 0.025;
+      const fang = mesh(new THREE.ConeGeometry(0.019, 0.085, 5), MAT.crocodileTooth, side * width, 0.005, z);
+      fang.name = 'crocodile-tooth';
+      lowerJawPivot.add(fang);
+    }
+  }
+  headPivot.add(lowerJawPivot);
+  group.add(headPivot);
+
+  // 两排背甲和渐细尾节强化水面剪影，远处也能与鱼群清楚区分。
+  for (let row = -1; row <= 1; row += 2) for (let plate = 0; plate < 6; plate++) {
+    const scute = mesh(new THREE.ConeGeometry(0.1, 0.22, 4), MAT.crocodileDark, row * 0.2, 0.75, 0.48 - plate * 0.34);
+    scute.name = 'crocodile-scute';
+    scute.rotation.y = Math.PI / 4;
+    group.add(scute);
+  }
+  const limbs: THREE.Object3D[] = [];
+  for (const x of [-0.5, 0.5]) for (const z of [-0.62, 0.48]) {
+    const leg = new THREE.Group();
+    leg.position.set(x, 0.25, z);
+    const shin = mesh(new THREE.CapsuleGeometry(0.07, 0.28, 4, 7), hide, x < 0 ? -0.13 : 0.13, -0.08, 0);
+    shin.rotation.z = x < 0 ? -1.05 : 1.05;
+    leg.add(shin);
+    const foot = mesh(new THREE.BoxGeometry(0.3, 0.07, 0.18), MAT.crocodileDark, x < 0 ? -0.28 : 0.28, -0.18, 0.08);
+    foot.name = 'crocodile-foot';
+    leg.add(foot);
+    group.add(leg);
+    limbs.push(leg);
+  }
+  const tailPivot = new THREE.Group();
+  tailPivot.name = 'crocodile-tail';
+  tailPivot.position.set(0, 0.34, -1.08);
+  for (let segment = 0; segment < 5; segment++) {
+    const tail = mesh(
+      new THREE.CapsuleGeometry(Math.max(0.08, 0.25 - segment * 0.038), 0.42, 5, 8),
+      segment % 2 === 0 ? hide : MAT.crocodileDark,
+      Math.sin(segment * 0.62) * 0.08,
+      -segment * 0.025,
+      -0.25 - segment * 0.43,
+    );
+    tail.name = 'crocodile-tail-segment';
+    tail.rotation.x = Math.PI / 2;
+    tail.rotation.z = Math.sin(segment * 0.6) * 0.16;
+    tailPivot.add(tail);
+  }
+  group.add(tailPivot);
+  limbs.push(tailPivot, lowerJawPivot);
+  return { group, limbs };
+}
+
 function buildForestTreasure(): { group: THREE.Group; lid: THREE.Group; loot: THREE.Group } {
   const group = new THREE.Group();
   group.name = 'forest-treasure-chest';
@@ -678,6 +827,7 @@ export class WildlifeSystem {
     this.spawnLandAnimals();
     this.spawnTigers();
     this.spawnFish();
+    this.spawnCrocodiles();
     this.spawnBirds();
   }
 
@@ -842,6 +992,30 @@ export class WildlifeSystem {
     }
   }
 
+  private spawnCrocodiles(): void {
+    const riverAnchors = [-218, -92, 56, 184] as const;
+    let placed = 0;
+    for (const anchorX of riverAnchors) {
+      let found = false;
+      for (let attempt = 0; attempt < 28; attempt++) {
+        const x = anchorX + (attempt % 7 - 3) * 2.4;
+        const z = riverZAt(x) + Math.sin(attempt * 1.73 + placed) * 3.2;
+        if (this.world.getHeight(x, z) >= WATER_Y - 0.62) continue;
+        const built = buildCrocodile(placed);
+        this.addEntity('crocodile', built, x, WATER_Y - 0.31, z, 1.24, 0.34, 140, (placed * 1.71) % (Math.PI * 2));
+        const crocodile = this.entities[this.entities.length - 1] as WildlifeEntity;
+        crocodile.attackCooldown = placed * 0.48;
+        found = true;
+        placed++;
+        break;
+      }
+      if (!found) continue;
+    }
+    if (placed !== WILDLIFE_COUNTS.crocodile) {
+      throw new Error(`河流鳄鱼生成失败: ${placed}/${WILDLIFE_COUNTS.crocodile}`);
+    }
+  }
+
   private spawnBirds(): void {
     const anchors = [
       [-40, 200], [-60, -20], [190, -220], [0, -190], [-205, 25], [165, -35],
@@ -877,7 +1051,9 @@ export class WildlifeSystem {
       entity.hp = entity.maxHp;
       entity.deathVy = 0;
       entity.speed = entity.kind === 'bird' ? 4.8 + (this.entities.indexOf(entity) % 4) * 0.55 : 0;
-      entity.attackCooldown = entity.kind === 'tiger' ? tigerIndex++ * 0.72 : 0;
+      entity.attackCooldown = entity.kind === 'tiger'
+        ? tigerIndex++ * 0.72
+        : entity.kind === 'crocodile' ? (this.entities.indexOf(entity) % WILDLIFE_COUNTS.crocodile) * 0.48 : 0;
       entity.attackPose = 0;
       entity.phase = this.entities.indexOf(entity) * 0.73;
       entity.group.visible = true;
@@ -889,7 +1065,7 @@ export class WildlifeSystem {
   update(
     dt: number,
     characters: readonly WildlifeCharacterBody[] = [],
-    onTigerAttack?: TigerAttackHandler,
+    onAttack?: WildlifeAttackHandler,
   ): void {
     this.time += dt;
     for (const spark of this.treasure.group.children.filter((child) => child.name === 'treasure-spark')) {
@@ -923,7 +1099,8 @@ export class WildlifeSystem {
       entity.phase += dt * (1.4 + entity.speed * 0.45);
       if (entity.kind === 'bird') this.updateBird(entity, index, dt);
       else if (entity.kind === 'fish') this.updateFish(entity, index, dt);
-      else if (entity.kind === 'tiger') this.updateTiger(entity, index, dt, characters, onTigerAttack);
+      else if (entity.kind === 'tiger') this.updateTiger(entity, index, dt, characters, onAttack);
+      else if (entity.kind === 'crocodile') this.updateCrocodile(entity, index, dt, characters, onAttack);
       else this.updateGrazer(entity, index, dt);
     }
     this.separateLandAnimals();
@@ -949,10 +1126,12 @@ export class WildlifeSystem {
   // 同时在动物靠近建筑时把更多修正量交给角色，防止把动物挤进墙体。
   resolveCharacterCollisions(characters: readonly WildlifeCharacterBody[]): void {
     for (const character of characters) {
-      if (!character.alive || character.swimming) continue;
+      if (!character.alive) continue;
       for (let index = 0; index < this.entities.length; index++) {
         const entity = this.entities[index] as WildlifeEntity;
-        if (!entity.alive || !this.isLandAnimal(entity)) continue;
+        const aquatic = entity.kind === 'crocodile';
+        if (!entity.alive || (!this.isLandAnimal(entity) && !aquatic)) continue;
+        if (character.swimming !== aquatic) continue;
         if (Math.abs(character.pos.y - entity.group.position.y) > 2.1) continue;
         let dx = character.pos.x - entity.group.position.x;
         let dz = character.pos.z - entity.group.position.z;
@@ -968,10 +1147,10 @@ export class WildlifeSystem {
         const nx = dx / distance;
         const nz = dz / distance;
         const overlap = minimum - distance + 0.006;
-        const animalShare = 0.34;
+        const animalShare = aquatic ? 0 : 0.34;
         const animalX = entity.group.position.x - nx * overlap * animalShare;
         const animalZ = entity.group.position.z - nz * overlap * animalShare;
-        const animalMoved = this.moveLandEntityIfFree(entity, animalX, animalZ);
+        const animalMoved = aquatic ? false : this.moveLandEntityIfFree(entity, animalX, animalZ);
         const characterShare = animalMoved ? 1 - animalShare : 1;
         character.pos.x += nx * overlap * characterShare;
         character.pos.z += nz * overlap * characterShare;
@@ -984,11 +1163,13 @@ export class WildlifeSystem {
         if (remainDistance < minimum - 0.003) {
           const rnx = remainDistance > 0.001 ? remainDx / remainDistance : nx;
           const rnz = remainDistance > 0.001 ? remainDz / remainDistance : nz;
-          this.moveLandEntityIfFree(
-            entity,
-            entity.group.position.x - rnx * (minimum - remainDistance + 0.006),
-            entity.group.position.z - rnz * (minimum - remainDistance + 0.006),
-          );
+          if (!aquatic) {
+            this.moveLandEntityIfFree(
+              entity,
+              entity.group.position.x - rnx * (minimum - remainDistance + 0.006),
+              entity.group.position.z - rnz * (minimum - remainDistance + 0.006),
+            );
+          }
         }
       }
     }
@@ -1058,7 +1239,7 @@ export class WildlifeSystem {
     index: number,
     dt: number,
     characters: readonly WildlifeCharacterBody[],
-    onAttack?: TigerAttackHandler,
+    onAttack?: WildlifeAttackHandler,
   ): void {
     entity.attackCooldown = Math.max(0, entity.attackCooldown - dt);
     entity.attackPose = Math.max(0, entity.attackPose - dt * 2.8);
@@ -1127,6 +1308,84 @@ export class WildlifeSystem {
     entity.group.rotation.x = -Math.sin(entity.attackPose * Math.PI) * 0.18;
   }
 
+  private updateCrocodile(
+    entity: WildlifeEntity,
+    index: number,
+    dt: number,
+    characters: readonly WildlifeCharacterBody[],
+    onAttack?: WildlifeAttackHandler,
+  ): void {
+    entity.attackCooldown = Math.max(0, entity.attackCooldown - dt);
+    entity.attackPose = Math.max(0, entity.attackPose - dt * 1.7);
+    let target: WildlifeCharacterBody | null = null;
+    let targetDistance = 21;
+    for (const character of characters) {
+      if (!character.alive) continue;
+      // 鳄鱼主要威胁游泳者，也会扑咬贴近水面的岸边角色。
+      if (!character.swimming && character.pos.y > WATER_Y + 1.35) continue;
+      const distance = Math.hypot(
+        character.pos.x - entity.group.position.x,
+        character.pos.z - entity.group.position.z,
+      );
+      if (distance >= targetDistance) continue;
+      target = character;
+      targetDistance = distance;
+    }
+
+    const homeDistance = Math.hypot(
+      entity.anchor.x - entity.group.position.x,
+      entity.anchor.z - entity.group.position.z,
+    );
+    if (target && homeDistance < 30) {
+      entity.heading = Math.atan2(
+        target.pos.x - entity.group.position.x,
+        target.pos.z - entity.group.position.z,
+      );
+      entity.speed = targetDistance > 1.55 ? 3.9 : 0;
+      if (targetDistance <= 1.78 && entity.attackCooldown <= 0) {
+        entity.attackCooldown = 1.5;
+        entity.attackPose = 1;
+        onAttack?.(target, 16, entity);
+      }
+    } else {
+      entity.decisionTimer -= dt;
+      if (homeDistance > 12) {
+        entity.heading = Math.atan2(entity.anchor.x - entity.group.position.x, entity.anchor.z - entity.group.position.z);
+        entity.speed = 1.55;
+      } else if (entity.decisionTimer <= 0) {
+        entity.decisionTimer = 2.6 + (index % 4) * 0.58;
+        entity.heading += Math.sin(this.time * 0.43 + index * 1.91) * 1.05;
+        entity.speed = 0.78 + (index % 3) * 0.12;
+      }
+    }
+
+    if (entity.speed > 0) {
+      const step = entity.speed * dt;
+      const trySwim = (heading: number): boolean => {
+        const nx = entity.group.position.x + Math.sin(heading) * step;
+        const nz = entity.group.position.z + Math.cos(heading) * step;
+        if (this.world.getHeight(nx, nz) >= WATER_Y - 0.48) return false;
+        entity.heading = heading;
+        entity.group.position.x = nx;
+        entity.group.position.z = nz;
+        return true;
+      };
+      if (!trySwim(entity.heading) && !trySwim(entity.heading + 0.66) && !trySwim(entity.heading - 0.66)) {
+        entity.heading += 1.18;
+      }
+    }
+    entity.group.position.y = WATER_Y - 0.31 + Math.sin(entity.phase * 1.4) * 0.025;
+    entity.group.rotation.y = entity.heading;
+    entity.group.rotation.x = -Math.sin(entity.attackPose * Math.PI) * 0.12;
+    for (let limb = 0; limb < Math.min(4, entity.limbs.length); limb++) {
+      entity.limbs[limb]!.rotation.y = Math.sin(entity.phase * 3.4 + limb * Math.PI) * 0.28;
+    }
+    const tail = entity.limbs[4];
+    if (tail) tail.rotation.y = Math.sin(entity.phase * (3.3 + entity.speed * 0.35)) * (0.16 + entity.speed * 0.08);
+    const lowerJaw = entity.limbs[5];
+    if (lowerJaw) lowerJaw.rotation.x = Math.sin(entity.attackPose * Math.PI) * 0.38;
+  }
+
   private updateFish(entity: WildlifeEntity, index: number, dt: number): void {
     entity.speed = 0.72 + (index % 4) * 0.12;
     entity.heading += Math.sin(this.time * 0.42 + index) * dt * 0.22;
@@ -1172,9 +1431,10 @@ export class WildlifeSystem {
       } else {
         entity.group.rotation.x += dt * 4.2;
       }
-    } else if (entity.kind === 'fish') {
+    } else if (entity.kind === 'fish' || entity.kind === 'crocodile') {
       entity.group.rotation.z += (Math.PI - entity.group.rotation.z) * Math.min(1, dt * 4.5);
-      entity.group.position.y += (WATER_Y - 0.08 - entity.group.position.y) * Math.min(1, dt * 1.8);
+      const floatY = entity.kind === 'crocodile' ? WATER_Y - 0.22 : WATER_Y - 0.08;
+      entity.group.position.y += (floatY - entity.group.position.y) * Math.min(1, dt * 1.8);
     } else {
       entity.group.rotation.z += (Math.PI * 0.5 - entity.group.rotation.z) * Math.min(1, dt * 5.5);
     }
@@ -1183,6 +1443,7 @@ export class WildlifeSystem {
   private collisionRadius(entity: WildlifeEntity): number {
     if (entity.kind === 'cow') return entity.radius * 0.78;
     if (entity.kind === 'tiger') return entity.radius * 0.86;
+    if (entity.kind === 'crocodile') return entity.radius * 0.84;
     return entity.radius * 0.82;
   }
 
@@ -1305,5 +1566,6 @@ export function wildlifeLabel(kind: WildlifeKind): string {
     case 'fish': return '鱼';
     case 'bird': return '飞鸟';
     case 'tiger': return '守护老虎';
+    case 'crocodile': return '河流鳄鱼';
   }
 }

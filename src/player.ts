@@ -33,7 +33,11 @@ import type { Crate } from './airdrop';
 import type { DeathCrate } from './deathcrate';
 import type { LootItem } from './loot';
 import type { ForestTreasure } from './wildlife';
-import { TRANSPORT_PLANE_FIRST_PERSON_FORWARD } from './planemodel';
+import {
+  buildTransportJumpBayView,
+  TRANSPORT_PLANE_JUMP_BAY_BACK,
+  TRANSPORT_PLANE_JUMP_BAY_HEIGHT_FROM_CHARACTER,
+} from './planemodel';
 import { resolveMovementDirection, wadingSpeedMultiplier } from './movement';
 
 const BASE_FOV = 75;
@@ -118,6 +122,7 @@ export class PlayerController {
   private throwOrigin = new THREE.Vector3();
   private tmpSwim = new THREE.Vector3();
   private planeNext = new THREE.Vector3();
+  private readonly planeJumpBayView: THREE.Group;
   private fppCameraPos = new THREE.Vector3();
   private camProbeDir = new THREE.Vector3();
   private interactionOrigin = new THREE.Vector3();
@@ -128,6 +133,8 @@ export class PlayerController {
     this.char = new Character('你', true, shirtColor);
     this.char.setFirstPerson(true);
     this.camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.1, 900);
+    this.planeJumpBayView = buildTransportJumpBayView();
+    this.camera.add(this.planeJumpBayView);
   }
 
   get alive(): boolean {
@@ -1193,7 +1200,7 @@ export class PlayerController {
     return out;
   }
 
-  // 运输机驾驶舱第一人称观察位，鼠标只在舷窗范围内小幅转头。
+  // 运输机尾部跳伞位。玩家站在开启的货舱跳板前，默认面向航线后方等待离机。
   private planeLookYaw = 0;
   private planeLookPitch = 0;
   private planeCamera(dt: number, dx: number, dy: number, game: Game): void {
@@ -1203,16 +1210,18 @@ export class PlayerController {
     const fx = Math.cos(A);
     const fz = Math.sin(A);
     const p = this.char.pos;
-    const heading = Math.atan2(fx, fz) + this.planeLookYaw;
-    const cp = Math.cos(this.planeLookPitch);
+    const heading = Math.atan2(-fx, -fz) + this.planeLookYaw;
+    const visualPitch = this.planeLookPitch - 0.08;
+    const cp = Math.cos(visualPitch);
     const lookX = Math.sin(heading) * cp;
-    const lookY = Math.sin(this.planeLookPitch);
+    const lookY = Math.sin(visualPitch);
     const lookZ = Math.cos(heading) * cp;
-    // 运输机没有可渲染的舱内空间，相机必须越过不透明机鼻；否则会被机身内表面完全遮黑。
+    this.planeJumpBayView.visible = true;
+    // 外模留在镜头前方，尾舱近景由相机子节点提供，避免机身近裁剪造成整屏黑面。
     this.camera.position.set(
-      p.x + fx * TRANSPORT_PLANE_FIRST_PERSON_FORWARD,
-      p.y - 0.24,
-      p.z + fz * TRANSPORT_PLANE_FIRST_PERSON_FORWARD,
+      p.x - fx * TRANSPORT_PLANE_JUMP_BAY_BACK,
+      p.y + TRANSPORT_PLANE_JUMP_BAY_HEIGHT_FROM_CHARACTER,
+      p.z - fz * TRANSPORT_PLANE_JUMP_BAY_BACK,
     );
     this.lookAt.set(
       this.camera.position.x + lookX * 14,
@@ -1229,6 +1238,7 @@ export class PlayerController {
   }
 
   private updateCamera(dt: number, game: Game): void {
+    this.planeJumpBayView.visible = false;
     const c = this.char;
     const dir = this.getViewDir(this.viewDir);
     const gun = c.heldGun();

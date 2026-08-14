@@ -56,6 +56,8 @@ describe('固定回归场景入口', () => {
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=combat&weapon=rifle&action=pickup&hold=1');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=revive&ai=1');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=parachute&stress=1');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=wildlife&kind=crocodile');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=wildlife&kind=crocodile&attack=1');
     expect(releaseScenarioHref(0)).toContain('release=1&case=0');
     expect(releaseScenarioHref(999)).toContain(`case=${RELEASE_SCENARIO_ROUTES.length - 1}`);
   });
