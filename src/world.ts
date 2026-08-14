@@ -1,7 +1,7 @@
 // 世界: 程序化高度场地形 + 植被/岩石实例化 + 真房屋村庄 + 碰撞与解析射线
 import * as THREE from 'three';
 import { Noise2D, fbm } from './noise';
-import { Buildings } from './buildings';
+import { Buildings, Destructible } from './buildings';
 import { EnvironmentSystem, type EnvironmentSnapshot } from './environment';
 import { Sky } from './sky';
 import type { Collider, DestructibleLike, SurfaceKind } from './types';
@@ -178,6 +178,7 @@ export class World {
   plazaDetailCount = 0;
   fountainDetailCount = 0;
   religiousCrossCount = 0;
+  churchBreakableGlassCount = 0;
   roadTerminusCount = 0;
   roadWaterCrossingCount = 0;
   roadWaterCrossingSegmentCount = 0;
@@ -1870,6 +1871,7 @@ varying vec3 vTerrainWorld;`,
 
   // 可进入的教堂和石铺广场共用一个地标安全区. 教堂提供室内近战路线, 广场提供开阔视线和环形掩体.
   private addChurchPlaza(scene: THREE.Scene, site: ScenicSite): void {
+    this.churchBreakableGlassCount = 0;
     const plazaTop = this.churchPlazaTop(site);
     // 广场所在坡面明显高于教堂后侧地形时，教堂必须跟随入口广场抬升。
     // 否则广场地基的北侧立面会从门外顶进门洞，形成一整块无法通行的墙。
@@ -1950,6 +1952,26 @@ varying vec3 vTerrainWorld;`,
       }
       return mesh;
     };
+    const breakableGlass = (
+      w: number, h: number, d: number,
+      x: number, y: number, z: number,
+    ): THREE.Mesh => {
+      const mesh = box(w, h, d, x, y, z, glass);
+      mesh.name = 'church-breakable-glass';
+      const collider: BoxCollider = {
+        kind: 'aabb',
+        minX: x - w / 2, minY: y - h / 2, minZ: z - d / 2,
+        maxX: x + w / 2, maxY: y + h / 2, maxZ: z + d / 2,
+        tag: 'window',
+      };
+      const destructible = new Destructible('window', 30, mesh, collider, x, y, z);
+      destructible.vaultable = true;
+      collider.destruct = destructible;
+      this.addCollider(collider);
+      this.buildings.destructibles.push(destructible);
+      this.churchBreakableGlassCount++;
+      return mesh;
+    };
 
     const foundationHeight = floorTop - foundationGround;
     box(13.2, foundationHeight, 19.4, site.x, foundationGround + foundationHeight / 2, centerZ, stone, true, 'floor');
@@ -1958,8 +1980,12 @@ varying vec3 vTerrainWorld;`,
       maxX: site.x + 6.6, maxZ: centerZ + 9.7, top: floorTop,
     });
 
-    // 后墙与正立面. 南侧中央保留 2.4m 宽入口, 钟楼悬于入口上方.
-    box(12.6, 5.4, 0.42, site.x, floorTop + 2.7, centerZ - 9.2, plaster, true);
+    // 后墙中央保留真实玻璃窗洞，不能用整墙覆盖玻璃；四段墙体完整围出 2.8m 宽洞口。
+    box(4.9, 5.4, 0.42, site.x - 3.85, floorTop + 2.7, centerZ - 9.2, plaster, true);
+    box(4.9, 5.4, 0.42, site.x + 3.85, floorTop + 2.7, centerZ - 9.2, plaster, true);
+    box(2.8, 1.0, 0.42, site.x, floorTop + 0.5, centerZ - 9.2, plaster, true);
+    box(2.8, 2.0, 0.42, site.x, floorTop + 4.4, centerZ - 9.2, plaster, true);
+    // 正立面南侧中央保留 2.4m 宽入口, 钟楼悬于入口上方.
     box(5.05, 5.4, 0.42, site.x - 3.78, floorTop + 2.7, centerZ + 9.2, plaster, true);
     box(5.05, 5.4, 0.42, site.x + 3.78, floorTop + 2.7, centerZ + 9.2, plaster, true);
     box(2.5, 1.45, 0.42, site.x, floorTop + 4.68, centerZ + 9.2, plaster, true);
@@ -1972,8 +1998,15 @@ varying vec3 vTerrainWorld;`,
         box(0.48, 3.45, 0.48, x, floorTop + 2.9, centerZ + zOffset, trim, true);
       }
       for (const zOffset of [-7.5, -4.05, -0.55, 2.95, 6.45]) {
-        box(0.08, 2.25, 2.42, x - side * 0.23, floorTop + 2.52, centerZ + zOffset, glass);
-        box(0.11, 2.36, 0.1, x - side * 0.28, floorTop + 2.52, centerZ + zOffset, trim);
+        const pane = breakableGlass(
+          0.08, 2.45, 2.42, x - side * 0.23, floorTop + 2.405, centerZ + zOffset,
+        );
+        // 教堂窗格随玻璃一起碎裂，破坏后不会留下一根视觉上穿过角色的竖条。
+        const mullion = new THREE.Mesh(new THREE.BoxGeometry(0.11, 2.55, 0.1), trim);
+        mullion.position.x = -side * 0.05;
+        mullion.castShadow = true;
+        pane.add(mullion);
+        churchParts++;
       }
     }
 
@@ -2018,12 +2051,13 @@ varying vec3 vTerrainWorld;`,
     for (const zOffset of [-6.8, -4.3, -1.8, 0.7, 3.2]) {
       for (const side of [-1, 1]) {
         const x = site.x + side * 3.05;
-        box(3.8, 0.48, 0.68, x, floorTop + 0.38, centerZ + zOffset, wood, true);
-        box(3.8, 0.72, 0.14, x, floorTop + 0.76, centerZ + zOffset - 0.28, wood);
+        box(3.1, 0.48, 0.68, x, floorTop + 0.38, centerZ + zOffset, wood, true);
+        box(3.1, 0.72, 0.14, x, floorTop + 0.76, centerZ + zOffset - 0.28, wood);
       }
     }
-    box(4.6, 0.92, 1.25, site.x, floorTop + 0.46, centerZ - 7.8, stone, true);
-    box(2.8, 2.4, 0.18, site.x, floorTop + 2.2, centerZ - 8.94, glass);
+    // 后窗下方祭台靠内摆放，既保留室内陈设和掩体，也为窗前助跑与落地留下净空。
+    box(4.6, 0.92, 0.58, site.x, floorTop + 0.46, centerZ - 7.55, stone, true);
+    breakableGlass(2.8, 2.4, 0.18, site.x, floorTop + 2.2, centerZ - 8.94);
     const warmLight = new THREE.PointLight(0xffc982, 2.3, 13, 2);
     warmLight.position.set(site.x, floorTop + 4.4, centerZ - 2.5);
     church.add(warmLight);

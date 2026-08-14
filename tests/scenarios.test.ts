@@ -37,6 +37,10 @@ describe('固定回归场景入口', () => {
       expect(RELEASE_SCENARIO_ROUTES).toContain(`scenario=stairs&view=facade&arch=${arch}`);
     }
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=interior&arch=gym');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=window&traverse=vault');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=window&level=2&traverse=vault');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=churchglass&break=1');
+    expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=churchglass&traverse=vault');
     expect(RELEASE_SCENARIO_ROUTES).toContain('scenario=stairs&view=entrance&arch=gym&face=front&side=outside&open=both');
     for (const face of ['left', 'right']) {
       expect(RELEASE_SCENARIO_ROUTES).toContain(`scenario=stairs&view=entrance&arch=gym&face=${face}&side=inside&open=both`);

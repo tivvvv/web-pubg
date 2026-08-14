@@ -407,10 +407,22 @@ interface Op {
   door?: boolean; doorless?: boolean; hingeEnd?: boolean;
 }
 
+export interface OpenWindowOpening {
+  axis: 'x' | 'z';
+  fixed: number;
+  a0: number;
+  a1: number;
+  y0: number;
+  y1: number;
+  interior: 1 | -1;
+  plotIndex: number;
+}
+
 export class Destructible implements DestructibleLike {
   alive = true;
   hp: number;
   readonly kind: 'door' | 'window';
+  vaultable = false;
   readonly maxHp: number;
   readonly mesh: THREE.Mesh;
   readonly collider: AabbCollider;
@@ -471,6 +483,12 @@ export class Buildings {
   };
   verticalSlicePlotIndex = -1;
   verticalSliceDetailCount = 0;
+  openWindowCount = 0;
+  crossWindowCount = 0;
+  readonly openWindowOpenings: OpenWindowOpening[] = [];
+  private activeArch: ArchId | null = null;
+  private activePlotIndex = -1;
+  private windowOrdinal = 0;
 
   // 门/窗几何体按墙的走向区分: AlongX 用于沿 X 延伸的墙(南/北墙), AlongZ 用于沿 Z 延伸的墙(东/西墙)
   private doorGeoAlongX = new THREE.BoxGeometry(DOOR_W, DOOR_H, 0.1);
@@ -615,6 +633,9 @@ export class Buildings {
   // ── 场景构建 ────────────────────────────────────────────────────────────
   build(scene: THREE.Scene, world: World): void {
     this.assetUsage.clear();
+    this.openWindowCount = 0;
+    this.crossWindowCount = 0;
+    this.openWindowOpenings.length = 0;
     interface Inst {
       tag: 'wall' | 'floor' | 'roof';
       x0: number; y0: number; z0: number; x1: number; y1: number; z1: number;
@@ -675,6 +696,9 @@ export class Buildings {
     }
 
     this.plots.forEach((plot, idx) => {
+      this.activeArch = plot.arch;
+      this.activePlotIndex = idx;
+      this.windowOrdinal = 0;
       const rng = mulberry32(idx * 97 + 11);
       const cx = (plot.minX + plot.maxX) * 0.5;
       const cz = (plot.minZ + plot.maxZ) * 0.5;
@@ -731,6 +755,8 @@ export class Buildings {
       }
       this.addExteriorHardware(plot, box, idx);
     });
+    this.activeArch = null;
+    this.activePlotIndex = -1;
 
     this.sanitizeLootSpots(world);
     this.visualInstanceCount = insts.length;
@@ -853,7 +879,9 @@ export class Buildings {
           world, box, axis, fixed, op.a0, op.a1, op.y0, op.y1, midY, interior, op.hingeEnd ? -1 : 1,
         );
       } else {
-        this.addWindow(world, box, axis, fixed, op.a0, op.a1, op.y0, op.y1, midA, midY);
+        this.addWindow(
+          world, box, axis, fixed, op.a0, op.a1, op.y0, op.y1, midA, midY, interior,
+        );
       }
     }
   }
@@ -2512,28 +2540,40 @@ export class Buildings {
   private addWindow(
     world: World, box: BoxFn, axis: 'x' | 'z', fixed: number,
     a0: number, a1: number, y0: number, y1: number, midA: number, midY: number,
+    interior: 1 | -1,
   ): void {
-    // 窗框: 上下左右四条细边 + 十字窗格(纯装饰)
+    // 住宅每三扇窗保留一扇无十字格的整片玻璃窗。分布按地块和洞口序号确定，重开对局时不会跳变。
+    // 商店、谷仓和体育馆仍使用完整玻璃，避免橱窗与高窗被误判成可翻越入口。
+    const residential = this.activeArch === 'cottage1' || this.activeArch === 'cottage2' ||
+      this.activeArch === 'terrace' || this.activeArch === 'apartment';
+    const ordinal = this.windowOrdinal++;
+    const open = residential && (this.activePlotIndex * 5 + ordinal) % 3 === 0;
+
+    // 所有窗都保留完整收口和玻璃。无格窗击碎后成为净空洞口，十字窗保留窗棂且不可翻越。
     const ft = 0.09;
     if (axis === 'x') {
       box('wall', a0 - 0.03, y0 - 0.03, fixed - ft, a1 + 0.03, y0 + 0.03, fixed + ft, FRAME_C, { collider: false });
       box('wall', a0 - 0.03, y1 - 0.03, fixed - ft, a1 + 0.03, y1 + 0.03, fixed + ft, FRAME_C, { collider: false });
       box('wall', a0 - 0.03, y0, fixed - ft, a0 + 0.03, y1, fixed + ft, FRAME_C, { collider: false });
       box('wall', a1 - 0.03, y0, fixed - ft, a1 + 0.03, y1, fixed + ft, FRAME_C, { collider: false });
-      box('wall', midA - 0.025, y0 + 0.04, fixed - ft, midA + 0.025, y1 - 0.04, fixed + ft, FRAME_C, { collider: false, detail: true });
-      box('wall', a0 + 0.04, midY - 0.025, fixed - ft, a1 - 0.04, midY + 0.025, fixed + ft, FRAME_C, { collider: false, detail: true });
+      if (!open) {
+        box('wall', midA - 0.025, y0 + 0.04, fixed - ft, midA + 0.025, y1 - 0.04, fixed + ft, FRAME_C, { collider: false, detail: true });
+        box('wall', a0 + 0.04, midY - 0.025, fixed - ft, a1 - 0.04, midY + 0.025, fixed + ft, FRAME_C, { collider: false, detail: true });
+      }
     } else {
       box('wall', fixed - ft, y0 - 0.03, a0 - 0.03, fixed + ft, y0 + 0.03, a1 + 0.03, FRAME_C, { collider: false });
       box('wall', fixed - ft, y1 - 0.03, a0 - 0.03, fixed + ft, y1 + 0.03, a1 + 0.03, FRAME_C, { collider: false });
       box('wall', fixed - ft, y0, a0 - 0.03, fixed + ft, y1, a0 + 0.03, FRAME_C, { collider: false });
       box('wall', fixed - ft, y0, a1 - 0.03, fixed + ft, y1, a1 + 0.03, FRAME_C, { collider: false });
-      box('wall', fixed - ft, y0 + 0.04, midA - 0.025, fixed + ft, y1 - 0.04, midA + 0.025, FRAME_C, { collider: false, detail: true });
-      box('wall', fixed - ft, midY - 0.025, a0 + 0.04, fixed + ft, midY + 0.025, a1 - 0.04, FRAME_C, { collider: false, detail: true });
+      if (!open) {
+        box('wall', fixed - ft, y0 + 0.04, midA - 0.025, fixed + ft, y1 - 0.04, midA + 0.025, FRAME_C, { collider: false, detail: true });
+        box('wall', fixed - ft, midY - 0.025, a0 + 0.04, fixed + ft, midY + 0.025, a1 - 0.04, FRAME_C, { collider: false, detail: true });
+      }
     }
     const t = 0.06;
     // 窗台挑檐 + 部分窗户百叶板(纯装饰, 位置确定性抽样)
     const st = 0.16;
-    const withShutters = Math.floor(Math.abs(a0 * 7 + fixed * 3)) % 3 === 0;
+    const withShutters = !open && Math.floor(Math.abs(a0 * 7 + fixed * 3)) % 3 === 0;
     if (axis === 'x') {
       box('wall', a0 - 0.12, y0 - 0.08, fixed - st, a1 + 0.12, y0, fixed + st, TRIM_C, { collider: false });
       if (withShutters) {
@@ -2555,6 +2595,12 @@ export class Buildings {
         }
       }
     }
+    if (open) {
+      this.openWindowCount++;
+      this.openWindowOpenings.push({
+        axis, fixed, a0, a1, y0, y1, interior, plotIndex: this.activePlotIndex,
+      });
+    } else this.crossWindowCount++;
     const c: AabbCollider = axis === 'x'
       ? { kind: 'aabb', minX: a0, minY: y0, minZ: fixed - t / 2, maxX: a1, maxY: y1, maxZ: fixed + t / 2, tag: 'window' }
       : { kind: 'aabb', minX: fixed - t / 2, minY: y0, minZ: a0, maxX: fixed + t / 2, maxY: y1, maxZ: a1, tag: 'window' };
@@ -2568,6 +2614,8 @@ export class Buildings {
     if (axis === 'x') mesh.scale.set(spanScale, heightScale, 1);
     else mesh.scale.set(1, heightScale, spanScale);
     const d = new Destructible('window', 30, mesh, c, (c.minX + c.maxX) / 2, midY, (c.minZ + c.maxZ) / 2);
+    d.vaultable = open;
+    mesh.name = open ? 'vaultable-plain-window-glass' : 'cross-window-glass';
     c.destruct = d;
     this.destructibles.push(d);
   }

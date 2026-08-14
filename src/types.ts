@@ -65,6 +65,7 @@ export type SurfaceKind = 'char' | 'terrain' | 'wall' | 'tree' | 'rock' | 'floor
 // 可破坏物(门/窗)的最小接口, 避免循环依赖
 export interface DestructibleLike {
   readonly kind: 'door' | 'window';
+  readonly vaultable?: boolean;
   alive: boolean;
   hp: number;
   readonly maxHp: number;

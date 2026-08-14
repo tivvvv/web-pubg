@@ -77,4 +77,26 @@ describe('翻越探测和位移流程', () => {
     expect(character.actionPose).toBeNull();
     expect(character.parts.held).toBeNull();
   });
+
+  it('第一人称翻越期间显示双手撑窗动作且结束后正确收回', () => {
+    const character = new Character('第一人称翻窗测试', true, 0x3a6ea5);
+    character.setFirstPerson(true);
+    character.pos.set(0, 0, 0);
+    const probe = probeVault(character, 1, 0, vaultWorld(obstacle()));
+
+    startVault(character, probe!);
+    updateVaultMotion(character, 0.32);
+    character.syncModel(1 / 60, true);
+
+    expect(character.parts.held).toBeNull();
+    expect(character.parts.viewHands.visible).toBe(true);
+    expect(character.parts.viewHands.scale.x).toBeGreaterThan(1.12);
+    expect(character.parts.gun.position.z).toBeGreaterThan(0.7);
+    expect(character.parts.gun.rotation.x).toBeLessThan(-0.45);
+
+    updateVaultMotion(character, 0.38);
+    character.syncModel(1 / 60, false);
+    expect(character.vault).toBeNull();
+    expect(character.parts.viewHands.visible).toBe(false);
+  });
 });

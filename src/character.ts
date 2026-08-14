@@ -32,6 +32,31 @@ export interface FirstPersonWeaponPose {
   scale: number;
 }
 
+export interface FirstPersonVaultPose {
+  x: number;
+  y: number;
+  z: number;
+  pitch: number;
+  roll: number;
+  scale: number;
+}
+
+// 空窗翻越的第一人称撑窗动作。双手先向窗台伸出, 中段下压撑起身体, 落地前自然收回。
+export function firstPersonVaultPose(progress: number): FirstPersonVaultPose {
+  const k = clamp(progress, 0, 1);
+  const support = Math.sin(k * Math.PI);
+  const reach = Math.sin(Math.min(1, k / 0.42) * Math.PI * 0.5);
+  const release = k > 0.68 ? (k - 0.68) / 0.32 : 0;
+  return {
+    x: lerp(-0.05, 0.04, release),
+    y: 1.04 + support * 0.14 - release * 0.12,
+    z: 0.58 + reach * 0.2 - release * 0.16,
+    pitch: -0.22 - support * 0.42 + release * 0.26,
+    roll: Math.sin(k * Math.PI * 2) * 0.055,
+    scale: 1.12 + support * 0.08,
+  };
+}
+
 // 右下方持枪构图：枪托靠近屏幕右下，枪口向准星轻微内收；不同长度枪型保持相近视觉占比。
 const FIRST_PERSON_HIP_POSE: Record<WeaponId, FirstPersonWeaponPose> = {
   pistol: { x: -0.2, y: 1.14, z: 0.5, yaw: 0.14, roll: -0.025, scale: 1.34 },
@@ -965,11 +990,13 @@ export class Character {
     p.legR.visible = visible.body;
     // 方块人完整手臂从眼位看会放大并遮挡准星。持枪和空降/驾驶时隐藏自身手臂，
     // 只在徒手地面状态显示双拳；其他角色仍按完整第三方模型渲染。
-    const firstPersonArms = this.firstPerson && !p.held && !this.airPose && !this.swimming && !this.knocked;
+    const firstPersonArms = this.firstPerson && !p.held && !this.airPose && !this.swimming &&
+      !this.knocked && !this.vault;
     p.armL.visible = visible.hands && (!this.firstPerson || firstPersonArms);
     p.armR.visible = visible.hands && (!this.firstPerson || firstPersonArms);
     p.gun.visible = visible.hands;
-    p.viewHands.visible = visible.hands && this.firstPerson && !!p.held && !this.airPose && !this.swimming && !this.knocked;
+    p.viewHands.visible = visible.hands && this.firstPerson && !this.airPose && !this.swimming && !this.knocked &&
+      (!!p.held || !!this.vault);
     if (this.helmetMesh) this.helmetMesh.visible = visible.head;
     if (this.vestMesh) this.vestMesh.visible = visible.body;
     if (this.packMesh) this.packMesh.visible = visible.body;
@@ -1173,6 +1200,7 @@ export class Character {
       this.firstPerson && viewPose ? viewPose.roll - weaponSwayX * 0.7 : 0,
     );
     p.viewHands.position.set(0, 0, 0);
+    p.viewHands.rotation.set(0, 0, 0);
     p.viewHands.scale.setScalar(this.firstPerson && viewPose ? lerp(1.08, 1, this.firstPersonAim) : 1);
     if (p.held?.mag) {
       p.held.mag.visible = this.reload01 < 0.4 || this.reload01 > 0.68;
@@ -1282,6 +1310,12 @@ export class Character {
     if (this.vault) {
       const k = Math.min(1, this.vault.t / this.vault.dur);
       const tuck = Math.sin(Math.min(1, k) * Math.PI); // 中段收腿最大
+      if (this.firstPerson) {
+        const pose = firstPersonVaultPose(k);
+        p.gun.position.set(pose.x, pose.y, pose.z);
+        p.gun.rotation.set(pose.pitch, 0, pose.roll);
+        p.viewHands.scale.setScalar(pose.scale);
+      }
       p.inner.rotation.x = 0.45 * tuck;
       p.inner.rotation.y = 0;
       p.inner.position.y = 0;

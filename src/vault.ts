@@ -20,6 +20,7 @@ const MAX_H = 1.3;   // 障碍顶最高高差
 const MAX_THICK = 0.7; // 可翻越厚度
 const REACH = 1.35;  // 探测距离
 const MAX_DROP = 3.5; // 落点最大落差
+const WINDOW_MAX_DROP = 8.5; // 二楼翻窗允许落到室外地面, 更高楼层仍拒绝危险跃出
 
 // 探测正前方的可翻越障碍(含窗台段/护栏/矮墙); 命中返回落点与穿窗信息
 export function probeVault(c: Character, dirX: number, dirZ: number, world: World): VaultProbe | null {
@@ -27,6 +28,8 @@ export function probeVault(c: Character, dirX: number, dirZ: number, world: Worl
   if (L < 0.01) return null;
   const dx = dirX / L;
   const dz = dirZ / L;
+  const windowProbe = probeVaultableWindow(c, dx, dz, world);
+  if (windowProbe) return windowProbe;
   for (let d = 0.3; d <= REACH; d += 0.15) {
     const px = c.pos.x + dx * d;
     const pz = c.pos.z + dz * d;
@@ -34,10 +37,12 @@ export function probeVault(c: Character, dirX: number, dirZ: number, world: Worl
       if (b.off || b.tag === 'door' || b.tag === 'window') continue;
       if (px < b.minX - 0.05 || px > b.maxX + 0.05 || pz < b.minZ - 0.05 || pz > b.maxZ + 0.05) continue;
       const rel = b.maxY - c.pos.y;
-      if (rel < MIN_H || rel > MAX_H) return null;
+      // 一个采样点可能同时落入窗台和相邻整墙的容差边缘。无效盒不能提前终止搜索，
+      // 否则视觉上完全敞开的窗洞会被墙角碰撞体误判为不可翻越。
+      if (rel < MIN_H || rel > MAX_H) continue;
       // 厚度沿翻越方向(轴对齐盒近似)
       const thick = Math.abs(dx) > Math.abs(dz) ? b.maxX - b.minX : b.maxZ - b.minZ;
-      if (thick > MAX_THICK) return null;
+      if (thick > MAX_THICK) continue;
       // 落点: 障碍中心再沿翻越方向过半厚 + 0.55m
       const cx = (b.minX + b.maxX) / 2;
       const cz = (b.minZ + b.maxZ) / 2;
@@ -47,12 +52,53 @@ export function probeVault(c: Character, dirX: number, dirZ: number, world: Worl
       const landZ = c.pos.z + dz * landDist;
       const topY = b.maxY + 0.32;
       const landY = world.groundHeight(landX, landZ, topY + 0.3);
-      if (topY - landY > MAX_DROP) return null;
-      if (!capsuleFree(world, landX, landY, landZ, b)) return null;
-      // 路径穿过的整窗(一并碎裂)
+      // 路径穿过的玻璃需明确允许翻越。十字窗格保留实体结构，无格窗与教堂窗会被动作击碎。
       const win = windowBetween(world, c.pos.x, c.pos.z, landX, landZ);
+      if (win && !win.vaultable) continue;
+      if (topY - landY > (win?.vaultable ? WINDOW_MAX_DROP : MAX_DROP)) continue;
+      if (!capsuleFree(world, landX, landY, landZ, b)) continue;
       return { topY, landX, landY, landZ, win, obstacle: b };
     }
+  }
+  return null;
+}
+
+// 可翻玻璃按洞口本身探测，不依赖窗台盒的采样顺序。教堂高窗台、二楼窗和已碎玻璃
+// 都可以得到一致结果，同时用洞口净宽、方向和两侧落点阻止斜穿墙角。
+function probeVaultableWindow(c: Character, dx: number, dz: number, world: World): VaultProbe | null {
+  for (const d of world.buildings.destructibles) {
+    if (d.kind !== 'window' || !d.vaultable) continue;
+    const b = d.collider;
+    const thinX = b.maxX - b.minX < b.maxZ - b.minZ;
+    const normal = thinX ? dx : dz;
+    if (Math.abs(normal) < 0.78) continue;
+    const plane = thinX ? d.cx : d.cz;
+    const origin = thinX ? c.pos.x : c.pos.z;
+    const travel = (plane - origin) / normal;
+    if (travel < 0.28 || travel > REACH + 0.18) continue;
+    const lateral = thinX ? c.pos.z + dz * travel : c.pos.x + dx * travel;
+    const lateralMin = thinX ? b.minZ : b.minX;
+    const lateralMax = thinX ? b.maxZ : b.maxX;
+    if (lateral < lateralMin + c.radius || lateral > lateralMax - c.radius) continue;
+    const sillHeight = b.minY - c.pos.y;
+    if (sillHeight < 0.65 || sillHeight > 1.52) continue;
+
+    // 跨过窗墙后再留出完整胶囊半径，避免室内地板边缘把窗外落点误判为被占用。
+    const landDistance = travel + 1.25;
+    const landX = c.pos.x + dx * landDistance;
+    const landZ = c.pos.z + dz * landDistance;
+    const topY = b.minY + 0.38;
+    const landY = world.groundHeight(landX, landZ, topY + 0.3);
+    if (topY - landY > WINDOW_MAX_DROP) continue;
+    if (!capsuleFree(world, landX, landY, landZ, b, d.collider)) continue;
+    return {
+      topY,
+      landX,
+      landY,
+      landZ,
+      win: d.alive ? d : null,
+      obstacle: b,
+    };
   }
   return null;
 }
@@ -97,9 +143,16 @@ function windowBetween(world: World, x0: number, z0: number, x1: number, z1: num
 }
 
 // 落点胶囊(半径 0.42, 高 1.7)与碰撞体无交叠(忽略被翻越的盒子本身)
-function capsuleFree(world: World, x: number, y: number, z: number, skip: AabbCollider): boolean {
+function capsuleFree(
+  world: World,
+  x: number,
+  y: number,
+  z: number,
+  skip: AabbCollider,
+  skipWindow?: AabbCollider,
+): boolean {
   for (const b of world.aabbs) {
-    if (b.off || b === skip) continue;
+    if (b.off || b === skip || b === skipWindow) continue;
     if (b.maxY < y + 0.1 || b.minY > y + 1.6) continue;
     const cx = Math.max(b.minX, Math.min(x, b.maxX));
     const cz = Math.max(b.minZ, Math.min(z, b.maxZ));

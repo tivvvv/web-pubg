@@ -47,6 +47,10 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=stairs&view=facade&arch=shop',
   'scenario=stairs&view=facade&arch=gym',
   'scenario=stairs&view=interior&arch=gym',
+  'scenario=stairs&view=window&traverse=vault',
+  'scenario=stairs&view=window&level=2&traverse=vault',
+  'scenario=stairs&view=churchglass&break=1',
+  'scenario=stairs&view=churchglass&traverse=vault',
   'scenario=stairs&view=entrance&arch=gym&face=front&side=outside&open=both',
   'scenario=stairs&view=entrance&arch=gym&face=left&side=inside&open=both',
   'scenario=stairs&view=entrance&arch=gym&face=right&side=inside&open=both',
@@ -251,6 +255,9 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.plazaDetails = String(game.world.plazaDetailCount);
   panel.dataset.fountainDetails = String(game.world.fountainDetailCount);
   panel.dataset.religiousCrosses = String(game.world.religiousCrossCount);
+  panel.dataset.openWindows = String(game.world.buildings.openWindowCount);
+  panel.dataset.crossWindows = String(game.world.buildings.crossWindowCount);
+  panel.dataset.churchBreakableGlass = String(game.world.churchBreakableGlassCount);
   panel.dataset.wildlifeCounts = (['cow', 'sheep', 'fish', 'bird', 'tiger'] as const)
     .map((kind) => `${kind}:${game.wildlife.count(kind, true)}/${game.wildlife.count(kind)}`)
     .join(',');
@@ -532,6 +539,13 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
         : 'none';
       panel.dataset.characterFlash = character.flashT.toFixed(2);
       panel.dataset.characterGrounded = String(character.grounded);
+      panel.dataset.characterVaulting = String(character.vault !== null);
+      panel.dataset.churchGlassAlive = String(game.world.buildings.destructibles.filter((item) => (
+        item.mesh.name === 'church-breakable-glass' && item.alive
+      )).length);
+      panel.dataset.vaultableWindowGlassAlive = String(game.world.buildings.destructibles.filter((item) => (
+        item.vaultable && item.alive
+      )).length);
       panel.dataset.inputKeys = [...game.input.keys].sort().join(',');
       panel.dataset.characterPosition = [character.pos.x, character.pos.y, character.pos.z]
         .map((value) => value.toFixed(2)).join(',');
@@ -570,7 +584,8 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
           healthLimit: actor.id === trainingOverhealth ? 1000 : 100,
           knocked: actor.knocked,
           speed: actor.speed2d,
-          grounded: actor.grounded,
+          // 翻越使用脚本弧线，角色会在窗台上方短暂悬空，不属于地面脱离故障。
+          grounded: actor.grounded && actor.vault === null,
           swimming: actor.swimming,
           seated: actor.airPose === 'sit' || actor.airPose === 'moto',
           // 与 Character.applyMove 使用相同脚底参考高度, 避免把头顶平台误判为脚下地面。
@@ -1073,6 +1088,77 @@ function laneDirection(lane: readonly [number, number, number, number]): { x: nu
 
 function setupStairs(game: Game): void {
   const params = new URLSearchParams(window.location.search);
+  if (params.get('view') === 'window') {
+    const upperFloor = params.get('level') === '2';
+    const opening = game.world.buildings.openWindowOpenings.find((candidate) => {
+      const candidatePlot = game.world.buildings.plots[candidate.plotIndex];
+      if (!candidatePlot) return false;
+      return upperFloor
+        ? candidate.y0 > candidatePlot.flatH + 3.7 && candidate.y0 < candidatePlot.flatH + 5.2
+        : candidate.y0 < candidatePlot.flatH + 1.8;
+    });
+    if (!opening) {
+      setGroundPlayer(game, -60, -20);
+      return;
+    }
+    // 首层从室外翻入, 二楼从室内翻出并验证安全落地。
+    const side = upperFloor ? opening.interior : -opening.interior;
+    const mid = (opening.a0 + opening.a1) * 0.5;
+    const x = opening.axis === 'x' ? mid : opening.fixed + side * 0.92;
+    const z = opening.axis === 'x' ? opening.fixed + side * 0.92 : mid;
+    setGroundPlayer(game, x, z);
+    const player = game.playerCtl;
+    if (player) {
+      if (upperFloor) {
+        const floorY = game.world.groundHeight(x, z, opening.y0 + 0.25);
+        player.char.pos.y = floorY;
+        player.char.groundH = floorY;
+      }
+      const targetX = opening.axis === 'x' ? mid : opening.fixed;
+      const targetZ = opening.axis === 'x' ? opening.fixed : mid;
+      player.yaw = Math.atan2(targetX - x, targetZ - z);
+      player.pitch = -0.06;
+      if (params.get('traverse') === 'vault') {
+        game.input.keys.add('KeyW');
+        game.input.keys.add('Space');
+        window.setTimeout(() => game.input.keys.delete('Space'), 160);
+        window.setTimeout(() => game.input.keys.delete('KeyW'), 1050);
+      }
+    }
+    return;
+  }
+  if (params.get('view') === 'churchglass') {
+    const church = game.world.landmarks.find((site) => site.kind === 'church');
+    const pane = game.world.buildings.destructibles.find((item) => (
+      item.mesh.name === 'church-breakable-glass' && church && item.cx > church.x
+    ));
+    if (!church || !pane) {
+      setGroundPlayer(game, -60, -20);
+      return;
+    }
+    const traverse = params.get('traverse') === 'vault';
+    const outward = Math.sign(pane.cx - church.x) || 1;
+    const x = traverse ? pane.cx - outward * 0.92 : pane.cx + outward * 3.2;
+    const z = pane.cz;
+    setGroundPlayer(game, x, z);
+    const player = game.playerCtl;
+    if (player) {
+      player.yaw = Math.atan2(pane.cx - x, pane.cz - z);
+      player.pitch = Math.atan2(pane.cy - (player.char.pos.y + 1.45), Math.hypot(pane.cx - x, pane.cz - z));
+      player.char.guns[0] = { def: WEAPONS.rifle, mag: WEAPONS.rifle.magSize, att: emptyAttachments() };
+      player.char.curSlot = 0;
+      if (params.get('break') === '1') {
+        window.setTimeout(() => game.hitDestructible(pane, 999, new THREE.Vector3(pane.cx, pane.cy, pane.cz)), 650);
+      }
+      if (traverse) {
+        game.input.keys.add('KeyW');
+        game.input.keys.add('Space');
+        window.setTimeout(() => game.input.keys.delete('Space'), 160);
+        window.setTimeout(() => game.input.keys.delete('KeyW'), 1050);
+      }
+    }
+    return;
+  }
   const arch = scenarioBuildingArch(params);
   const plot = scenarioBuildingPlot(game, params);
   if (!plot) {
