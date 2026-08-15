@@ -18,6 +18,20 @@ function el<T extends HTMLElement>(id: string): T {
 export type HitKind = 'hit' | 'head' | 'kill';
 export type ToastTone = PlayerFlowTone;
 
+export function matchCountLabels(playerCount = MATCH_PLAYER_COUNT): {
+  alive: string;
+  start: string;
+  death: string;
+  win: string;
+} {
+  return {
+    alive: `剩余 ${playerCount}`,
+    start: `${playerCount} 人孤岛大逃杀 · 单人对战 AI · 活到最后`,
+    death: `#${playerCount} / ${playerCount}`,
+    win: `#1 / ${playerCount}`,
+  };
+}
+
 const TOAST_PRIORITY: Record<ToastTone, number> = {
   info: 0,
   success: 1,
@@ -180,6 +194,11 @@ export class Hud {
   onToggleSound: () => void = () => undefined;
 
   constructor() {
+    const countLabels = matchCountLabels();
+    el('alive-count').textContent = countLabels.alive;
+    el('start-match-summary').textContent = countLabels.start;
+    el('death-placement').textContent = countLabels.death;
+    el('win-placement').textContent = countLabels.win;
     el<HTMLButtonElement>('btn-start').addEventListener('click', () => this.onStart());
     el<HTMLButtonElement>('btn-again').addEventListener('click', () => this.onRestart());
     el<HTMLButtonElement>('btn-again-win').addEventListener('click', () => this.onRestart());

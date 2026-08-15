@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
-  compactHealCounts, healthFeedback, selectQueuedToast, shouldShowSwimmingStatus, toastShouldInterrupt,
+  compactHealCounts, healthFeedback, matchCountLabels, selectQueuedToast, shouldShowSwimmingStatus,
+  toastShouldInterrupt,
 } from '../src/hud';
 
 describe('HUD 状态互斥', () => {
+  it('所有人数文案统一使用正式对局人数', () => {
+    expect(matchCountLabels()).toEqual({
+      alive: '剩余 64',
+      start: '64 人孤岛大逃杀 · 单人对战 AI · 活到最后',
+      death: '#64 / 64',
+      win: '#1 / 64',
+    });
+  });
+
   it('恢复品栏隐藏零数量并压缩成短文案', () => {
     expect(compactHealCounts(0, 0, 0)).toBe('');
     expect(compactHealCounts(2, 0, 1)).toBe('绷带 2 · 饮料 1');

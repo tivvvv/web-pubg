@@ -27,7 +27,7 @@ export interface LootItem {
 }
 
 export const LOOT_CAP = 280; // 为每把地图枪配套弹药, 同时给死亡盒和空投保留对象池余量
-export const CORE_LOOT_TARGET = 206; // 50 人轻量局以区域物资和击杀继承为主, 同时为死亡盒和空投保留对象池余量
+export const CORE_LOOT_TARGET = 206; // 64 人对局以区域物资和击杀继承为主, 同时为死亡盒和空投保留对象池余量
 
 type LootPlacementWorld = Pick<World, 'aabbs' | 'cyls'>;
 
