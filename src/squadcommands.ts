@@ -20,6 +20,16 @@ export interface SquadContact {
 
 export const SQUAD_CONTACT_TTL = 6;
 
+export function squadNameTagPresentation(alive: boolean, modelVisible: boolean, distance: number): {
+  visible: boolean;
+  scale: number;
+} {
+  return {
+    visible: alive && modelVisible && distance >= 2.5 && distance < 60,
+    scale: THREE.MathUtils.clamp(distance / 24, 0.34, 1),
+  };
+}
+
 export function squadCombatRole(memberIndex: number): SquadCombatRole {
   const index = Math.max(0, Math.min(2, Math.trunc(memberIndex)));
   return index === 0 ? 'leftFlank' : index === 2 ? 'rightFlank' : 'support';

@@ -982,4 +982,36 @@ export class AudioSys {
       }, 600);
     }
   }
+
+  dispose(): void {
+    const stop = (source: AudioScheduledSourceNode | null): void => {
+      if (!source) return;
+      try {
+        source.stop();
+      } catch {
+        // 节点已经停止时无需重复处理。
+      }
+    };
+    stop(this.rainSource);
+    stop(this.engOsc);
+    stop(this.windSrc);
+    for (const oscillator of this.planeOsc ?? []) stop(oscillator);
+    for (const loop of this.ambienceLoops.values()) stop(loop.source);
+    this.ambienceLoops.clear();
+    this.samples.clear();
+    this.rainSource = null;
+    this.rainGain = null;
+    this.engOsc = null;
+    this.engGain = null;
+    this.windSrc = null;
+    this.windGain = null;
+    this.planeOsc = null;
+    this.planeGain = null;
+    const context = this.ctx;
+    this.ctx = null;
+    this.master = null;
+    this.limiter = null;
+    this.noiseBuf = null;
+    if (context && context.state !== 'closed') void context.close().catch(() => undefined);
+  }
 }

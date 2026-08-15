@@ -3,6 +3,7 @@ import './style.css';
 import { parseRandomSeed, setRandomSeed } from './random';
 
 const bootStartedAt = performance.now();
+let activeGame: { dispose(): void } | null = null;
 
 function runtimeIssue(value: unknown): string {
   if (value instanceof Error) return `${value.name}: ${value.message}`;
@@ -25,9 +26,17 @@ async function bootstrap(): Promise<void> {
   const { Game } = await import('./game');
   const testScenario = testMode ? await import('./testscenario') : null;
   const game = new Game(container);
+  activeGame = game;
   testScenario?.applyTestScenarioFromUrl(game);
   document.body.dataset.bootMs = (performance.now() - bootStartedAt).toFixed(1);
   document.body.classList.add('app-ready');
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    activeGame?.dispose();
+    activeGame = null;
+  });
 }
 
 void bootstrap().catch((error: unknown) => {

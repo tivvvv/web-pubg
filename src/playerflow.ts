@@ -4,6 +4,16 @@ export function shouldCelebrateFirstGun(hadGun: boolean, armedAt: number): boole
   return !hadGun && armedAt < 0;
 }
 
+export function accumulatePlayerDamage(
+  current: number,
+  applied: number,
+  attackerIsPlayer: boolean,
+  selfDamage: boolean,
+): number {
+  if (!attackerIsPlayer || selfDamage || applied <= 0) return current;
+  return current + applied;
+}
+
 export interface PlayerDeathInput {
   attackerName: string | null;
   via: string | null;

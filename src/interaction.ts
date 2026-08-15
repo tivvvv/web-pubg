@@ -1,5 +1,5 @@
 import { clamp } from './utils';
-import type { LootKind } from './types';
+import type { LootKind, WeaponId } from './types';
 
 export type InteractionKind = 'ally' | 'door' | 'airdrop' | 'treasure' | 'deathcrate' | 'vehicle' | 'item';
 export type ComparisonTone = 'positive' | 'neutral' | 'warning';
@@ -14,6 +14,21 @@ const AUTOMATIC_PICKUP_KINDS: ReadonlySet<LootKind> = new Set([
 
 export function isAutomaticPickupKind(kind: LootKind): boolean {
   return AUTOMATIC_PICKUP_KINDS.has(kind);
+}
+
+export function weaponPickupSlot(
+  weapon: WeaponId,
+  guns: readonly ({ def: { tier: number } } | null)[],
+  currentSlot: number,
+  playerControlled: boolean,
+): number {
+  if (weapon === 'pistol') return 2;
+  if (!guns[0]) return 0;
+  if (!guns[1]) return 1;
+  if (playerControlled && (currentSlot === 0 || currentSlot === 1)) return currentSlot;
+  const tier0 = guns[0]?.def.tier ?? 99;
+  const tier1 = guns[1]?.def.tier ?? 99;
+  return tier0 <= tier1 ? 0 : 1;
 }
 
 export function interactionDistanceText(distance: number): string {

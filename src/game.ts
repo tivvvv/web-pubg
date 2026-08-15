@@ -5,16 +5,6 @@ const UP_Y = new THREE.Vector3(0, 1, 0);
 const MATE_NAMES = ['队友1', '队友2', '队友3'];
 const MATE_SHIRTS = [0x3cb36a, 0x3f8a4e, 0x66a05a];
 
-export function squadNameTagPresentation(alive: boolean, modelVisible: boolean, distance: number): {
-  visible: boolean;
-  scale: number;
-} {
-  return {
-    visible: alive && modelVisible && distance >= 2.5 && distance < 60,
-    scale: THREE.MathUtils.clamp(distance / 24, 0.34, 1),
-  };
-}
-
 // 队友头顶名牌(绿色小字, 远处隐藏)
 function makeNameTag(name: string): THREE.Sprite {
   const cv = document.createElement('canvas');
@@ -87,15 +77,15 @@ import { DeathCrateManager, autoLootDeathCrate, type DeathCrate } from './deathc
 import { Hud, shouldShowSwimmingStatus, type BackpackData, type SquadHudRow } from './hud';
 import { DRINK_DURATION, DRINK_TOTAL, HEALS, HEAL_ORDER, type HealId } from './heals';
 import { Input, type Action } from './input';
-import { doorwayOccupied, isAutomaticPickupKind } from './interaction';
+import { doorwayOccupied, isAutomaticPickupKind, weaponPickupSlot } from './interaction';
 import { LootManager, isGunKind, isMeleeKind, lootPointClear, type LootItem } from './loot';
 import { Minimap } from './minimap';
 import { PlayerController } from './player';
 import { GrenadeManager } from './throwables';
 import { TeammateController } from './teammate';
 import { VEHICLE_SPEC, VehicleManager, type Vehicle } from './vehicles';
-import type { AmmoType, DestructibleLike, GameStats, GunAttachments, LootKind, ThrowableId, WeaponId } from './types';
-import { clamp, dist2D, rand } from './utils';
+import type { AmmoType, DestructibleLike, GameStats, GunAttachments, LootKind, ThrowableId } from './types';
+import { clamp, rand } from './utils';
 import {
   AMMO_BOX, AMMO_NAME, MELEE, THROWABLES, THROWABLE_IDS, WEAPONS, ammoTypeFromLoot, applySpread, hitscan,
   makeShotResult, pelletFalloff, weaponMaxRange,
@@ -110,28 +100,23 @@ import {
 import { Zone } from './zone';
 import { regionOrWilderness } from './regions';
 import {
-  DROP_MAX_FLIGHT_DISTANCE,
-  DROP_MIN_SEPARATION,
   FLIGHT_ROUTES,
   MATCH_PLAYER_COUNT,
   botJumpDistance,
   SQUAD_SIZE,
   combatDamageScale,
-  emptyDropRegionCounts,
-  flightLineDistance,
-  selectFlightRoute,
-  selectDropRegion,
 } from './matchbalance';
+import { createMatchSpawnPlan } from './matchspawn';
 import { fireModeOf, scopeModeOf, toggleFireMode } from './gunplay';
 import { weaponPresentation } from './combatpresentation';
 import { GameRenderer } from './rendering';
 import { random } from './random';
 import { parseBoundedTestInteger } from './stability';
 import {
-  squadAimScore, SquadCommandSystem, SquadIntelSystem, SQUAD_ORDER_LABELS, type SquadOrder,
-  type SquadOrderKind,
+  squadAimScore, squadNameTagPresentation, SquadCommandSystem, SquadIntelSystem, SQUAD_ORDER_LABELS,
+  type SquadOrder, type SquadOrderKind,
 } from './squadcommands';
-import { playerDeathDetail, shouldCelebrateFirstGun } from './playerflow';
+import { accumulatePlayerDamage, playerDeathDetail, shouldCelebrateFirstGun } from './playerflow';
 import { regionEventAt, selectRegionEvents, type RegionEvent } from './regionevents';
 import {
   DEFAULT_MATCH_VARIATION, matchVariationById, selectMatchVariation, type MatchVariation,
@@ -139,31 +124,6 @@ import {
 
 const TOTAL = MATCH_PLAYER_COUNT;
 const SLOT_LABELS = ['主武器1', '主武器2', '手枪', '近战'];
-
-export function weaponPickupSlot(
-  weapon: WeaponId,
-  guns: readonly ({ def: { tier: number } } | null)[],
-  currentSlot: number,
-  playerControlled: boolean,
-): number {
-  if (weapon === 'pistol') return 2;
-  if (!guns[0]) return 0;
-  if (!guns[1]) return 1;
-  if (playerControlled && (currentSlot === 0 || currentSlot === 1)) return currentSlot;
-  const tier0 = guns[0]?.def.tier ?? 99;
-  const tier1 = guns[1]?.def.tier ?? 99;
-  return tier0 <= tier1 ? 0 : 1;
-}
-
-export function accumulatePlayerDamage(
-  current: number,
-  applied: number,
-  attackerIsPlayer: boolean,
-  selfDamage: boolean,
-): number {
-  if (!attackerIsPlayer || selfDamage || applied <= 0) return current;
-  return current + applied;
-}
 
 export class Game {
   readonly world: World;
@@ -270,6 +230,8 @@ export class Game {
   private tmpQ = new THREE.Quaternion();
   private tmpP = new THREE.Vector3();
   private tmpS = new THREE.Vector3();
+  private disposed = false;
+  private readonly handleResize = (): void => this.onResize();
 
   constructor(container: HTMLElement) {
     this.graphics = new GameRenderer(container);
@@ -360,7 +322,7 @@ export class Game {
     this.hud.onToggleSound = () => this.toggleSound();
     this.hud.setSoundMuted(this.audio.muted);
 
-    window.addEventListener('resize', () => this.onResize());
+    window.addEventListener('resize', this.handleResize);
     this.onResize();
     this.hud.showScreen('start');
     this.graphics.setAnimationLoop(() => this.frameSafely());
@@ -387,6 +349,24 @@ export class Game {
     let n = 0;
     for (const c of this.chars) if (c.alive) n++;
     return n;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.graphics.setAnimationLoop(null);
+    window.removeEventListener('resize', this.handleResize);
+    this.input.exitLock();
+    this.input.dispose();
+    this.hud.dispose();
+    this.audio.dispose();
+    this.scene.clear();
+    this.chars.length = 0;
+    this.bots = [];
+    this.mates = [];
+    this.graphics.dispose();
+    const gameWindow = window as unknown as { __game?: Game };
+    if (gameWindow.__game === this) delete gameWindow.__game;
   }
 
   // 玩家控制器访问器(队友 AI 用)
@@ -820,75 +800,14 @@ export class Game {
     this.player = new PlayerController(0x3a6ea5);
     this.scene.add(this.player.camera);
 
-    // 敌方落点: 按区域收益和承载人数分配, 同时受航线可达距离约束.
-    // 相比全图均匀散点, 这里会形成可预期但不固定的早期争夺, 又不会把所有人堆在同一栋房内.
-    const flightRoute = selectFlightRoute(random());
-    this.flightAngle = flightRoute.angle;
-    this.flightOffset = flightRoute.offset;
-    this.flightRouteId = flightRoute.id;
-    const pts: { x: number; z: number }[] = Array.from({ length: SQUAD_SIZE }, () => ({ x: 0, z: 0 }));
-    const dropCounts = emptyDropRegionCounts();
-    const dropPointFree = (x: number, z: number): boolean =>
-      this.world.pointFree(x, z, 0.68, WATER_Y + 0.7, 12);
-    const dropPointSeparated = (x: number, z: number, separation = DROP_MIN_SEPARATION): boolean => {
-      for (let i = SQUAD_SIZE; i < pts.length; i++) {
-        const point = pts[i] as { x: number; z: number };
-        if (dist2D(point.x, point.z, x, z) < separation) return false;
-      }
-      return true;
-    };
-    let guard = 0;
-    while (pts.length < TOTAL && guard++ < 5000) {
-      const region = selectDropRegion(this.flightAngle, dropCounts, random(), this.flightOffset);
-      if (!region) break;
-      let x = 0;
-      let z = 0;
-      let sampled = false;
-      for (let retry = 0; retry < 18; retry++) {
-        const angle = random() * Math.PI * 2;
-        const distance = Math.sqrt(random()) * region.radius * 0.76;
-        x = region.x + Math.cos(angle) * distance;
-        z = region.z + Math.sin(angle) * distance;
-        if (flightLineDistance(x, z, this.flightAngle, this.flightOffset) > DROP_MAX_FLIGHT_DISTANCE) continue;
-        if (regionOrWilderness(x, z).id !== region.id) continue;
-        if (!dropPointFree(x, z)) continue;
-        sampled = true;
-        break;
-      }
-      if (!sampled) continue;
-      if (!dropPointSeparated(x, z)) continue;
-      pts.push({ x, z });
-      dropCounts[region.id as keyof typeof dropCounts]++;
-    }
-    // 极端地形/航线组合兜底: 仍限制航线距离和落点合法性, 仅放宽区域承载.
-    guard = 0;
-    while (pts.length < TOTAL && guard++ < 6000) {
-      const x = rand(-320, 320);
-      const z = rand(-320, 320);
-      if (flightLineDistance(x, z, this.flightAngle, this.flightOffset) > DROP_MAX_FLIGHT_DISTANCE) continue;
-      if (!dropPointFree(x, z) || !dropPointSeparated(x, z)) continue;
-      const fallbackRegion = regionOrWilderness(x, z);
-      if (fallbackRegion.id !== 'wilderness') {
-        const id = fallbackRegion.id as keyof typeof dropCounts;
-        if (dropCounts[id] >= fallbackRegion.dropCapacity) continue;
-        dropCounts[id]++;
-      }
-      pts.push({ x, z });
-    }
-    // 极端兜底使用确定性安全网格, 仍不允许把角色塞入树木/建筑或相互重叠.
-    for (let x = -300; x <= 300 && pts.length < TOTAL; x += 24) {
-      for (let z = -300; z <= 300 && pts.length < TOTAL; z += 24) {
-        if (flightLineDistance(x, z, this.flightAngle, this.flightOffset) > DROP_MAX_FLIGHT_DISTANCE + 35) continue;
-        if (!dropPointFree(x, z) || !dropPointSeparated(x, z)) continue;
-        pts.push({ x, z });
-      }
-    }
-    for (let x = -300; x <= 300 && pts.length < TOTAL; x += 16) {
-      for (let z = -300; z <= 300 && pts.length < TOTAL; z += 16) {
-        if (!dropPointFree(x, z) || !dropPointSeparated(x, z, 12)) continue;
-        pts.push({ x, z });
-      }
-    }
+    const spawnPlan = createMatchSpawnPlan({
+      pointFree: (x, z) => this.world.pointFree(x, z, 0.68, WATER_Y + 0.7, 12),
+      random,
+    });
+    this.flightAngle = spawnPlan.route.angle;
+    this.flightOffset = spawnPlan.route.offset;
+    this.flightRouteId = spawnPlan.route.id;
+    const pts = spawnPlan.points;
     const botDifficultyDeck = buildBotDifficultyDeck(TOTAL - SQUAD_SIZE, random);
 
     // 玩家: 进入舱内航线阶段(航线角已在出生点采样时确定)

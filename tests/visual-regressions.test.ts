@@ -10,7 +10,8 @@ import { environmentLighting, environmentSurfaceDetail, environmentVisualProfile
 import { RENDER_QUALITY } from '../src/rendering';
 import { WEAPONS } from '../src/weapons';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
-import { squadNameTagPresentation, weaponPickupSlot } from '../src/game';
+import { weaponPickupSlot } from '../src/interaction';
+import { squadNameTagPresentation } from '../src/squadcommands';
 import {
   TRANSPORT_PLANE_STANDING_BACK,
   TRANSPORT_PLANE_STANDING_EYE_HEIGHT,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accumulatePlayerDamage } from '../src/game';
+import { accumulatePlayerDamage } from '../src/playerflow';
 
 describe('对局伤害统计', () => {
   it('在胜利结算前计入玩家最后一击的实际伤害', () => {

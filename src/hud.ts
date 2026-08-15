@@ -87,6 +87,7 @@ export interface SquadHudRow {
 }
 
 export class Hud {
+  private readonly events = new AbortController();
   private hpFill = el('hp-fill');
   private hpText = el('hp-text');
   private armorHelmet = el('armor-helmet');
@@ -194,25 +195,30 @@ export class Hud {
   onToggleSound: () => void = () => undefined;
 
   constructor() {
+    const listenerOptions = { signal: this.events.signal };
     const countLabels = matchCountLabels();
     el('alive-count').textContent = countLabels.alive;
     el('start-match-summary').textContent = countLabels.start;
     el('death-placement').textContent = countLabels.death;
     el('win-placement').textContent = countLabels.win;
-    el<HTMLButtonElement>('btn-start').addEventListener('click', () => this.onStart());
-    el<HTMLButtonElement>('btn-again').addEventListener('click', () => this.onRestart());
-    el<HTMLButtonElement>('btn-again-win').addEventListener('click', () => this.onRestart());
-    el<HTMLButtonElement>('btn-resume').addEventListener('click', () => this.onResume());
+    el<HTMLButtonElement>('btn-start').addEventListener('click', () => this.onStart(), listenerOptions);
+    el<HTMLButtonElement>('btn-again').addEventListener('click', () => this.onRestart(), listenerOptions);
+    el<HTMLButtonElement>('btn-again-win').addEventListener('click', () => this.onRestart(), listenerOptions);
+    el<HTMLButtonElement>('btn-resume').addEventListener('click', () => this.onResume(), listenerOptions);
     this.soundToggle.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
       this.onToggleSound();
-    });
+    }, listenerOptions);
     this.backpack.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       if (t.id === 'bp-close') this.onCloseBackpack();
       else if (t.id.startsWith('bp-use-')) this.onUseHeal(t.id.slice(7) as HealId);
-    });
+    }, listenerOptions);
+  }
+
+  dispose(): void {
+    this.events.abort();
   }
 
   setSoundMuted(muted: boolean): void {

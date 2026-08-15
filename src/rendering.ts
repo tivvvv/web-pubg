@@ -82,8 +82,14 @@ export class GameRenderer {
     container.appendChild(renderer.domElement);
   }
 
-  setAnimationLoop(callback: () => void): void {
+  setAnimationLoop(callback: (() => void) | null): void {
     this.renderer.setAnimationLoop(callback);
+  }
+
+  dispose(): void {
+    this.renderer.setAnimationLoop(null);
+    this.renderer.dispose();
+    this.domElement.remove();
   }
 
   resize(width: number, height: number): void {
