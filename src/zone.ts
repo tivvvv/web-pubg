@@ -11,12 +11,12 @@ export interface ZonePhase {
 
 export const ZONE_PHASES: readonly ZonePhase[] = [
   // 完整圈时长约六分钟。首圈保留搜索和转移空间，中后期仍逐段收紧但不再催促过度。
-  { wait: 70, shrink: 42, radius: 210 },
-  { wait: 48, shrink: 36, radius: 132 },
-  { wait: 36, shrink: 28, radius: 78 },
-  { wait: 27, shrink: 21, radius: 44 },
-  { wait: 19, shrink: 15, radius: 22 },
-  { wait: 13, shrink: 11, radius: 9 },
+  { wait: 92, shrink: 48, radius: 210 },
+  { wait: 65, shrink: 42, radius: 132 },
+  { wait: 48, shrink: 34, radius: 78 },
+  { wait: 36, shrink: 27, radius: 44 },
+  { wait: 27, shrink: 20, radius: 22 },
+  { wait: 18, shrink: 14, radius: 9 },
 ];
 const DPS = [1, 2, 4, 7, 11, 16];
 const WALL_H = 90;

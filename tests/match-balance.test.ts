@@ -25,9 +25,9 @@ import { VEHICLE_SPAWNS } from '../src/vehicles';
 import { ZONE_PHASES } from '../src/zone';
 
 describe('对局节奏和地图最终平衡', () => {
-  it('50 人对局包含完整四人小队和四十六名敌人', () => {
-    expect(MATCH_PLAYER_COUNT).toBe(50);
-    expect(ENEMY_COUNT).toBe(46);
+  it('64 人对局包含完整四人小队和六十名敌人', () => {
+    expect(MATCH_PLAYER_COUNT).toBe(64);
+    expect(ENEMY_COUNT).toBe(60);
   });
 
   it('每局从多条跨岛航线中随机选择且偏移计算保持一致', () => {
@@ -115,12 +115,12 @@ describe('对局节奏和地图最终平衡', () => {
     const durations = ZONE_PHASES.map((phase) => phase.wait + phase.shrink);
     const total = durations.reduce((sum, duration) => sum + duration, 0);
     expect(durations[0]).toBeGreaterThanOrEqual(105);
-    expect(durations[durations.length - 1]).toBeLessThanOrEqual(26);
+    expect(durations[durations.length - 1]).toBeLessThanOrEqual(34);
     for (let i = 1; i < durations.length; i++) {
       expect(durations[i]).toBeLessThan(durations[i - 1] as number);
     }
-    expect(total).toBeGreaterThanOrEqual(355);
-    expect(total).toBeLessThanOrEqual(375);
+    expect(total).toBeGreaterThanOrEqual(465);
+    expect(total).toBeLessThanOrEqual(480);
   });
 
   it('所有正式区域均拥有至少一个载具转移点', () => {

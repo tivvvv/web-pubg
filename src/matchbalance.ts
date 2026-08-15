@@ -1,6 +1,6 @@
 import { REGIONS, type RegionDef, type RegionId } from './regions';
 
-export const MATCH_PLAYER_COUNT = 50;
+export const MATCH_PLAYER_COUNT = 64;
 export const SQUAD_SIZE = 4;
 export const ENEMY_COUNT = MATCH_PLAYER_COUNT - SQUAD_SIZE;
 export const DROP_MAX_FLIGHT_DISTANCE = 168;
@@ -95,7 +95,7 @@ export function botJumpDistance(
 ): number {
   const count = Math.max(1, Math.floor(botCount));
   const index = Math.max(0, Math.floor(botIndex)) % count;
-  // 17 与 46 互质, 50 人局的 46 名敌人能以稳定乱序覆盖所有航线分层.
+  // 17 与 60 互质, 64 人局的 60 名敌人能以稳定乱序覆盖所有航线分层.
   const stratum = (index * 17) % count;
   const random = Math.max(0, Math.min(0.999999, unitRandom));
   const routeFraction = (stratum + 0.2 + random * 0.6) / count;

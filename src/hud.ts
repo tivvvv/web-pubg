@@ -332,7 +332,7 @@ export class Hud {
     if (key === this.environmentKey) return;
     this.environmentKey = key;
     const icons: Record<WeatherKind, string> = {
-      clear: '☀︎', cloudy: '☁︎', rain: '☂︎', fog: '≡', storm: 'ϟ',
+      clear: '☀︎', cloudy: '☁︎', rain: '☂︎', snow: '❄', fog: '≡', storm: 'ϟ',
     };
     this.envIcon.textContent = icons[weather];
     this.envTime.textContent = time;

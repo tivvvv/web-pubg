@@ -4,7 +4,8 @@ import { setSurfaceEnvironment } from './assets';
 import type { Sky } from './sky';
 import { clamp, lerp, mulberry32, smoothstep } from './utils';
 
-export type WeatherKind = 'clear' | 'cloudy' | 'rain' | 'fog' | 'storm';
+export const WEATHER_KINDS = ['clear', 'cloudy', 'rain', 'snow', 'fog', 'storm'] as const;
+export type WeatherKind = typeof WEATHER_KINDS[number];
 
 export interface EnvironmentSnapshot {
   timeText: string;
@@ -12,6 +13,7 @@ export interface EnvironmentSnapshot {
   weather: WeatherKind;
   weatherLabel: string;
   rainIntensity: number;
+  snowIntensity: number;
   exposure: number;
   daylight: number;
   saturation: number;
@@ -24,6 +26,7 @@ export interface EnvironmentSnapshot {
 interface WeatherProfile {
   cloud: number;
   rain: number;
+  snow: number;
   fogNear: number;
   fogFar: number;
   light: number;
@@ -95,12 +98,12 @@ export function environmentLighting(
   return {
     // 白天亮度维持原水平，夜间和背光面增加环境补光，避免角色与建筑压成纯黑剪影。
     hemiIntensity: 1.04 + daylight * 0.18 * light + rainFill,
-    moonIntensity: 0.58 * light,
+    moonIntensity: 0.74 * light + rain * 0.04,
     exposure: clamp(
-      1.14 - daylight * 0.04 + (1 - light) * 0.06 + rain * 0.08 + storm * 0.03
-        + (1 - daylight) * 0.16,
-      1.1,
-      1.36,
+      1.17 - daylight * 0.035 + (1 - light) * 0.07 + rain * 0.075 + storm * 0.025
+        + (1 - daylight) * 0.18,
+      1.14,
+      1.42,
     ),
   };
 }
@@ -113,6 +116,7 @@ export function environmentVisualProfile(input: {
   light: number;
   cloud: number;
   rain: number;
+  snow?: number;
   wet: number;
   storm: number;
   fogNear: number;
@@ -124,13 +128,14 @@ export function environmentVisualProfile(input: {
   const light = clamp(input.light, 0, 1);
   const cloud = clamp(input.cloud, 0, 1);
   const rain = clamp(input.rain, 0, 1);
+  const snow = clamp(input.snow ?? 0, 0, 1);
   const wet = clamp(input.wet, 0, 1);
   const storm = clamp(input.storm, 0, 1);
   const surface = environmentSurfaceDetail(rain, wet, cloud, daylight);
   const lighting = environmentLighting(daylight, light, rain, storm);
   // 暮色偏暖, 深夜和厚云偏冷。该值直接供全部表面材质和水面使用。
   const warmth = clamp(0.46 + twilight * 0.42 + Math.max(0, sunHeight) * 0.08 - cloud * 0.18, 0.2, 0.92);
-  const weatherSoftness = cloud * 1.25 + rain * 0.7;
+  const weatherSoftness = cloud * 1.25 + rain * 0.7 + snow * 0.38;
   return {
     lighting,
     surface,
@@ -138,40 +143,42 @@ export function environmentVisualProfile(input: {
     sunIntensity: (0.16 + daylight * 2.38) * light * (1 - cloud * 0.24),
     shadowRadius: clamp(1.8 + weatherSoftness, 1.8, 3.7),
     fogNear: Math.max(24, input.fogNear),
-    fogFar: Math.max(input.fogNear + 90, input.fogFar),
+    fogFar: Math.max(input.fogNear + 120, input.fogFar),
     rainOpacity: clamp(rain * (0.54 + daylight * 0.1), 0, 0.64),
-    saturation: clamp(1.08 - cloud * 0.03 - rain * 0.015 + twilight * 0.012, 1.01, 1.09),
+    saturation: clamp(1.08 - cloud * 0.03 - rain * 0.015 - snow * 0.012 + twilight * 0.012, 1.005, 1.09),
     contrast: clamp(1.02 - cloud * 0.008 - rain * 0.006 + (1 - daylight) * 0.008, 1.008, 1.035),
     warmth,
   };
 }
 
 const WEATHER: Record<WeatherKind, WeatherProfile> = {
-  clear: { cloud: 0.18, rain: 0, fogNear: 185, fogFar: 690, light: 1, wind: 0.75, wet: 0, storm: 0 },
-  cloudy: { cloud: 0.72, rain: 0, fogNear: 140, fogFar: 545, light: 0.8, wind: 1.25, wet: 0.08, storm: 0 },
-  rain: { cloud: 0.9, rain: 0.76, fogNear: 110, fogFar: 485, light: 0.86, wind: 2.05, wet: 0.82, storm: 0.16 },
-  fog: { cloud: 0.62, rain: 0.04, fogNear: 30, fogFar: 235, light: 0.7, wind: 0.34, wet: 0.28, storm: 0 },
-  storm: { cloud: 0.98, rain: 1, fogNear: 82, fogFar: 410, light: 0.72, wind: 3.1, wet: 1, storm: 1 },
+  clear: { cloud: 0.18, rain: 0, snow: 0, fogNear: 185, fogFar: 690, light: 1, wind: 0.75, wet: 0, storm: 0 },
+  cloudy: { cloud: 0.72, rain: 0, snow: 0, fogNear: 140, fogFar: 545, light: 0.84, wind: 1.25, wet: 0.08, storm: 0 },
+  rain: { cloud: 0.9, rain: 0.76, snow: 0, fogNear: 110, fogFar: 500, light: 0.9, wind: 2.05, wet: 0.82, storm: 0.16 },
+  snow: { cloud: 0.82, rain: 0, snow: 0.82, fogNear: 118, fogFar: 515, light: 0.92, wind: 1.45, wet: 0.3, storm: 0 },
+  fog: { cloud: 0.62, rain: 0.04, snow: 0, fogNear: 34, fogFar: 255, light: 0.78, wind: 0.34, wet: 0.28, storm: 0 },
+  storm: { cloud: 0.98, rain: 1, snow: 0, fogNear: 88, fogFar: 440, light: 0.8, wind: 3.1, wet: 1, storm: 1 },
 };
 
 const WEATHER_LABEL: Record<WeatherKind, string> = {
-  clear: '晴朗', cloudy: '多云', rain: '降雨', fog: '大雾', storm: '雷暴',
+  clear: '晴朗', cloudy: '多云', rain: '降雨', snow: '降雪', fog: '大雾', storm: '雷暴',
 };
 
 const WEATHER_ICON: Record<WeatherKind, string> = {
-  clear: '☀︎', cloudy: '☁︎', rain: '☂︎', fog: '≡', storm: 'ϟ',
+  clear: '☀︎', cloudy: '☁︎', rain: '☂︎', snow: '❄', fog: '≡', storm: 'ϟ',
 };
 
 const NEXT_WEATHER: Record<WeatherKind, readonly WeatherKind[]> = {
   clear: ['cloudy', 'cloudy', 'fog'],
-  cloudy: ['clear', 'rain', 'rain', 'fog'],
+  cloudy: ['clear', 'rain', 'rain', 'snow', 'fog'],
   rain: ['cloudy', 'storm', 'cloudy'],
-  fog: ['clear', 'cloudy'],
+  snow: ['cloudy', 'clear', 'fog'],
+  fog: ['clear', 'cloudy', 'snow'],
   storm: ['rain', 'cloudy'],
 };
 
 // 构造阶段先展示上午多云菜单，首场对局固定进入晴朗午前，确保玩家第一眼能看清完整场景资产。
-const INITIAL_WEATHER: readonly WeatherKind[] = ['cloudy', 'clear', 'rain', 'fog', 'storm'];
+const INITIAL_WEATHER: readonly WeatherKind[] = ['cloudy', 'clear', 'rain', 'snow', 'fog', 'storm'];
 const START_HOURS = [9.5, 11.25, 16.8, 8.4, 20.4] as const;
 const DAY_DURATION_SEC = 420;
 
@@ -198,7 +205,7 @@ export function timeText(hour: number): string {
 export class EnvironmentSystem {
   readonly snapshot: EnvironmentSnapshot = {
     timeText: '12:00', phaseLabel: '正午', weather: 'clear', weatherLabel: '晴朗',
-    rainIntensity: 0, exposure: 1.08, daylight: 1,
+    rainIntensity: 0, snowIntensity: 0, exposure: 1.08, daylight: 1,
     saturation: 1.06, contrast: 1.035, wetness: 0, cloudiness: 0.18, warmth: 0.54,
   };
 
@@ -212,6 +219,10 @@ export class EnvironmentSystem {
   private readonly rainPos: Float32Array;
   private readonly rainSpeed: Float32Array;
   private readonly rainSeed: Float32Array;
+  private readonly snow: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  private readonly snowPos: Float32Array;
+  private readonly snowFall: Float32Array;
+  private readonly snowDrift: Float32Array;
   private readonly airMotes: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
   private readonly motePos: Float32Array;
   private readonly moteDrift: Float32Array;
@@ -225,17 +236,17 @@ export class EnvironmentSystem {
   private readonly dayHorizon = new THREE.Color(0xe7eee8);
   private readonly dawnZenith = new THREE.Color(0x405f91);
   private readonly dawnHorizon = new THREE.Color(0xefa16c);
-  private readonly nightZenith = new THREE.Color(0x061226);
-  private readonly nightHorizon = new THREE.Color(0x17263a);
+  private readonly nightZenith = new THREE.Color(0x0d203a);
+  private readonly nightHorizon = new THREE.Color(0x29415b);
   private readonly dayWater = new THREE.Color(0x2c7898);
-  private readonly nightWater = new THREE.Color(0x102d49);
+  private readonly nightWater = new THREE.Color(0x1a4162);
   private readonly cloudFog = new THREE.Color(0x8798a2);
   private readonly warmSun = new THREE.Color(0xffa268);
   private readonly daySun = new THREE.Color(0xffefcf);
   private readonly dayHemi = new THREE.Color(0x9fc7e4);
   private readonly nightHemi = new THREE.Color(0x9aabc4);
   private readonly dayGround = new THREE.Color(0x7b8969);
-  private readonly nightGround = new THREE.Color(0x5c6779);
+  private readonly nightGround = new THREE.Color(0x718097);
   private readonly stormWater = new THREE.Color(0x294b5b);
   private current = copyProfile(WEATHER.clear);
   private target = copyProfile(WEATHER.clear);
@@ -294,6 +305,63 @@ export class EnvironmentSystem {
     this.rain.renderOrder = 4;
     this.rain.visible = false;
     scene.add(this.rain);
+
+    // 雪花使用独立的缓降粒子，横向漂移和大小都与高速雨线区分开。
+    const snowCount = navigator.hardwareConcurrency <= 4 ? 240 : 440;
+    this.snowPos = new Float32Array(snowCount * 3);
+    this.snowFall = new Float32Array(snowCount);
+    this.snowDrift = new Float32Array(snowCount * 2);
+    const snowRng = mulberry32(62291);
+    for (let i = 0; i < snowCount; i++) {
+      const o = i * 3;
+      this.snowPos[o] = (snowRng() * 2 - 1) * 34;
+      this.snowPos[o + 1] = -3 + snowRng() * 32;
+      this.snowPos[o + 2] = (snowRng() * 2 - 1) * 34;
+      this.snowFall[i] = 2.2 + snowRng() * 3.7;
+      this.snowDrift[i * 2] = 0.55 + snowRng() * 1.4;
+      this.snowDrift[i * 2 + 1] = snowRng() * Math.PI * 2;
+    }
+    const snowGeo = new THREE.BufferGeometry();
+    snowGeo.setAttribute('position', new THREE.BufferAttribute(this.snowPos, 3));
+    let snowTexture: THREE.Texture;
+    if (typeof document === 'undefined') {
+      snowTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 245]), 1, 1);
+      snowTexture.needsUpdate = true;
+    } else {
+      const snowCanvas = document.createElement('canvas');
+      snowCanvas.width = 32;
+      snowCanvas.height = 32;
+      const snowCtx = snowCanvas.getContext('2d');
+      if (snowCtx) {
+        const flake = snowCtx.createRadialGradient(16, 16, 1, 16, 16, 15);
+        flake.addColorStop(0, 'rgba(255,255,255,1)');
+        flake.addColorStop(0.35, 'rgba(245,250,255,0.88)');
+        flake.addColorStop(1, 'rgba(235,245,255,0)');
+        snowCtx.fillStyle = flake;
+        snowCtx.fillRect(0, 0, 32, 32);
+      }
+      snowTexture = new THREE.CanvasTexture(snowCanvas);
+    }
+    snowTexture.colorSpace = THREE.SRGBColorSpace;
+    this.snow = new THREE.Points(
+      snowGeo,
+      new THREE.PointsMaterial({
+        color: 0xf3f8ff,
+        size: 0.19,
+        map: snowTexture,
+        transparent: true,
+        opacity: 0,
+        alphaTest: 0.025,
+        depthWrite: false,
+        sizeAttenuation: true,
+        fog: true,
+      }),
+    );
+    this.snow.name = 'weather-snow-particles';
+    this.snow.frustumCulled = false;
+    this.snow.renderOrder = 4;
+    this.snow.visible = false;
+    scene.add(this.snow);
 
     // 单 draw-call 的近景空气微尘，补足清朗环境的空间纵深；雨天和夜间自动收敛。
     const moteCount = navigator.hardwareConcurrency <= 4 ? 80 : 140;
@@ -449,6 +517,7 @@ export class EnvironmentSystem {
     this.updateLightning(simDt);
     this.applyAtmosphere(shadowAnchor);
     this.updateRain(dt, camPos);
+    this.updateSnow(dt, camPos);
     this.updateAirMotes(dt, camPos);
     this.updateLowMist(camPos);
     this.syncSnapshot(this.snapshot.daylight);
@@ -498,6 +567,7 @@ export class EnvironmentSystem {
       light: this.current.light,
       cloud: this.current.cloud,
       rain: this.current.rain,
+      snow: this.current.snow,
       wet: this.current.wet,
       storm: this.current.storm,
       fogNear: this.current.fogNear,
@@ -541,7 +611,7 @@ export class EnvironmentSystem {
     this.hemi.groundColor.copy(this.nightGround).lerp(this.dayGround, daylight);
     this.hemi.intensity = lighting.hemiIntensity + this.flash * 1.7;
 
-    const groundDay = lerp(0.78, 1, daylight) * lerp(0.9, 1, this.current.light);
+    const groundDay = lerp(0.86, 1, daylight) * lerp(0.94, 1, this.current.light);
     this.terrainMat.color.setRGB(
       groundDay * (0.93 + daylight * 0.07),
       groundDay * (0.96 + daylight * 0.04),
@@ -549,7 +619,13 @@ export class EnvironmentSystem {
     );
     this.terrainMat.roughness = 0.96 - this.current.wet * 0.16;
     const surface = visual.surface;
-    setSurfaceEnvironment(surface.wetness, surface.cloudiness, daylight, this.current.rain, visual.warmth);
+    setSurfaceEnvironment(
+      surface.wetness,
+      surface.cloudiness,
+      daylight,
+      Math.max(this.current.rain, this.current.snow * 0.18),
+      visual.warmth,
+    );
     const surfaceUniforms = this.terrainMat.userData.surfaceUniforms as {
       wetness: { value: number };
       cloudiness: { value: number };
@@ -623,6 +699,7 @@ export class EnvironmentSystem {
       light: this.current.light,
       cloud: this.current.cloud,
       rain: amount,
+      snow: this.current.snow,
       wet: this.current.wet,
       storm: this.current.storm,
       fogNear: this.current.fogNear,
@@ -651,12 +728,42 @@ export class EnvironmentSystem {
     attr.needsUpdate = true;
   }
 
+  private updateSnow(dt: number, camPos: THREE.Vector3): void {
+    const amount = this.current.snow;
+    this.snow.visible = amount > 0.025;
+    this.snow.material.opacity = clamp(amount * (0.64 + this.snapshot.daylight * 0.16), 0, 0.78);
+    this.snow.material.size = 0.16 + amount * 0.08;
+    this.snow.position.copy(camPos);
+    if (!this.snow.visible) return;
+    for (let i = 0; i < this.snowFall.length; i++) {
+      const o = i * 3;
+      let x = this.snowPos[o] as number;
+      let y = (this.snowPos[o + 1] as number) - (this.snowFall[i] as number) * dt;
+      let z = this.snowPos[o + 2] as number;
+      const phase = (this.snowDrift[i * 2 + 1] as number) + y * 0.16;
+      const sway = (this.snowDrift[i * 2] as number) * dt;
+      x += (Math.sin(phase) * 0.42 + this.current.wind * 0.16) * sway;
+      z += Math.cos(phase * 0.82) * sway * 0.34;
+      if (y < -4) y += 34;
+      if (x > 35) x -= 70;
+      else if (x < -35) x += 70;
+      if (z > 35) z -= 70;
+      else if (z < -35) z += 70;
+      this.snowPos[o] = x;
+      this.snowPos[o + 1] = y;
+      this.snowPos[o + 2] = z;
+    }
+    const attr = this.snow.geometry.getAttribute('position') as THREE.BufferAttribute;
+    attr.needsUpdate = true;
+  }
+
   private syncSnapshot(daylight: number): void {
     this.snapshot.timeText = timeText(this.timeHours);
     this.snapshot.phaseLabel = phaseAt(this.timeHours);
     this.snapshot.weather = this.weather;
     this.snapshot.weatherLabel = WEATHER_LABEL[this.weather];
     this.snapshot.rainIntensity = this.current.rain;
+    this.snapshot.snowIntensity = this.current.snow;
     this.snapshot.daylight = daylight;
   }
 }

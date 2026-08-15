@@ -12,9 +12,8 @@ import { WEAPONS } from '../src/weapons';
 import { SUN_SHADOW_MAP_SIZE } from '../src/world';
 import { squadNameTagPresentation, weaponPickupSlot } from '../src/game';
 import {
-  buildTransportJumpBayView,
-  TRANSPORT_PLANE_JUMP_BAY_BACK,
-  TRANSPORT_PLANE_JUMP_BAY_HEIGHT_FROM_CHARACTER,
+  TRANSPORT_PLANE_STANDING_BACK,
+  TRANSPORT_PLANE_STANDING_EYE_HEIGHT,
 } from '../src/planemodel';
 
 describe('画面回归保护', () => {
@@ -193,20 +192,12 @@ describe('画面回归保护', () => {
     expect(Math.abs(rifleAds.roll)).toBeLessThan(Math.abs(lmg.roll));
   });
 
-  it('运输机第一人称站在尾部跳伞舱并具备敞开舱门参照', () => {
+  it('运输机待跳视角站在真实机背且不叠加伪舱框', () => {
     const scenarioSource = readFileSync(join(process.cwd(), 'src/testscenario.ts'), 'utf8');
-    expect(TRANSPORT_PLANE_JUMP_BAY_BACK).toBeGreaterThan(6.4);
-    expect(TRANSPORT_PLANE_JUMP_BAY_HEIGHT_FROM_CHARACTER).toBeGreaterThan(-0.8);
-    const jumpBay = buildTransportJumpBayView();
-    expect(jumpBay.name).toBe('transport-jump-bay-view');
-    expect(jumpBay.visible).toBe(false);
-    expect(jumpBay.getObjectByName('jump-bay-ramp')).toBeDefined();
-    expect(jumpBay.getObjectByName('jump-bay-red-light')).toBeDefined();
-    expect(jumpBay.getObjectByName('jump-bay-green-light')).toBeDefined();
-    expect(jumpBay.children.filter((child) => child.name === 'jump-bay-door-post')).toHaveLength(2);
-    expect(jumpBay.children.filter((child) => child.name === 'jump-bay-rib')).toHaveLength(6);
-    expect(jumpBay.children.filter((child) => child.name === 'jump-bay-warning-stripe')).toHaveLength(7);
-    expect(jumpBay.getObjectByName('cockpit-dashboard')).toBeUndefined();
+    expect(TRANSPORT_PLANE_STANDING_BACK).toBeGreaterThan(3);
+    expect(TRANSPORT_PLANE_STANDING_BACK).toBeLessThan(5.5);
+    expect(TRANSPORT_PLANE_STANDING_EYE_HEIGHT).toBeGreaterThan(1.3);
+    expect(readFileSync(join(process.cwd(), 'src/player.ts'), 'utf8')).not.toContain('planeJumpBayView');
     expect(scenarioSource).toContain("'scenario=parachute&phase=plane'");
   });
 
@@ -373,9 +364,9 @@ describe('画面回归保护', () => {
     const rainyNight = environmentLighting(0, 0.86, 0.76, 0.16);
 
     expect(day.hemiIntensity).toBeCloseTo(1.22, 5);
-    expect(day.exposure).toBeCloseTo(1.1, 5);
+    expect(day.exposure).toBeCloseTo(1.14, 5);
     expect(clearNight.hemiIntensity).toBeGreaterThanOrEqual(0.85);
-    expect(clearNight.exposure).toBeCloseTo(1.3, 5);
+    expect(clearNight.exposure).toBeCloseTo(1.35, 5);
     expect(rainyNight.hemiIntensity).toBeGreaterThan(clearNight.hemiIntensity);
     expect(rainyNight.exposure).toBeGreaterThanOrEqual(clearNight.exposure);
   });
@@ -424,6 +415,14 @@ describe('画面回归保护', () => {
     expect(rain.saturation).toBeGreaterThanOrEqual(0.99);
     expect(rain.contrast).toBeGreaterThanOrEqual(1.01);
     expect(dusk.warmth).toBeGreaterThan(clear.warmth);
+
+    const snow = environmentVisualProfile({
+      daylight: 0.7, sunHeight: 0.3, twilight: 0, light: 0.92, cloud: 0.82,
+      rain: 0, snow: 0.82, wet: 0.3, storm: 0, fogNear: 118, fogFar: 515,
+    });
+    expect(snow.shadowRadius).toBeGreaterThan(clear.shadowRadius);
+    expect(snow.fogFar).toBeGreaterThan(snow.fogNear + 100);
+    expect(snow.lighting.exposure).toBeGreaterThanOrEqual(1.14);
   });
 
   it('性能优化不能降低核心渲染质量基线', () => {

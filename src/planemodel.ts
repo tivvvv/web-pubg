@@ -1,66 +1,10 @@
 // 低模军用运输机(航线投放/空投共用, 单实例)
 import * as THREE from 'three';
 
-// 运输机模型以 +Z 为机头。登机阶段把镜头放在尾部跳伞舱门，朝航线后方观察。
+// 运输机模型以 +Z 为机头。待跳阶段镜头直接站在机背尾段，不叠加任何伪舱体框架。
 export const TRANSPORT_PLANE_NOSE_TIP_Z = 8.4;
-export const TRANSPORT_PLANE_JUMP_BAY_BACK = 7.08;
-export const TRANSPORT_PLANE_JUMP_BAY_HEIGHT_FROM_CHARACTER = -0.56;
-
-// 镜头空间尾部跳伞舱。外模没有可进入的内舱，因此只补足贴近镜头的舱门框、
-// 防滑跳板和货舱结构；视野中央保持完全敞开，明确表达“站在跳伞口”等待离机。
-export function buildTransportJumpBayView(): THREE.Group {
-  const group = new THREE.Group();
-  group.name = 'transport-jump-bay-view';
-  group.visible = false;
-  const frame = new THREE.MeshBasicMaterial({ color: 0x4f5d4d, depthTest: false, depthWrite: false });
-  const frameDark = new THREE.MeshBasicMaterial({ color: 0x273129, depthTest: false, depthWrite: false });
-  const floor = new THREE.MeshBasicMaterial({ color: 0x657064, depthTest: false, depthWrite: false });
-  const floorDark = new THREE.MeshBasicMaterial({ color: 0x343e37, depthTest: false, depthWrite: false });
-  const warning = new THREE.MeshBasicMaterial({ color: 0xe2b63f, depthTest: false, depthWrite: false });
-  const glowRed = new THREE.MeshBasicMaterial({ color: 0xff4c42, depthTest: false, depthWrite: false });
-  const glowGreen = new THREE.MeshBasicMaterial({ color: 0x62ed78, depthTest: false, depthWrite: false });
-  const addBox = (name: string, material: THREE.Material, w: number, h: number, d: number, x: number, y: number, z: number): THREE.Mesh => {
-    const part = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-    part.name = name;
-    part.position.set(x, y, z);
-    part.renderOrder = 950;
-    group.add(part);
-    return part;
-  };
-
-  // 舱门轮廓只占据画面边缘，不再出现驾驶舱风挡、仪表台和机鼻。
-  addBox('jump-bay-door-top', frameDark, 3.36, 0.16, 0.18, 0, 1.03, -3.15);
-  for (const side of [-1, 1]) {
-    addBox('jump-bay-door-post', frame, 0.18, 2.18, 0.2, side * 1.58, -0.02, -3.13);
-    addBox('jump-bay-side-wall', frameDark, 0.52, 2.08, 2.5, side * 1.73, -0.03, -2.02);
-    addBox('jump-bay-handrail', warning, 0.06, 0.06, 1.42, side * 1.37, -0.28, -1.83);
-    for (let rib = 0; rib < 3; rib++) {
-      const structuralRib = addBox('jump-bay-rib', frame, 0.09, 1.65, 0.08, side * 1.48, 0.02, -1.12 - rib * 0.68);
-      structuralRib.rotation.z = side * -0.08;
-    }
-  }
-
-  const ramp = addBox('jump-bay-ramp', floor, 2.86, 0.1, 3.25, 0, -0.84, -1.76);
-  ramp.rotation.x = -0.055;
-  for (let rail = 0; rail < 5; rail++) {
-    addBox('jump-bay-floor-rib', floorDark, 2.64, 0.025, 0.055, 0, -0.775 - rail * 0.01, -0.48 - rail * 0.55);
-  }
-  for (let stripe = 0; stripe < 7; stripe++) {
-    const safetyStripe = addBox('jump-bay-warning-stripe', stripe % 2 === 0 ? warning : frameDark, 0.34, 0.025, 0.28, -1.02 + stripe * 0.34, -0.785, -3.05);
-    safetyStripe.rotation.y = -0.42;
-  }
-  const redLight = new THREE.Mesh(new THREE.CircleGeometry(0.085, 12), glowRed);
-  redLight.name = 'jump-bay-red-light';
-  redLight.position.set(-1.31, 0.68, -3.02);
-  redLight.renderOrder = 960;
-  group.add(redLight);
-  const greenLight = new THREE.Mesh(new THREE.CircleGeometry(0.085, 12), glowGreen);
-  greenLight.name = 'jump-bay-green-light';
-  greenLight.position.set(1.31, 0.68, -3.02);
-  greenLight.renderOrder = 960;
-  group.add(greenLight);
-  return group;
-}
+export const TRANSPORT_PLANE_STANDING_BACK = 3.75;
+export const TRANSPORT_PLANE_STANDING_EYE_HEIGHT = 1.58;
 
 // 低模军用运输机: 机身/高置主翼/尾翼/4 发螺旋桨(旋转桨盘) + 尾部跳板的暗示
 // 共享材质, 单实例; 返回桨盘供每帧旋转

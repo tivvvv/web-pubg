@@ -933,7 +933,7 @@ export class Game {
         this.scene.add(tag);
         continue;
       }
-      // 敌方 bot ×46: 分层覆盖整条航线, 同时向各自选择的资源区策略性偏移.
+      // 敌方 bot ×60: 分层覆盖整条航线, 同时向各自选择的资源区策略性偏移.
       const difficulty = botDifficultyDeck[i - SQUAD_SIZE] ?? 'regular';
       const bot = new BotController(
         BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`,

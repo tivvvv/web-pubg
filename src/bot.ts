@@ -28,8 +28,10 @@ import { random } from './random';
 import { driveVehicleStep, seatWorld, VEHICLE_SPEC, type Vehicle } from './vehicles';
 import { reloadDuration } from './gunplay';
 import {
-  botAimSigma, botDifficultyProfile, type BotDifficultyProfile, type BotDifficultyTier,
+  botAimSigma, botDifficultyProfile, botPredatorResponse,
+  type BotDifficultyProfile, type BotDifficultyTier,
 } from './botdifficulty';
+import type { WildlifeEntity } from './wildlife';
 
 // bot 降落伞配色(哑光低饱和, 按角色 id 轮换; 队友另用绿色系)
 const BOT_CANOPIES = [0x7a8a6a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a, 0x8a6e62] as const;
@@ -76,6 +78,7 @@ export class BotController {
   private shoreDryPoint = new THREE.Vector3();
   private shoreExitT = 0;
   private shoreCooldownT = 0;
+  private predatorThreat: WildlifeEntity | null = null;
   private lastKnown = new THREE.Vector3();
   // 破门: 被门/窗挡路计时
   private blockT = 0;
@@ -290,6 +293,7 @@ export class BotController {
         this.swimLastX = c.pos.x;
         this.swimLastZ = c.pos.z;
       }
+      if (this.fleePredator(dt, game)) return;
       this.swimToBank(dt, game);
       return;
     }
@@ -326,6 +330,7 @@ export class BotController {
       );
       return;
     }
+    if (this.fleePredator(dt, game)) return;
     // 翻越中: 脚本位移
     c.vaultCd = Math.max(0, c.vaultCd - dt);
     if (c.vault) this.cancelReload();
@@ -505,7 +510,7 @@ export class BotController {
     const localStandH = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y + 0.3);
     const reachedShore = localDepth <= SWIM_EXIT_DEPTH || localStandH >= WATER_Y - SWIM_EXIT_DEPTH;
     const swimSpeed = reachedShore
-      ? 0
+      ? Math.min(2.8, Math.max(1.8, d * 1.5))
       : bankDepth < SWIM_EXIT_DEPTH
         ? Math.min(SWIM_SPRINT_SPEED, d * 2.5)
         : SWIM_SPRINT_SPEED;
@@ -523,6 +528,90 @@ export class BotController {
       c.swimAcc = 0;
       game.soundAt(c.pos, (dd, p) => game.audio.swimStrokeAt(dd, p));
     }
+  }
+
+  private fleePredator(dt: number, game: Game): boolean {
+    const c = this.char;
+    let nearest: WildlifeEntity | null = null;
+    let nearestDistance = Infinity;
+    for (const entity of game.wildlife.entities) {
+      if (!entity.alive || (entity.kind !== 'crocodile' && entity.kind !== 'tiger')) continue;
+      const distance = Math.hypot(entity.group.position.x - c.pos.x, entity.group.position.z - c.pos.z);
+      if (distance >= nearestDistance) continue;
+      nearest = entity;
+      nearestDistance = distance;
+    }
+    if (!nearest) {
+      this.predatorThreat = null;
+      return false;
+    }
+    const bestSlot = c.bestGunSlot();
+    const combatGun = bestSlot >= 0 ? c.guns[bestSlot] : null;
+    const response = botPredatorResponse({
+      tier: this.difficulty.id,
+      kind: nearest.kind === 'crocodile' ? 'crocodile' : 'tiger',
+      distance: nearestDistance,
+      swimming: c.swimming,
+      hp: c.hp,
+      weaponTier: combatGun && combatGun.mag > 0 ? combatGun.def.tier : 0,
+    });
+    if (response === 'ignore') {
+      this.predatorThreat = null;
+      return false;
+    }
+
+    if (response === 'fight') {
+      this.predatorThreat = nearest;
+      this.target = null;
+      this.state = 'engage';
+      if (bestSlot >= 0 && this.reloadT <= 0) c.curSlot = bestSlot;
+      const gun = c.heldGun();
+      if (!gun) return false;
+      c.setStance('stand');
+      c.yaw = Math.atan2(nearest.group.position.x - c.pos.x, nearest.group.position.z - c.pos.z);
+      if (gun.mag <= 0) return false;
+      if (this.fireTimer <= 0) {
+        c.eyePos(this.eye);
+        this.aim.set(
+          nearest.group.position.x,
+          nearest.group.position.y + nearest.centerY,
+          nearest.group.position.z,
+        );
+        this.dir.subVectors(this.aim, this.eye).normalize();
+        if (game.fireWeapon(c, this.eye, this.dir, 0)) this.fireTimer = gun.def.fireInterval * 1.15;
+      }
+      return true;
+    }
+
+    this.cancelReload();
+    this.target = null;
+    this.state = 'wander';
+    const awayX = c.pos.x - nearest.group.position.x;
+    const awayZ = c.pos.z - nearest.group.position.z;
+    const awayLength = Math.hypot(awayX, awayZ) || 1;
+    const fleeX = c.pos.x + awayX / awayLength * 28;
+    const fleeZ = c.pos.z + awayZ / awayLength * 28;
+    if (c.swimming) {
+      if (this.predatorThreat !== nearest || !this.hasSwimBank) {
+        findSwimBank(this.swimBank, c.pos.x, c.pos.z, fleeX, fleeZ, game.world);
+        this.hasSwimBank = true;
+        this.swimRepathT = 0.45;
+        this.swimStuckT = 0;
+      }
+      this.predatorThreat = nearest;
+      this.swimToBank(dt, game);
+      return true;
+    }
+    this.predatorThreat = nearest;
+    c.setStance('stand');
+    this.navigationIntent = true;
+    this.navigator.move(c, fleeX, fleeZ, 6.4, dt, game.world, {
+      stopDistance: 1,
+      turnRate: 8,
+      allowWater: false,
+      neighbors: game.chars,
+    });
+    return true;
   }
 
   // 是否想要这件护具: 空槽或更高等级

@@ -237,3 +237,26 @@ export function botAimSigma(
   return (0.028 + distance * 0.00055 + movementError) * profile.aimErrorScale +
     (targetIsPlayer ? profile.playerAimPenalty : 0);
 }
+
+export type PredatorResponse = 'ignore' | 'fight' | 'flee';
+
+// 难度只影响判断质量，不赋予机器人不合理的无畏。游泳时面对鳄鱼始终优先逃生；
+// 陆地遭遇则综合血量、武器等级和自身层级决定战斗或撤离。
+export function botPredatorResponse(input: {
+  tier: BotDifficultyTier;
+  kind: 'tiger' | 'crocodile';
+  distance: number;
+  swimming: boolean;
+  hp: number;
+  weaponTier: number;
+}): PredatorResponse {
+  const alertDistance = input.kind === 'crocodile' ? 17 : 15;
+  if (input.distance > alertDistance) return 'ignore';
+  if (input.kind === 'crocodile' && input.swimming) return 'flee';
+  const judgment = { rookie: 0.25, regular: 0.55, veteran: 0.88, elite: 1.12 }[input.tier];
+  const combatScore = judgment + Math.max(0, input.weaponTier) * 0.23 + Math.max(0, input.hp) * 0.004
+    - (input.weaponTier <= 0 ? 0.48 : 0)
+    - (input.distance < 3.5 ? 0.24 : 0);
+  const required = input.kind === 'tiger' ? 1.5 : 1.38;
+  return combatScore >= required ? 'fight' : 'flee';
+}

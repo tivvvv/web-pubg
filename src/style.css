@@ -194,8 +194,14 @@ body {
 }
 
 #environment-status[data-weather='rain'] #env-icon,
+#environment-status[data-weather='snow'] #env-icon,
 #environment-status[data-weather='fog'] #env-icon {
   color: #b8d8e8;
+}
+
+#environment-status[data-weather='snow'] {
+  border-color: rgba(215, 235, 255, 0.48);
+  background: rgba(25, 38, 50, 0.7);
 }
 
 #environment-status[data-weather='storm'] {

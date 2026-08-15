@@ -1,19 +1,28 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { BOMBARDMENT_BOUNDARY_HALF_WIDTH, BOMBARDMENT_TIMING, bombardmentEscapeVector } from '../src/bombardment';
+import {
+  BOMBARDMENT_BOUNDARY_HALF_WIDTH,
+  BOMBARDMENT_BOUNDARY_MARKERS,
+  BOMBARDMENT_TIMING,
+  bombardmentEscapeVector,
+} from '../src/bombardment';
 
 describe('轰炸区避险方向', () => {
+  it('边界使用密集低矮信标和方向标识', () => {
+    expect(BOMBARDMENT_BOUNDARY_MARKERS).toEqual({ posts: 16, chevrons: 24 });
+  });
+
   it('贴地高亮边界带具备足够辨识宽度', () => {
     expect(BOMBARDMENT_BOUNDARY_HALF_WIDTH).toBeGreaterThanOrEqual(0.8);
     expect(BOMBARDMENT_BOUNDARY_HALF_WIDTH).toBeLessThanOrEqual(1.2);
   });
 
   it('首轮和后续轰炸保留充足搜索与转移间隔', () => {
-    expect(BOMBARDMENT_TIMING.initialCooldownMin).toBeGreaterThanOrEqual(50);
+    expect(BOMBARDMENT_TIMING.initialCooldownMin).toBeGreaterThanOrEqual(80);
     expect(BOMBARDMENT_TIMING.initialCooldownMax).toBeGreaterThan(BOMBARDMENT_TIMING.initialCooldownMin);
-    expect(BOMBARDMENT_TIMING.repeatCooldownMin).toBeGreaterThanOrEqual(60);
-    expect(BOMBARDMENT_TIMING.warning).toBeGreaterThanOrEqual(12);
-    expect(BOMBARDMENT_TIMING.shellIntervalMin).toBeGreaterThanOrEqual(0.8);
+    expect(BOMBARDMENT_TIMING.repeatCooldownMin).toBeGreaterThanOrEqual(90);
+    expect(BOMBARDMENT_TIMING.warning).toBeGreaterThanOrEqual(15);
+    expect(BOMBARDMENT_TIMING.shellIntervalMin).toBeGreaterThanOrEqual(0.9);
   });
 
   it('区内角色获得指向圈外的单位方向', () => {

@@ -253,8 +253,23 @@ export function findShoreExitPoint(
 ): boolean {
   let dx = bankX - x;
   let dz = bankZ - z;
-  const length = Math.hypot(dx, dz);
-  if (length < 0.05) return false;
+  let length = Math.hypot(dx, dz);
+  if (length < 0.05) {
+    // 已抵达水线采样点时，以周围最高的合法地面作为继续离岸方向。
+    let bestHeight = -Infinity;
+    for (let index = 0; index < 16; index++) {
+      const angle = index / 16 * Math.PI * 2;
+      const tx = clamp(x + Math.cos(angle) * 2.4, -WORLD_HALF + 2, WORLD_HALF - 2);
+      const tz = clamp(z + Math.sin(angle) * 2.4, -WORLD_HALF + 2, WORLD_HALF - 2);
+      const height = world.getHeight(tx, tz);
+      if (height <= bestHeight || !world.pointFree(tx, tz, 0.55, WATER_Y + 0.02, WATER_Y + 3.6)) continue;
+      bestHeight = height;
+      dx = tx - x;
+      dz = tz - z;
+    }
+    length = Math.hypot(dx, dz);
+    if (length < 0.05) return false;
+  }
   dx /= length;
   dz /= length;
   const sideX = -dz;

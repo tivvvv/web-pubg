@@ -31,20 +31,21 @@ interface Crater {
 
 const RADIUS = 30;
 export const BOMBARDMENT_TIMING = {
-  warning: 12,
-  active: 12,
-  initialCooldownMin: 55,
-  initialCooldownMax: 75,
-  repeatCooldownMin: 65,
-  repeatCooldownMax: 90,
-  shellIntervalMin: 0.85,
-  shellIntervalMax: 1.25,
+  warning: 16,
+  active: 14,
+  initialCooldownMin: 82,
+  initialCooldownMax: 108,
+  repeatCooldownMin: 96,
+  repeatCooldownMax: 126,
+  shellIntervalMin: 0.95,
+  shellIntervalMax: 1.38,
 } as const;
 const BLAST_RADIUS = 9;
 const SHELL_CAP = 7;
 const CRATER_CAP = 18;
 const RING_SEGMENTS = 64;
 export const BOMBARDMENT_BOUNDARY_HALF_WIDTH = 0.9;
+export const BOMBARDMENT_BOUNDARY_MARKERS = { posts: 16, chevrons: 24 } as const;
 const UP = new THREE.Vector3(0, 1, 0);
 const CIRCLE_NORMAL = new THREE.Vector3(0, 0, 1);
 
@@ -112,11 +113,15 @@ export class BombardmentSystem {
   private innerMat: THREE.LineBasicMaterial;
   private boundaryMat: THREE.MeshBasicMaterial;
   private postMat: THREE.MeshBasicMaterial;
+  private chevronMat: THREE.MeshBasicMaterial;
+  private beaconMat: THREE.MeshBasicMaterial;
   private outerPos = new Float32Array((RING_SEGMENTS + 1) * 3);
   private innerPos = new Float32Array((RING_SEGMENTS + 1) * 3);
   private boundaryPos = new Float32Array((RING_SEGMENTS + 1) * 6);
   private boundaryMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private posts: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>[] = [];
+  private chevrons: THREE.Mesh<THREE.ShapeGeometry, THREE.MeshBasicMaterial>[] = [];
+  private beacons: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>[] = [];
   private shells: Shell[] = [];
   private shellCursor = 0;
   private craters: Crater[] = [];
@@ -201,12 +206,43 @@ export class BombardmentSystem {
       color: 0xff6a4e, transparent: true, opacity: 0.7,
       blending: THREE.NormalBlending, depthWrite: false, depthTest: true, fog: false, toneMapped: false,
     });
-    const postGeo = new THREE.CylinderGeometry(0.07, 0.12, 1, 6, 1, true);
-    for (let i = 0; i < 12; i++) {
+    const postGeo = new THREE.CylinderGeometry(0.055, 0.1, 1, 8, 1, true);
+    const beaconGeo = new THREE.SphereGeometry(0.18, 8, 6);
+    this.beaconMat = new THREE.MeshBasicMaterial({
+      color: 0xffb24e, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, fog: false, toneMapped: false,
+    });
+    for (let i = 0; i < BOMBARDMENT_BOUNDARY_MARKERS.posts; i++) {
       const post = new THREE.Mesh(postGeo, this.postMat);
+      post.name = 'bombardment-warning-post';
       post.renderOrder = 4;
       this.posts.push(post);
       this.marker.add(post);
+      const beacon = new THREE.Mesh(beaconGeo, this.beaconMat);
+      beacon.name = 'bombardment-warning-beacon';
+      beacon.renderOrder = 5;
+      this.beacons.push(beacon);
+      this.marker.add(beacon);
+    }
+    const arrow = new THREE.Shape();
+    arrow.moveTo(-0.72, 0.34);
+    arrow.lineTo(-0.18, 0.34);
+    arrow.lineTo(0.18, 0);
+    arrow.lineTo(-0.18, -0.34);
+    arrow.lineTo(-0.72, -0.34);
+    arrow.lineTo(-0.36, 0);
+    arrow.closePath();
+    const chevronGeo = new THREE.ShapeGeometry(arrow);
+    this.chevronMat = new THREE.MeshBasicMaterial({
+      color: 0xffa03b, transparent: true, opacity: 0.76, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, fog: false, toneMapped: false,
+    });
+    for (let i = 0; i < BOMBARDMENT_BOUNDARY_MARKERS.chevrons; i++) {
+      const chevron = new THREE.Mesh(chevronGeo, this.chevronMat);
+      chevron.name = 'bombardment-boundary-chevron';
+      chevron.renderOrder = 5;
+      this.chevrons.push(chevron);
+      this.marker.add(chevron);
     }
     this.marker.visible = false;
     scene.add(this.marker);
@@ -403,10 +439,22 @@ export class BombardmentSystem {
       const x = Math.cos(a) * RADIUS;
       const z = Math.sin(a) * RADIUS;
       const localGround = game.world.getHeight(this.center.x + x, this.center.y + z) - baseY;
-      const h = 5.5 + (i % 3) * 1.4;
+      const h = 2.4 + (i % 2) * 0.45;
       const post = this.posts[i] as THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
       post.position.set(x, localGround + h * 0.5 + 0.1, z);
       post.scale.set(1, h, 1);
+      const beacon = this.beacons[i] as THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
+      beacon.position.set(x, localGround + h + 0.14, z);
+    }
+    for (let i = 0; i < this.chevrons.length; i++) {
+      const a = (i / this.chevrons.length) * Math.PI * 2;
+      const x = Math.cos(a) * (RADIUS + 0.15);
+      const z = Math.sin(a) * (RADIUS + 0.15);
+      const localGround = game.world.getHeight(this.center.x + x, this.center.y + z) - baseY;
+      const chevron = this.chevrons[i] as THREE.Mesh<THREE.ShapeGeometry, THREE.MeshBasicMaterial>;
+      chevron.position.set(x, localGround + 0.48, z);
+      chevron.rotation.set(0, -a + Math.PI * 0.5, 0);
+      chevron.scale.setScalar(i % 2 === 0 ? 1 : 0.82);
     }
   }
 
@@ -432,6 +480,14 @@ export class BombardmentSystem {
     this.boundaryMat.color.setHex(this.state === 'active' ? 0xff2818 : 0xff6a32);
     this.boundaryMat.opacity = (this.state === 'active' ? 0.32 : 0.2) + pulse * 0.32;
     this.postMat.opacity = 0.38 + pulse * 0.55;
+    this.chevronMat.color.setHex(this.state === 'active' ? 0xff341f : 0xffa03b);
+    this.chevronMat.opacity = (this.state === 'active' ? 0.56 : 0.38) + pulse * 0.38;
+    this.beaconMat.color.setHex(this.state === 'active' ? 0xff2d1f : 0xffb24e);
+    this.beaconMat.opacity = 0.48 + pulse * 0.48;
+    for (let i = 0; i < this.beacons.length; i++) {
+      const localPulse = 0.82 + Math.sin(now * 5.2 + i * 0.72) * 0.18;
+      (this.beacons[i] as THREE.Mesh).scale.setScalar(localPulse);
+    }
   }
 
   private spawnShell(game: Game): void {
