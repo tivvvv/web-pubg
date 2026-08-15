@@ -30,6 +30,28 @@ npm run dev
 
 启动成功后, 打开终端显示的地址. 默认通常为 `http://localhost:5173/`. 修改源码时页面会自动刷新, 按 `Ctrl+C` 可以停止开发服务器.
 
+### 配置运行端口
+
+项目默认使用 `5173` 端口. 如需固定使用其他端口, 复制示例配置并修改 `APP_PORT`:
+
+```bash
+cp .env.example .env.local
+```
+
+例如将 `.env.local` 配置为:
+
+```dotenv
+APP_PORT=3000
+```
+
+之后执行 `npm run dev`, 访问地址即为 `http://localhost:3000/`. `APP_PORT` 必须是 `1` 到 `65535` 之间的整数, 配置端口已被占用时启动会直接报错. `.env.local` 只用于本机且不会提交到 Git, 同一配置也会应用于 `npm run preview`.
+
+如果只想临时指定一次端口, 可以使用命令行参数覆盖配置:
+
+```bash
+npm run dev -- --port 3000
+```
+
 需要检查代码或运行生产版本时执行:
 
 ```bash
