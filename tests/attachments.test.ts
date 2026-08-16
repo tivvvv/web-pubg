@@ -57,6 +57,7 @@ describe('武器配件规则', () => {
       expect(model.group.getObjectsByProperty('name', 'receiver-highlight-edge')).toHaveLength(2);
       expect(model.group.getObjectByName('finish-fasteners')).toBeTruthy();
       expect(model.group.getObjectByName('serial-engraving')).toBeTruthy();
+      expect(model.action?.name).toBe('weapon-action');
       expect(model.group.getObjectsByProperty('name', 'selector-indicator')).toHaveLength(2);
       expect(physicalParts, `${id} 的结构零件不足`).toBeGreaterThanOrEqual(38);
       expect(maxGeometryVertices, `${id} 仍使用过粗几何`).toBeGreaterThanOrEqual(100);

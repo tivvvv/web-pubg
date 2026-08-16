@@ -22,13 +22,13 @@ import {
   makeFernGeometry, makePineCanopyGeometry, makeWildflowerGeometry, makeWindshapedCrownGeometry,
   naturalDetailBudget, shorelineSuitability, terrainSurfaceWeights,
 } from './nature';
+import { ROAD_PATHS, WATER_Y, WORLD_HALF, WORLD_SIZE, riverZAt } from './worldlayout';
+
+export { ROAD_PATHS, WATER_Y, WORLD_HALF, WORLD_SIZE, riverZAt, roadIntersectsRect } from './worldlayout';
 
 type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
 type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
 
-export const WORLD_SIZE = 700;
-export const WORLD_HALF = 350;
-export const WATER_Y = 0.9;
 const ROAD_WATER_DECK_Y = WATER_Y + 0.72;
 const MAIN_BRIDGE_XS = [-50, 170] as const;
 const MAIN_BRIDGE_HALF_LENGTH = 14;
@@ -40,11 +40,6 @@ const CEILING_CONTACT_GAP = 0.025;
 
 export function characterOverlapsColliderHeight(feetY: number, minY: number, maxY: number): boolean {
   return feetY < maxY - 0.02 && feetY + CHARACTER_COLLISION_HEIGHT > minY;
-}
-
-// 河流中心线: z ≈ +80, 正弦蜿蜒 ±22
-export function riverZAt(x: number): number {
-  return 80 + 22 * Math.sin(x * 0.012 + 1.3);
 }
 
 function insideMainBridgeDeck(x: number, z: number, padding = 0): boolean {
@@ -88,57 +83,11 @@ export interface MapLootSpot {
   siteId: string;
 }
 
-export const ROAD_PATHS: readonly (readonly [number, number])[][] = [
-  [[-92, -96], [-66, -72], [-58, -20], [-52, 36], [-50, 66], [-50, 112], [-44, 164], [-40, 246]],
-  [[-142, -26], [-98, -23], [-58, -20], [-8, -18], [42, -12], [98, -18], [152, -31], [178, -38], [194, -43]],
-  [[178, -38], [194, -82], [203, -140], [205, -209]],
-  [[-84, -20], [-136, -7], [-181, 9], [-228, 20]],
-  [[-58, -20], [-46, -68], [-30, -112], [-16, -158], [-10, -170], [0, -180], [10, -190], [10, -200], [20, -200]],
-  [[178, -38], [171, 18], [170, 64], [170, 112], [134, 160], [70, 190], [-40, 200]],
-];
-
 const DESIGNED_ROAD_TERMINI = [
   { x: 194, z: -43, fromX: 178, fromZ: -38, style: 'concrete' },
   { x: 205, z: -209, fromX: 203, fromZ: -140, style: 'harbor' },
   { x: 20, z: -200, fromX: 10, fromZ: -200, style: 'forest' },
 ] as const;
-
-// 供建筑规划和地图审计共用的道路占地判定。道路主体之外再传入 clearance，
-// 即可保证建筑墙体、门阶和道路路肩之间留有明确净距。
-export function roadIntersectsRect(
-  minX: number, minZ: number, maxX: number, maxZ: number, clearance = 0,
-): boolean {
-  const x0 = minX - clearance;
-  const z0 = minZ - clearance;
-  const x1 = maxX + clearance;
-  const z1 = maxZ + clearance;
-  for (const path of ROAD_PATHS) {
-    for (let index = 0; index < path.length - 1; index++) {
-      const a = path[index] as readonly [number, number];
-      const b = path[index + 1] as readonly [number, number];
-      let near = 0;
-      let far = 1;
-      const dx = b[0] - a[0];
-      const dz = b[1] - a[1];
-      let separated = false;
-      for (const [p, q] of [
-        [-dx, a[0] - x0], [dx, x1 - a[0]],
-        [-dz, a[1] - z0], [dz, z1 - a[1]],
-      ] as const) {
-        if (Math.abs(p) < 0.000001) {
-          if (q < 0) separated = true;
-          continue;
-        }
-        const ratio = q / p;
-        if (p < 0) near = Math.max(near, ratio);
-        else far = Math.min(far, ratio);
-        if (near > far) separated = true;
-      }
-      if (!separated && near <= far) return true;
-    }
-  }
-  return false;
-}
 
 export class World {
   readonly colliders: Collider[] = [];
@@ -176,6 +125,7 @@ export class World {
   grassPatchCount = 0;
   churchDetailCount = 0;
   plazaDetailCount = 0;
+  stonegatePaverCount = 0;
   fountainDetailCount = 0;
   religiousCrossCount = 0;
   churchBreakableGlassCount = 0;
@@ -3466,6 +3416,46 @@ varying vec3 vTerrainWorld;`,
     mesh.position.set(site.resolvedX, 0, site.resolvedZ);
     mesh.receiveShadow = true;
     scene.add(mesh);
+
+    // 独立低多边形石块形成真实轮廓、缝隙与雨后高光，底层贴地网格继续负责连续地形过渡。
+    const columns = 21;
+    const rows = 16;
+    const paverGeometry = new THREE.CylinderGeometry(0.5, 0.52, 0.065, 8, 1);
+    const paverMaterial = new THREE.MeshStandardMaterial({
+      color: 0xb7b1a8,
+      roughness: 0.86,
+      metalness: 0.01,
+    });
+    applySurfaceAsset(paverMaterial, 'stone', 2.4, 0.94);
+    const pavers = new THREE.InstancedMesh(paverGeometry, paverMaterial, columns * rows);
+    pavers.name = 'stonegate-plaza-pavers';
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const position = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    let paverIndex = 0;
+    for (let row = 0; row < rows; row++) {
+      for (let column = 0; column < columns; column++) {
+        const stagger = row % 2 === 0 ? 0 : 0.3;
+        const localX = -width * 0.5 + 0.34 + column * 0.64 + stagger;
+        const localZ = -depth * 0.5 + 0.34 + row * 0.69;
+        const x = site.resolvedX + localX;
+        const z = site.resolvedZ + localZ;
+        position.set(x, this.getHeight(x, z) + 0.058, z);
+        quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ((row * 17 + column * 11) % 9 - 4) * 0.018);
+        scale.set(0.53 + ((column * 7 + row) % 4) * 0.015, 1, 0.43 + ((row * 5 + column) % 3) * 0.015);
+        matrix.compose(position, quaternion, scale);
+        pavers.setMatrixAt(paverIndex, matrix);
+        paverIndex++;
+      }
+    }
+    pavers.instanceMatrix.needsUpdate = true;
+    pavers.castShadow = true;
+    pavers.receiveShadow = true;
+    pavers.computeBoundingSphere();
+    scene.add(pavers);
+    this.stonegatePaverCount += paverIndex;
+    this.environmentDetailInstanceCount += paverIndex;
   }
 
   // 旧城市场使用少量实例化的非盒体道具，补齐布袋、果蔬、木桶、藤篮和彩旗的轮廓语言。

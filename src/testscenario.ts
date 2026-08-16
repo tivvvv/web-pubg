@@ -255,6 +255,7 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
   panel.dataset.grassPatches = String(game.world.grassPatchCount);
   panel.dataset.churchDetails = String(game.world.churchDetailCount);
   panel.dataset.plazaDetails = String(game.world.plazaDetailCount);
+  panel.dataset.stonegatePavers = String(game.world.stonegatePaverCount);
   panel.dataset.fountainDetails = String(game.world.fountainDetailCount);
   panel.dataset.religiousCrosses = String(game.world.religiousCrossCount);
   panel.dataset.openWindows = String(game.world.buildings.openWindowCount);

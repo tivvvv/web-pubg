@@ -8,6 +8,7 @@ import {
   shotAssetId,
   surfaceEnvironmentState,
   SURFACE_ASSET_URLS,
+  SURFACE_PBR_PROFILES,
 } from '../src/assets';
 import { ambienceMix } from '../src/audio';
 import type { WeaponId } from '../src/types';
@@ -28,6 +29,17 @@ describe('美术与音效静态资产', () => {
       total += bytes.length;
     }
     expect(total).toBeLessThan(512 * 1024);
+  });
+
+  it('表面资产具有成套 PBR 微表面参数且磐石城砖石细节最强', () => {
+    expect(Object.keys(SURFACE_PBR_PROFILES).sort()).toEqual(Object.keys(SURFACE_ASSET_URLS).sort());
+    for (const profile of Object.values(SURFACE_PBR_PROFILES)) {
+      expect(profile.roughnessVariation).toBeGreaterThan(0);
+      expect(profile.roughnessVariation).toBeLessThanOrEqual(0.3);
+      expect(profile.reliefContrast).toBeGreaterThan(0);
+      expect(profile.reliefContrast).toBeLessThanOrEqual(0.5);
+    }
+    expect(SURFACE_PBR_PROFILES.stonegateBrick.reliefContrast).toBeGreaterThan(SURFACE_PBR_PROFILES.stone.reliefContrast);
   });
 
   it('建筑和道具材质共享天气湿润参数并限制在有效范围', () => {

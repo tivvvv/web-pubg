@@ -51,6 +51,26 @@ export const SURFACE_ASSET_URLS: Readonly<Record<SurfaceAssetId, string>> = Obje
   stonegateBrick: '/assets/textures/stonegate-brick-detail.png',
 });
 
+export interface SurfacePbrProfile {
+  roughnessVariation: number;
+  reliefContrast: number;
+}
+
+// 颜色细节、微表面粗糙度使用同一套资产定义，避免视觉层和物理材质参数各自漂移。
+export const SURFACE_PBR_PROFILES: Readonly<Record<SurfaceAssetId, SurfacePbrProfile>> = Object.freeze({
+  plaster: { roughnessVariation: 0.1, reliefContrast: 0.18 },
+  terrain: { roughnessVariation: 0.18, reliefContrast: 0.3 },
+  wood: { roughnessVariation: 0.16, reliefContrast: 0.3 },
+  metal: { roughnessVariation: 0.22, reliefContrast: 0.2 },
+  fabric: { roughnessVariation: 0.12, reliefContrast: 0.22 },
+  stone: { roughnessVariation: 0.2, reliefContrast: 0.38 },
+  concrete: { roughnessVariation: 0.16, reliefContrast: 0.28 },
+  roof: { roughnessVariation: 0.19, reliefContrast: 0.34 },
+  foliage: { roughnessVariation: 0.13, reliefContrast: 0.2 },
+  paintedMetal: { roughnessVariation: 0.24, reliefContrast: 0.2 },
+  stonegateBrick: { roughnessVariation: 0.27, reliefContrast: 0.5 },
+});
+
 export const AUDIO_ASSET_URLS: Readonly<Record<AudioAssetId, string>> = Object.freeze({
   'shot-pistol': '/assets/audio/shot-pistol.wav',
   'shot-rifle': '/assets/audio/shot-rifle.wav',
@@ -189,6 +209,7 @@ export function applySurfaceAsset(
   worldSpace = false,
 ): void {
   const texture = surfaceTexture(id);
+  const pbr = SURFACE_PBR_PROFILES[id];
   const previousCompile = material.onBeforeCompile;
   const previousCacheKey = material.customProgramCacheKey;
   const assetPosition = worldSpace ? 'vAssetWorldPosition' : 'vAssetLocalPosition';
@@ -197,6 +218,8 @@ export function applySurfaceAsset(
     shader.uniforms.uSurfaceAsset = { value: texture };
     shader.uniforms.uSurfaceScale = { value: scale };
     shader.uniforms.uSurfaceStrength = { value: strength };
+    shader.uniforms.uSurfaceRoughnessVariation = { value: pbr.roughnessVariation };
+    shader.uniforms.uSurfaceReliefContrast = { value: pbr.reliefContrast };
     shader.uniforms.uAssetWetness = surfaceEnvironmentUniforms.wetness;
     shader.uniforms.uAssetCloudiness = surfaceEnvironmentUniforms.cloudiness;
     shader.uniforms.uAssetDaylight = surfaceEnvironmentUniforms.daylight;
@@ -222,6 +245,8 @@ export function applySurfaceAsset(
 uniform sampler2D uSurfaceAsset;
 uniform float uSurfaceScale;
 uniform float uSurfaceStrength;
+uniform float uSurfaceRoughnessVariation;
+uniform float uSurfaceReliefContrast;
 uniform float uAssetWetness;
 uniform float uAssetCloudiness;
 uniform float uAssetDaylight;
@@ -240,7 +265,8 @@ varying vec3 vAssetWorldPosition;`,
   float assetY = texture2D(uSurfaceAsset, ${assetPosition}.xz * uSurfaceScale).r;
   float assetZ = texture2D(uSurfaceAsset, ${assetPosition}.xy * uSurfaceScale).r;
   float assetDetail = assetX * assetWeights.x + assetY * assetWeights.y + assetZ * assetWeights.z;
-  diffuseColor.rgb *= 1.0 + (assetDetail - 0.875) * uSurfaceStrength;
+  float assetRelief = (assetDetail - 0.875) * uSurfaceReliefContrast;
+  diffuseColor.rgb *= 1.0 + (assetDetail - 0.875) * uSurfaceStrength + assetRelief * 0.12;
   float assetWetNoise = sin(vAssetWorldPosition.x * 0.63 + vAssetWorldPosition.z * 0.37)
     * cos(vAssetWorldPosition.z * 0.51 - vAssetWorldPosition.y * 0.43) * 0.5 + 0.5;
   float assetUpward = max(normalize(vAssetLocalNormal).y, 0.0);
@@ -257,10 +283,15 @@ varying vec3 vAssetWorldPosition;`,
       .replace(
         '#include <roughnessmap_fragment>',
         `#include <roughnessmap_fragment>
+  roughnessFactor = clamp(
+    roughnessFactor + (0.875 - assetDetail) * uSurfaceRoughnessVariation,
+    0.18,
+    1.0
+  );
   roughnessFactor = mix(roughnessFactor, max(0.28, roughnessFactor * 0.58), assetWet * 0.82);`,
       );
   };
-  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|asset-climate-v4:${id}:${scale}:${strength}:${worldSpace ? 'world' : 'local'}`;
+  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|asset-pbr-v5:${id}:${scale}:${strength}:${worldSpace ? 'world' : 'local'}`;
 }
 
 export function shotAssetId(kind: WeaponId, suppressed: boolean): AudioAssetId {

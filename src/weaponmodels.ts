@@ -13,6 +13,7 @@ export interface WeaponModel {
   group: THREE.Group;
   muzzle: THREE.Object3D; // 枪口尖端(曳光/火光起点)
   mag: THREE.Object3D | null; // 弹匣部件(换弹动画隐藏/重现)
+  action?: THREE.Object3D | null; // 套筒/枪机/拉机柄等可动机械部件
 }
 
 // 枪口火光缩放(狙击更大, 手枪更小, 霰弹最大)
@@ -302,6 +303,18 @@ function addFirearmFinish(group: THREE.Group, id: WeaponId): void {
 
 function markFirearmQuality(group: THREE.Group, id: WeaponId): void {
   addFirearmFinish(group, id);
+  const profile = FIREARM_FINISH[id];
+  const action = b(
+    group,
+    id === 'pistol' ? MAT_EDGE : MAT_LT,
+    id === 'pistol' ? 0.036 : 0.012,
+    id === 'pistol' ? 0.012 : 0.016,
+    id === 'shotgun' ? 0.082 : id === 'pistol' ? 0.075 : 0.055,
+    id === 'pistol' ? 0 : profile.halfWidth + 0.006,
+    profile.y + (id === 'pistol' ? 0.055 : 0.012),
+    profile.z - profile.length * 0.18,
+  );
+  action.name = 'weapon-action';
   group.name = `weapon-${id}`;
   group.userData.weaponId = id;
   group.userData.assetQuality = 'firearm-v5';
@@ -754,7 +767,16 @@ export function buildWeaponModel(id: WeaponModelId): WeaponModel {
   if (FIREARM_MODEL_IDS.has(id)) group.scale.setScalar(FIREARM_MODEL_SCALE);
   const muzzle = group.getObjectByName('muzzle') as THREE.Object3D;
   const mag = (group.getObjectByName('mag') as THREE.Object3D | undefined) ?? null;
-  return { group, muzzle, mag };
+  const action = (group.getObjectByName('weapon-action') as THREE.Object3D | undefined) ?? null;
+  if (mag) {
+    mag.userData.restY = mag.position.y;
+    mag.userData.restRotationX = mag.rotation.x;
+  }
+  if (action) {
+    action.userData.restY = action.position.y;
+    action.userData.restZ = action.position.z;
+  }
+  return { group, muzzle, mag, action };
 }
 
 // ── 配件可视化: 在克隆武器模型上挂瞄具/枪口/扩容弹匣(共享几何/材质) ──

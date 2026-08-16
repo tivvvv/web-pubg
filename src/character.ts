@@ -13,6 +13,7 @@ import {
 import type { World } from './world';
 import { WATER_Y } from './world';
 import { clamp, lerp } from './utils';
+import { weaponMechanismPose } from './combatpresentation';
 
 export type Stance = 'stand' | 'crouch' | 'prone';
 export type CharacterAction = 'interact' | 'pickup' | 'equip' | 'heal' | 'drink';
@@ -1202,8 +1203,21 @@ export class Character {
     p.viewHands.position.set(0, 0, 0);
     p.viewHands.rotation.set(0, 0, 0);
     p.viewHands.scale.setScalar(this.firstPerson && viewPose ? lerp(1.08, 1, this.firstPersonAim) : 1);
-    if (p.held?.mag) {
-      p.held.mag.visible = this.reload01 < 0.4 || this.reload01 > 0.68;
+    if (p.held && gun) {
+      const mechanism = weaponMechanismPose(gun.def.id, this.gunKick, this.reload01);
+      if (p.held.action) {
+        const restY = Number(p.held.action.userData.restY ?? p.held.action.position.y);
+        const restZ = Number(p.held.action.userData.restZ ?? p.held.action.position.z);
+        p.held.action.position.y = restY + mechanism.actionLift;
+        p.held.action.position.z = restZ - mechanism.actionTravel;
+      }
+      if (p.held.mag) {
+        const restY = Number(p.held.mag.userData.restY ?? p.held.mag.position.y);
+        const restRotationX = Number(p.held.mag.userData.restRotationX ?? p.held.mag.rotation.x);
+        p.held.mag.position.y = restY - mechanism.magazineDrop;
+        p.held.mag.rotation.x = restRotationX + mechanism.magazineTilt;
+        p.held.mag.visible = mechanism.magazineVisible;
+      }
     }
     // 左臂大致迎向护木(长枪更前伸), 持刀/徒手放松
     if (wantId === 'rifle' || wantId === 'akm' || wantId === 'dmr' || wantId === 'sniper' || wantId === 'shotgun') {

@@ -4,6 +4,7 @@ import {
   shotAcousticMix,
   WEAPON_PRESENTATION,
   weaponPresentation,
+  weaponMechanismPose,
 } from '../src/combatpresentation';
 import type { WeaponId } from '../src/types';
 
@@ -63,5 +64,31 @@ describe('枪战表现配置', () => {
   it('随机音高始终被限制在自然变化范围内', () => {
     expect(shotAcousticMix('smg', 0, false, 'open', -5).playbackRate).toBeGreaterThanOrEqual(0.88);
     expect(shotAcousticMix('smg', 0, false, 'open', 5).playbackRate).toBeLessThanOrEqual(1.12);
+  });
+
+  it('开火和换弹驱动连续枪机及弹匣动作', () => {
+    const idle = weaponMechanismPose('rifle', 0, 0);
+    const fired = weaponMechanismPose('rifle', 0.12, 0);
+    const released = weaponMechanismPose('rifle', 0, 0.4);
+    const swapped = weaponMechanismPose('rifle', 0, 0.5);
+    const inserted = weaponMechanismPose('rifle', 0, 0.8);
+    const charged = weaponMechanismPose('rifle', 0, 0.84);
+    expect(idle).toEqual({
+      actionTravel: 0, actionLift: 0, magazineDrop: 0, magazineTilt: 0, magazineVisible: true,
+    });
+    expect(fired.actionTravel).toBeGreaterThan(0.04);
+    expect(released.magazineDrop).toBeGreaterThan(0.15);
+    expect(released.magazineTilt).toBeGreaterThan(0);
+    expect(swapped.magazineVisible).toBe(false);
+    expect(inserted.magazineVisible).toBe(true);
+    expect(inserted.magazineDrop).toBeLessThan(released.magazineDrop);
+    expect(charged.actionTravel).toBeGreaterThan(0);
+  });
+
+  it('狙击枪拉栓具有独立抬升而霰弹枪行程更长', () => {
+    const sniper = weaponMechanismPose('sniper', 0.12, 0);
+    const shotgun = weaponMechanismPose('shotgun', 0.12, 0);
+    expect(sniper.actionLift).toBeGreaterThan(0);
+    expect(shotgun.actionTravel).toBeGreaterThan(sniper.actionTravel);
   });
 });

@@ -4,38 +4,57 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import type { AabbCollider, DestructibleLike } from './types';
-import { riverZAt, roadIntersectsRect, type World } from './world';
+import type { World } from './world';
+import { riverZAt, roadIntersectsRect } from './worldlayout';
 import { random } from './random';
 import { applySurfaceAsset, type SurfaceAssetId } from './assets';
-import { AssetUsageRegistry, buildingAssetPack, SURFACE_MATERIAL_PRESETS } from './assetcatalog';
-import { regionAt, type RegionId } from './regions';
+import { AssetUsageRegistry, buildingAssetPack } from './assetcatalog';
+import { regionAt } from './regions';
+import {
+  apartmentFloorLayout,
+  BUILDING_ARCHETYPES,
+  buildingStoreys,
+  entranceStepProfile,
+  facadeSegments,
+  GABLE_INFILL_LAYERS,
+  GABLE_ROOF_COURSES,
+  GABLE_ROOF_RISE,
+  gableRoofPitch,
+  mainEntranceHalfWidth as designMainEntranceHalfWidth,
+  overlapsFacadeOpening,
+  regionalBuildingStyle,
+  REGIONAL_BUILDING_STYLES,
+  stairHandrailTransform as designStairHandrailTransform,
+  stairRailX,
+  type ArchId,
+  type FacadeOpening,
+  type HousePlot,
+  type RegionalBuildingStyle,
+} from './buildingdesign';
+import { createBuildingSurfaceMaterial } from './buildingmaterials';
+
+export {
+  apartmentFloorLayout,
+  buildingStoreys,
+  entranceStepProfile,
+  facadeSegments,
+  GABLE_INFILL_LAYERS,
+  GABLE_ROOF_COURSES,
+  GABLE_ROOF_RISE,
+  gableRoofPitch,
+  isMultiStoreyArch,
+  regionalBuildingStyle,
+  REGIONAL_BUILDING_STYLES,
+  stairRailX,
+} from './buildingdesign';
+export type { ApartmentFloorLayout, ArchId, EntranceStepProfile, HousePlot, RegionalBuildingStyle, StairHandrailTransform } from './buildingdesign';
 
 export interface LootSpot {
   x: number; y: number; z: number;
   premium: boolean; // 高级点位(二楼顶/体育馆/三楼), 偏高级枪
 }
 
-export type ArchId = 'cottage1' | 'cottage2' | 'terrace' | 'apartment' | 'barn' | 'shop' | 'gym';
-
-export interface HousePlot {
-  minX: number; minZ: number; maxX: number; maxZ: number; // 含 2m 外围安全边
-  flatH: number;
-  arch: ArchId;
-  w: number; // 内宽(x)
-  d: number; // 内深(z)
-  storeys?: number; // 高层建筑覆盖默认层数
-}
-
-// 原型表: 尺寸范围与村庄放置权重(gym 特殊定点)
-const ARCHS: Record<ArchId, { w: [number, number]; d: [number, number]; weight: number }> = {
-  cottage1: { w: [8.2, 10.8], d: [7.4, 9.6], weight: 26 },
-  cottage2: { w: [8.8, 11.6], d: [7.8, 10.5], weight: 22 },
-  terrace: { w: [10.0, 12.2], d: [8.8, 10.8], weight: 12 },
-  apartment: { w: [11.0, 14.0], d: [9.8, 12.0], weight: 8 },
-  barn: { w: [10.0, 12.5], d: [8.8, 11.0], weight: 8 },
-  shop: { w: [7.2, 9.0], d: [6.0, 7.5], weight: 12 },
-  gym: { w: [40, 43], d: [25, 28], weight: 0 },
-};
+const ARCHS = BUILDING_ARCHETYPES;
 // 调色板: 墙面(白/米/浅红砖/淡蓝/灰绿/原色系), 屋顶(红瓦/灰/锈), 统一装饰色
 const WALL_COLORS = [0xe8e4da, 0xd8cbb0, 0xc08a6e, 0xa8bcc8, 0x9aa88e, 0xc9b18a, 0xd3b9a0, 0xc7c3b5];
 const ROOF_COLORS = [0xa05545, 0x8a8f96, 0x8a5f3c, 0x9a6a4f];
@@ -53,62 +72,6 @@ const CRATE_C = 0x9a7f56;
 const GUTTER_C = 0x545c5b;
 const INTERIOR_WOOD_C = 0x6d5138;
 const FABRIC_C = 0x7d836c;
-export const GABLE_ROOF_RISE = 1.9;
-
-// 坡屋面瓦层的纵深位置和高度。五组成对分布，保持屋面左右对称。
-export const GABLE_ROOF_COURSES = Object.freeze([
-  { z: 0.08, y: 0.34 }, { z: 0.92, y: 0.34 },
-  { z: 0.18, y: 0.72 }, { z: 0.82, y: 0.72 },
-  { z: 0.28, y: 1.1 }, { z: 0.72, y: 1.1 },
-  { z: 0.38, y: 1.46 }, { z: 0.62, y: 1.46 },
-  { z: 0.46, y: 1.74 }, { z: 0.54, y: 1.74 },
-]);
-export const GABLE_INFILL_LAYERS = 24;
-
-export function gableRoofPitch(depth: number): number {
-  return Math.atan2(GABLE_ROOF_RISE, Math.max(1, depth * 0.5 + 0.34));
-}
-
-export interface RegionalBuildingStyle {
-  walls: readonly number[];
-  roofs: readonly number[];
-  accent: number;
-  secondary: number;
-  chimneyChance: number;
-  acChance: number;
-}
-
-export const REGIONAL_BUILDING_STYLES: Readonly<Record<RegionId, RegionalBuildingStyle>> = {
-  stonegate: {
-    walls: [0xd7d2c8, 0xb9c3c6, 0xc6aa92], roofs: [0x787d82, 0x8b5b47],
-    accent: 0x756e64, secondary: 0xb06b4f, chimneyChance: 0.34, acChance: 0.62,
-  },
-  ironring: {
-    walls: [0xb7b9b2, 0x9fa7a5, 0xc3b9aa], roofs: [0x676d70, 0x80564a],
-    accent: 0x9c493d, secondary: 0x515c62, chimneyChance: 0.12, acChance: 0.72,
-  },
-  sunfield: {
-    walls: [0xd4c096, 0xc8a970, 0xbca27a], roofs: [0x995542, 0x795e44],
-    accent: 0x765239, secondary: 0xc4a24f, chimneyChance: 0.58, acChance: 0.08,
-  },
-  mistwood: {
-    walls: [0x9ba58f, 0x8f9a87, 0xb0aa91], roofs: [0x4f5a50, 0x665644],
-    accent: 0x4f493e, secondary: 0x6f7c59, chimneyChance: 0.7, acChance: 0.04,
-  },
-  eagleridge: {
-    walls: [0xbdbdb5, 0xa9aca8, 0xc9c3b4], roofs: [0x686d70, 0x7e6556],
-    accent: 0x666b6b, secondary: 0xa84f42, chimneyChance: 0.22, acChance: 0.42,
-  },
-  tideharbor: {
-    walls: [0xa9c0c2, 0xb8c8c1, 0xd0c4a5], roofs: [0x55747a, 0x82594a],
-    accent: 0x3f6f79, secondary: 0xd0a957, chimneyChance: 0.28, acChance: 0.18,
-  },
-};
-
-export function regionalBuildingStyle(region: RegionId): RegionalBuildingStyle {
-  return REGIONAL_BUILDING_STYLES[region];
-}
-
 const WT = 0.26;            // 外墙厚
 const WT2 = 0.14;           // 上层墙厚
 const SLAB_T = 0.24;        // 楼板厚
@@ -127,46 +90,6 @@ const STOREY_JOINT_OVERLAP = 0.14; // 上下层墙跨过楼板边带互相搭接
 const BOUND = 265;
 const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
 const DOOR_TWEEN = 0.3;                   // 开关门动画时长(秒)
-
-// 在单个实例化材质中增加墙面颗粒、底部积尘和朝上面的轻微提亮，不增加建筑绘制调用。
-function enhanceStructureMaterial(mat: THREE.MeshStandardMaterial): void {
-  mat.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        '#include <common>\nvarying vec3 vStructureLocal;\nvarying vec3 vStructureWorld;\nvarying vec3 vStructureNormal;',
-      )
-      .replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\n  vStructureLocal = position;\n  vStructureNormal = objectNormal;',
-      )
-      .replace(
-        '#include <worldpos_vertex>',
-        '#include <worldpos_vertex>\n  vStructureWorld = worldPosition.xyz;',
-      );
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        '#include <common>\nvarying vec3 vStructureLocal;\nvarying vec3 vStructureWorld;\nvarying vec3 vStructureNormal;',
-      )
-      .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
-  float structureGrain = sin(vStructureWorld.x * 2.17 + vStructureWorld.y * 0.73)
-    * cos(vStructureWorld.z * 1.93 - vStructureWorld.y * 0.51) * 0.5 + 0.5;
-  float baseDust = 1.0 - smoothstep(-0.5, 0.34, vStructureLocal.y);
-  float verticalFace = 1.0 - abs(normalize(vStructureNormal).y);
-  float fineStreak = smoothstep(0.68, 0.98,
-    sin(vStructureWorld.x * 0.71 + vStructureWorld.z * 0.53) * 0.5 + 0.5);
-  float structureTone = 0.975 + structureGrain * 0.04;
-  structureTone -= baseDust * verticalFace * 0.045;
-  structureTone -= fineStreak * verticalFace * 0.018;
-  structureTone += max(normalize(vStructureNormal).y, 0.0) * 0.025;
-  diffuseColor.rgb *= structureTone;`,
-      );
-  };
-  mat.customProgramCacheKey = () => 'building-surface-detail-v1';
-}
 
 // 门从操作者所在一侧向远离操作者的方向打开，避免门扇迎面扫过角色。
 export function doorOpenAngleForActor(
@@ -187,59 +110,14 @@ export function doorColliderDisabled(alive: boolean, open: boolean, currentAngle
   return !alive || open || Math.abs(currentAngle) > 0.12;
 }
 
-export function isMultiStoreyArch(arch: ArchId): boolean {
-  return arch === 'cottage2' || arch === 'terrace' || arch === 'apartment';
-}
-
-export function buildingStoreys(plot: Pick<HousePlot, 'arch' | 'storeys'>): number {
-  if (plot.arch === 'apartment') return Math.max(3, Math.floor(plot.storeys ?? 3));
-  return plot.arch === 'cottage2' || plot.arch === 'terrace' ? 2 : 1;
-}
-
 // 正立面主入口半宽。墙脚、护墙板和装饰压顶必须绕开这个范围，
 // 否则纯装饰盒会横穿门洞，形成齐腰高的入口挡板。
 export function mainEntranceHalfWidth(arch: ArchId): number {
-  if (arch === 'apartment' || arch === 'gym') return DOOR_W;
-  if (arch === 'barn') return 1.3;
-  if (arch === 'shop') return 1.2;
-  return DOOR_W / 2;
+  return designMainEntranceHalfWidth(arch, DOOR_W);
 }
 
 type FacadeSide = 'front' | 'back' | 'left' | 'right';
-type FacadeOpening = readonly [number, number];
 type ExteriorDoorOpenings = Record<FacadeSide, FacadeOpening[]>;
-
-// 将一段装饰线脚按真实门洞切开。统一处理墙脚、墙裙和立面贴片，避免以后新增
-// 装饰时再次用一整块视觉盒横穿门洞。
-export function facadeSegments(
-  start: number,
-  end: number,
-  openings: readonly FacadeOpening[],
-  padding = 0.12,
-): Array<[number, number]> {
-  const clipped = openings
-    .map(([a0, a1]) => [Math.max(start, Math.min(a0, a1) - padding), Math.min(end, Math.max(a0, a1) + padding)] as const)
-    .filter(([a0, a1]) => a1 > a0)
-    .sort((a, b) => a[0] - b[0]);
-  const merged: Array<[number, number]> = [];
-  for (const [a0, a1] of clipped) {
-    const previous = merged[merged.length - 1];
-    if (previous && a0 <= previous[1]) previous[1] = Math.max(previous[1], a1);
-    else merged.push([a0, a1]);
-  }
-  const segments: Array<[number, number]> = [];
-  let cursor = start;
-  for (const [a0, a1] of merged) {
-    if (a0 > cursor + 0.001) segments.push([cursor, a0]);
-    cursor = Math.max(cursor, a1);
-  }
-  if (cursor < end - 0.001) segments.push([cursor, end]);
-  return segments;
-}
-
-function overlapsFacadeOpening(a0: number, a1: number, openings: readonly FacadeOpening[], padding = 0.1): boolean {
-  return openings.some(([door0, door1]) => a1 > door0 - padding && a0 < door1 + padding);
-}
 
 export interface DoorLeafSegment {
   hingeX: number;
@@ -309,26 +187,6 @@ export function resolveCircleAgainstDoorLeaf(
   return true;
 }
 
-export function stairRailX(x0: number, x1: number, side: 'min' | 'max'): number {
-  return side === 'max' ? x1 : x0;
-}
-
-export interface StairHandrailTransform {
-  centerY: number;
-  centerZ: number;
-  length: number;
-  pitch: number;
-}
-
-export type ApartmentFloorLayout = 'lobby' | 'residence' | 'office' | 'lounge' | 'utility';
-
-/** 高楼逐层功能分区。顶层固定为设备层，中间楼层循环但相邻层绝不相同。 */
-export function apartmentFloorLayout(level: number, storeys: number): ApartmentFloorLayout {
-  if (level <= 0) return 'lobby';
-  if (level >= storeys - 1) return 'utility';
-  return (['residence', 'office', 'lounge'] as const)[(level - 1) % 3] as ApartmentFloorLayout;
-}
-
 /** 计算贯穿整跑楼梯的斜扶手变换, 正反方向都保持与踏步坡度一致. */
 export function stairHandrailTransform(
   zFrom: number,
@@ -336,40 +194,8 @@ export function stairHandrailTransform(
   floorY: number,
   rise: number,
   steps = STAIR_STEPS,
-): StairHandrailTransform {
-  const run = zTo - zFrom;
-  // 立柱落在各踏步中心，扶手也只能覆盖首末立柱之间的有效跨度。
-  // 旧实现使用整个梯井边界，导致扶手两端越过立柱并伸进楼层落脚区，看起来像穿楼黑梁。
-  const postSpanRatio = Math.max(0, steps - 1) / Math.max(1, steps);
-  const railRun = run * postSpanRatio;
-  const railRise = rise * Math.max(0, steps - 1);
-  const fullLength = Math.hypot(railRun, railRise);
-  const endClearance = Math.min(STAIR_RAIL_END_CLEARANCE, fullLength * 0.12);
-  return {
-    centerY: floorY + rise * ((steps + 1) / 2) + 0.83,
-    centerZ: (zFrom + zTo) / 2,
-    length: Math.max(0.2, fullLength - endClearance * 2),
-    pitch: -Math.sign(run || 1) * Math.atan2(railRise, Math.abs(railRun)),
-  };
-}
-
-export interface EntranceStepProfile {
-  count: number;
-  depth: number;
-  tops: number[];
-}
-
-// 门廊台阶按地基高差动态细分。每级抬升不超过 0.3m，低处地形也无需跳跃。
-export function entranceStepProfile(floorY: number, groundY: number, baseDepth = 0.78): EntranceStepProfile {
-  const climb = Math.max(0, floorY - groundY);
-  const count = Math.max(3, Math.min(8, Math.ceil(climb / 0.28)));
-  const depth = Math.max(baseDepth, count * 0.3);
-  const lowTop = Math.min(floorY - 0.16, groundY + 0.08);
-  const tops = Array.from({ length: count }, (_, step) => {
-    const progress = (count - step) / count;
-    return lowTop + (floorY - 0.035 - lowTop) * progress;
-  });
-  return { count, depth, tops };
+): ReturnType<typeof designStairHandrailTransform> {
+  return designStairHandrailTransform(zFrom, zTo, floorY, rise, steps, STAIR_RAIL_END_CLEARANCE);
 }
 
 function mulberry32(seed: number) {
@@ -775,16 +601,8 @@ export class Buildings {
             item.interiorCeiling === interiorCeiling
           ));
           if (items.length === 0) continue;
-          const spec = SURFACE_MATERIAL_PRESETS[surface];
-          const mat = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            roughness: spec.roughness,
-            metalness: spec.metalness,
-          });
-          enhanceStructureMaterial(mat);
-          // 建筑由大量缩放后的单位盒组成。使用世界坐标采样，避免每块大墙都把同一小块
-          // 纹理拉满整面立面，近看可以保持统一且稳定的砖石/灰泥颗粒密度。
-          applySurfaceAsset(mat, surface, spec.scale * 0.52, spec.strength, true);
+          // 建筑材质统一由资源边界创建，保证实例网格的 PBR 参数与纹理投射规则一致。
+          const mat = createBuildingSurfaceMaterial(surface);
           const mesh = new THREE.InstancedMesh(roundedRail ? railGeo : boxGeo, mat, items.length);
           if (roundedRail) mesh.name = 'building-stair-handrails';
           if (interiorCeiling) mesh.name = 'building-interior-ceilings';

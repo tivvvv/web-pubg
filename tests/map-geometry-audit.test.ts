@@ -928,6 +928,7 @@ describe('地图与建筑终极几何巡检', () => {
     expect(regionAt(church.x, church.z)?.id).toBe('stonegate');
     expect(world.churchDetailCount).toBeGreaterThanOrEqual(60);
     expect(world.plazaDetailCount).toBeGreaterThanOrEqual(20);
+    expect(world.stonegatePaverCount).toBe(336);
     expect(world.fountainDetailCount).toBeGreaterThanOrEqual(15);
     expect(world.religiousCrossCount).toBe(1);
 

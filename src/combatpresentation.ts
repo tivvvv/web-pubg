@@ -62,6 +62,67 @@ export interface ResolvedWeaponPresentation extends WeaponPresentation {
   readonly suppressed: boolean;
 }
 
+export interface WeaponMechanismPose {
+  readonly actionTravel: number;
+  readonly actionLift: number;
+  readonly magazineDrop: number;
+  readonly magazineTilt: number;
+  readonly magazineVisible: boolean;
+}
+
+const ACTION_TRAVEL: Readonly<Record<WeaponId, number>> = Object.freeze({
+  pistol: 0.082,
+  rifle: 0.055,
+  akm: 0.062,
+  lmg: 0.045,
+  smg: 0.07,
+  dmr: 0.058,
+  sniper: 0.092,
+  shotgun: 0.12,
+});
+
+function smoothstep01(value: number): number {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+/** 把开火循环、退匣、取新弹匣和拉机柄组合成一条连续机械动作曲线。 */
+export function weaponMechanismPose(
+  weapon: WeaponId,
+  gunKick: number,
+  reloadProgress: number,
+): WeaponMechanismPose {
+  const reload = clamp(reloadProgress, 0, 1);
+  const recoilCycle = clamp(gunKick / 0.12, 0, 1);
+  const chargingCycle = reload > 0.72
+    ? Math.sin(smoothstep01((reload - 0.72) / 0.26) * Math.PI)
+    : 0;
+  const actionCycle = Math.max(recoilCycle, chargingCycle);
+  let magazineDrop = 0;
+  let magazineTilt = 0;
+  let magazineVisible = true;
+  if (reload > 0 && reload < 0.44) {
+    const release = smoothstep01((reload - 0.12) / 0.3);
+    magazineDrop = release * 0.2;
+    magazineTilt = release * 0.22;
+  } else if (reload >= 0.44 && reload < 0.56) {
+    magazineDrop = 0.2;
+    magazineTilt = 0.22;
+    magazineVisible = false;
+  } else if (reload >= 0.56 && reload < 0.84) {
+    const insert = smoothstep01((reload - 0.56) / 0.28);
+    magazineDrop = (1 - insert) * 0.2;
+    magazineTilt = (1 - insert) * -0.16;
+  }
+  return {
+    actionTravel: ACTION_TRAVEL[weapon] * actionCycle,
+    actionLift: weapon === 'sniper' ? actionCycle * 0.018 : 0,
+    magazineDrop,
+    magazineTilt,
+    magazineVisible,
+  };
+}
+
 export function weaponPresentation(weapon: WeaponId, suppressed: boolean): ResolvedWeaponPresentation {
   const base = WEAPON_PRESENTATION[weapon];
   if (!suppressed) return { ...base, suppressed: false };
