@@ -91,6 +91,10 @@ const BOUND = 265;
 const DOOR_SWING = (100 * Math.PI) / 180; // 开门转角 ~100°
 const DOOR_TWEEN = 0.3;                   // 开关门动画时长(秒)
 
+export function interiorWallPanelInset(wallThickness: number): number {
+  return wallThickness / 2 + 0.045;
+}
+
 // 门从操作者所在一侧向远离操作者的方向打开，避免门扇迎面扫过角色。
 export function doorOpenAngleForActor(
   axis: 'x' | 'z',
@@ -783,12 +787,18 @@ export class Buildings {
   ): void {
     const mid = (a0 + a1) / 2;
     const sampleGround = (sampleDepth: number): number => world.getHeight(
-      axis === 'x' ? mid : fixed + outward * sampleDepth * 0.78,
-      axis === 'x' ? fixed + outward * sampleDepth * 0.78 : mid,
+      axis === 'x' ? mid : fixed + outward * sampleDepth,
+      axis === 'x' ? fixed + outward * sampleDepth : mid,
     );
     let profile = entranceStepProfile(floorY, sampleGround(depth), depth);
-    // 延长后的最外一级可能处在更低的坡面，再采样一次确保真实首级仍可直接迈上。
-    profile = entranceStepProfile(floorY, sampleGround(profile.depth), profile.depth);
+    // 延长后的最外一级可能处在更低的坡面。持续采样真实外沿直到深度稳定，
+    // 避免一次延长后又跨到更低坡面，留下仍然迈不上的首级台阶。
+    for (let pass = 0; pass < 8; pass++) {
+      const previousDepth = profile.depth;
+      const next = entranceStepProfile(floorY, sampleGround(profile.depth), profile.depth);
+      profile = next;
+      if (next.depth <= previousDepth + 0.001) break;
+    }
     const treadDepth = profile.depth / profile.count;
     for (let step = 0; step < profile.count; step++) {
       const near = fixed + outward * treadDepth * step;
@@ -1926,6 +1936,7 @@ export class Buildings {
     const upper = f1 + WALL_H + SLAB_T;
     const wood = { collider: false, detail: true, surface: 'wood' } as const;
     const fabric = { collider: false, detail: true, surface: 'fabric' } as const;
+    const exteriorOpenings = this.exteriorDoorOpenings(plot);
     let count = 0;
 
     for (const floorY of [f1, upper]) {
@@ -1941,24 +1952,21 @@ export class Buildings {
       box('wall', cx - 0.19, floorY + 2.27, cz - 0.19, cx + 0.19, floorY + 2.4, cz + 0.19, 0xc99c5d, { ...wood, surface: 'paintedMetal' }); count++;
       box('wall', ix1 - 0.11, floorY + 1.08, cz - 0.48, ix1 - 0.04, floorY + 1.86, cz + 0.48, 0x6b513e, wood); count++;
       box('wall', ix1 - 0.13, floorY + 1.18, cz - 0.38, ix1 - 0.02, floorY + 1.76, cz + 0.38, floorY === f1 ? 0x81908a : 0xb08a67, fabric); count++;
-      // 护墙板在正门通道处断开。旧版把整面板放在门后 0.42m，虽然不参与
-      // 物理碰撞，从室外看却像封住门洞的灰色挡板，人物也会直接穿过它。
-      const entranceCenter = (ix0 + ix1) * 0.5;
-      const entranceGap = mainEntranceHalfWidth(plot.arch) + 0.16;
-      const frontZ = iz0 + 0.42;
-      box('wall', ix0 + 0.28, floorY + 0.22, frontZ - 0.035, entranceCenter - entranceGap,
-        floorY + 0.82, frontZ + 0.035, 0x8b755d, { ...wood, surface: 'wood' }); count++;
-      box('wall', entranceCenter + entranceGap, floorY + 0.22, frontZ - 0.035, ix1 - 0.28,
-        floorY + 0.82, frontZ + 0.035, 0x8b755d, { ...wood, surface: 'wood' }); count++;
-      box('wall', ix0 + 0.24, floorY + 0.8, frontZ - 0.05, entranceCenter - entranceGap,
-        floorY + 0.9, frontZ + 0.05, 0x594536, wood); count++;
-      box('wall', entranceCenter + entranceGap, floorY + 0.8, frontZ - 0.05, ix1 - 0.24,
-        floorY + 0.9, frontZ + 0.05, 0x594536, wood); count++;
-      const backZ = iz1 - 0.42;
-      box('wall', ix0 + 0.28, floorY + 0.22, backZ - 0.035, ix1 - 0.28, floorY + 0.82,
-        backZ + 0.035, 0x8b755d, { ...wood, surface: 'wood' }); count++;
-      box('wall', ix0 + 0.24, floorY + 0.8, backZ - 0.05, ix1 - 0.24, floorY + 0.9,
-        backZ + 0.05, 0x594536, wood); count++;
+      // 护墙板必须贴在真实墙面上，并在首层所有门洞处断开。旧版将它放在离墙
+      // 0.42m 的位置且关闭碰撞，看起来像悬空挡板，角色却会直接从中穿过。
+      const wallThickness = floorY === f1 ? WT : WT2;
+      const panelInset = interiorWallPanelInset(wallThickness);
+      const floorOpenings = floorY === f1 ? exteriorOpenings : { front: [], back: [] };
+      const addWallPanels = (z: number, openings: ReadonlyArray<readonly [number, number]>): void => {
+        for (const [x0, x1] of facadeSegments(ix0 + 0.28, ix1 - 0.28, openings, 0.16)) {
+          box('wall', x0, floorY + 0.22, z - 0.035, x1, floorY + 0.82, z + 0.035,
+            0x8b755d, { ...wood, surface: 'wood' }); count++;
+          box('wall', x0 - 0.04, floorY + 0.8, z - 0.05, x1 + 0.04, floorY + 0.9, z + 0.05,
+            0x594536, wood); count++;
+        }
+      };
+      addWallPanels(iz0 + panelInset, floorOpenings.front);
+      addWallPanels(iz1 - panelInset, floorOpenings.back);
       for (const x of [ix0 + 1.1, ix1 - 1.1]) {
         box('roof', x - 0.08, floorY + 2.68, iz0 + 0.24, x + 0.08, floorY + 2.82,
           iz1 - 0.24, 0x5c4736, wood); count++;

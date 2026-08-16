@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   apartmentFloorLayout, doorColliderDisabled, doorLeafSegment, doorOpenAngleForActor, GABLE_INFILL_LAYERS, GABLE_ROOF_COURSES,
   GABLE_ROOF_RISE,
-  entranceStepProfile, facadeSegments, gableRoofPitch, mainEntranceHalfWidth, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
+  entranceStepProfile, facadeSegments, gableRoofPitch, interiorWallPanelInset, mainEntranceHalfWidth, REGIONAL_BUILDING_STYLES, regionalBuildingStyle, resolveCircleAgainstDoorLeaf,
   stairHandrailTransform, stairRailX,
 } from '../src/buildings';
 import type { AabbCollider } from '../src/types';
@@ -15,7 +15,7 @@ describe('建筑门交互方向', () => {
       const walkPath = [groundY, ...profile.tops.slice().reverse(), floorY];
       expect(profile.count).toBeGreaterThanOrEqual(3);
       expect(profile.count).toBeLessThanOrEqual(8);
-      expect(profile.depth).toBeGreaterThanOrEqual(profile.count * 0.3);
+      expect(profile.depth).toBeGreaterThanOrEqual(profile.count * 0.42);
       for (let i = 1; i < walkPath.length; i++) {
         expect((walkPath[i] as number) - (walkPath[i - 1] as number)).toBeLessThanOrEqual(0.36);
       }
@@ -35,6 +35,12 @@ describe('建筑门交互方向', () => {
     expect(facadeSegments(0, 12, [[4, 6], [5, 8]], 0.1)).toEqual([
       [0, 3.9], [8.1, 12],
     ]);
+  });
+
+  it('室内护墙板贴紧墙面而不是悬空形成可穿透挡板', () => {
+    expect(interiorWallPanelInset(0.26)).toBeCloseTo(0.175, 6);
+    expect(interiorWallPanelInset(0.14)).toBeCloseTo(0.115, 6);
+    expect(interiorWallPanelInset(0.26)).toBeLessThan(0.2);
   });
 
   it('高楼楼层包含大厅住宅办公休息和设备五种格局', () => {

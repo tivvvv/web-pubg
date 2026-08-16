@@ -483,6 +483,23 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.buildingBounds = [plot.minX + 2, plot.minZ + 2, plot.maxX - 2, plot.maxZ - 2]
         .map((value) => value.toFixed(2)).join(',');
     }
+    const doors = game.world.buildings.destructibles.filter((item) => item.kind === 'door' && item.doorAxis);
+    panel.dataset.buildingDoorCount = String(doors.length);
+    if (params.get('view') === 'door') {
+      const requestedDoor = Math.trunc(Number(params.get('doorIndex')) || 0);
+      const doorIndex = Math.max(0, Math.min(doors.length - 1, requestedDoor));
+      const door = doors[doorIndex];
+      if (door?.doorAxis) {
+        panel.dataset.inspectedDoor = [
+          doorIndex,
+          door.cx.toFixed(3),
+          door.collider.minY.toFixed(3),
+          door.cz.toFixed(3),
+          door.doorAxis,
+          params.get('side') === 'positive' ? 1 : -1,
+        ].join(',');
+      }
+    }
   }
   const rawReleaseCase = Number(params.get('case'));
   const releaseCase = Number.isFinite(rawReleaseCase)
@@ -1091,6 +1108,34 @@ function laneDirection(lane: readonly [number, number, number, number]): { x: nu
 
 function setupStairs(game: Game): void {
   const params = new URLSearchParams(window.location.search);
+  if (params.get('view') === 'door') {
+    const doors = game.world.buildings.destructibles.filter((item) => item.kind === 'door' && item.doorAxis);
+    const requestedDoor = Math.trunc(Number(params.get('doorIndex')) || 0);
+    const door = doors[Math.max(0, Math.min(doors.length - 1, requestedDoor))];
+    if (!door?.doorAxis) {
+      setGroundPlayer(game, -60, -20);
+      return;
+    }
+    const side = params.get('side') === 'positive' ? 1 : -1;
+    const normalX = door.doorAxis === 'z' ? side : 0;
+    const normalZ = door.doorAxis === 'x' ? side : 0;
+    const x = door.cx + normalX * 1.05;
+    const z = door.cz + normalZ * 1.05;
+    setGroundPlayer(game, x, z);
+    const player = game.playerCtl;
+    if (player) {
+      const floorY = game.world.groundHeight(x, z, door.collider.minY + 0.1);
+      player.char.pos.y = floorY;
+      player.char.groundH = floorY;
+      player.yaw = Math.atan2(door.cx - x, door.cz - z);
+      player.pitch = 0.02;
+      game.openDoor(door, player.char);
+      game.input.keys.add('KeyW');
+      const traverseDuration = parseBoundedTestInteger(window.location.search, 'duration', 950, 600, 2500);
+      window.setTimeout(() => game.input.keys.delete('KeyW'), traverseDuration);
+    }
+    return;
+  }
   if (params.get('view') === 'window') {
     const upperFloor = params.get('level') === '2';
     const opening = game.world.buildings.openWindowOpenings.find((candidate) => {
@@ -1321,26 +1366,34 @@ function setupStairs(game: Game): void {
     const ix1 = plot.maxX - 2;
     const iz0 = plot.minZ + 2;
     const iz1 = plot.maxZ - 2;
-    const secondFlight = arch === 'apartment' && params.get('flight') === '2';
-    const x = secondFlight ? ix1 - 0.14 - 0.9 : ix0 + 0.14 + 0.9;
-    const z = secondFlight ? iz0 + 1.6 - 0.32 : iz1 - 1.6 + 0.32;
+    const requestedFlight = Math.trunc(Number(params.get('flight')) || 1);
+    const flight = arch === 'apartment'
+      ? Math.max(1, Math.min(buildingStoreys(plot), requestedFlight))
+      : 1;
+    const westFlight = arch !== 'apartment' || (flight - 1) % 2 === 0;
+    const x = westFlight ? ix0 + 0.14 + 0.9 : ix1 - 0.14 - 0.9;
+    const z = westFlight ? iz1 - 1.6 + 0.32 : iz0 + 1.6 - 0.32;
     setGroundPlayer(game, x, z);
     const player = game.playerCtl;
     if (player) {
-      if (secondFlight) {
-        const f2 = plot.flatH + 0.28 + 2.9 + 0.24;
-        const floorY = game.world.groundHeight(x, z, f2 + 0.2);
+      if (flight > 1) {
+        const floorY = game.world.groundHeight(
+          x,
+          z,
+          plot.flatH + 0.28 + (flight - 1) * (2.9 + 0.24) + 0.2,
+        );
         player.char.pos.y = floorY;
         player.char.groundH = floorY;
       }
-      player.yaw = secondFlight ? 0 : Math.PI;
+      player.yaw = westFlight ? Math.PI : 0;
       player.pitch = 0.03;
       if (params.get('stance') === 'crouch') {
         player.char.setStance('crouch');
         player.char.stanceF = 1;
       }
       game.input.keys.add('KeyW');
-      window.setTimeout(() => game.input.keys.delete('KeyW'), 1500);
+      const traverseDuration = parseBoundedTestInteger(window.location.search, 'duration', 1500, 1000, 3500);
+      window.setTimeout(() => game.input.keys.delete('KeyW'), traverseDuration);
       if (params.get('jump') === '1') {
         window.setTimeout(() => game.input.keys.add('Space'), 420);
         window.setTimeout(() => game.input.keys.delete('Space'), 620);

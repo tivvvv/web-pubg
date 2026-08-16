@@ -177,10 +177,14 @@ export interface EntranceStepProfile {
   tops: number[];
 }
 
+// 入口最高一级必须比角色碰撞半径更深，让角色在接触地板侧面前先完整站上门前平台。
+// 0.42m 同时给 groundHeight 的边缘采样留出余量，坡地房屋不会因一两厘米高差被推出门洞。
+export const ENTRANCE_STEP_MIN_TREAD_DEPTH = 0.42;
+
 export function entranceStepProfile(floorY: number, groundY: number, baseDepth = 0.78): EntranceStepProfile {
   const climb = Math.max(0, floorY - groundY);
   const count = Math.max(3, Math.min(8, Math.ceil(climb / 0.28)));
-  const depth = Math.max(baseDepth, count * 0.3);
+  const depth = Math.max(baseDepth, count * ENTRANCE_STEP_MIN_TREAD_DEPTH);
   const lowTop = Math.min(floorY - 0.16, groundY + 0.08);
   const tops = Array.from({ length: count }, (_, step) => {
     const progress = (count - step) / count;
