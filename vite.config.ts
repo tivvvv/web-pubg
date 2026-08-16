@@ -30,5 +30,10 @@ export default defineConfig(({ mode }) => {
       port,
       strictPort: true,
     },
+    build: {
+      // Three.js 核心是不可再拆的单模块。保留跨模块压缩后的更小首屏包，
+      // 并把预算设在当前 610 kB 以内，后续业务增长仍会重新触发警告。
+      chunkSizeWarningLimit: 610,
+    },
   };
 });
