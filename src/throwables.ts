@@ -8,6 +8,7 @@ import type { World } from './world';
 import type { Game } from './game';
 import { buildWeaponModel } from './weaponmodels';
 import { random } from './random';
+import { sameSquad } from './squads';
 
 const MAX_GRENADES = 12;      // 活动投掷物上限
 const MAX_CLOUDS = 4;         // 同时烟幕上限
@@ -435,10 +436,10 @@ export class GrenadeManager {
     game.effects.explosion(s.pos);
     game.soundAt(s.pos, (d, p) => game.audio.explosion(d, p));
     game.addBlastFrom(s.pos);
-    // 伤害: 中心 110 → 9m 处 15, 不分敌我(含投掷者); 小队爆炸免伤
+    // 伤害: 中心 110 → 9m 处 15, 投掷者自身和同队成员免伤
     for (const c of game.chars) {
       if (!c.alive) continue;
-      if (s.thrower && s.thrower.team === 'squad' && c.team === 'squad') continue;
+      if (s.thrower && sameSquad(s.thrower, c)) continue;
       const dx = c.pos.x - s.pos.x;
       const dy = c.pos.y + 0.9 - s.pos.y;
       const dz = c.pos.z - s.pos.z;

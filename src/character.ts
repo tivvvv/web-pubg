@@ -14,6 +14,7 @@ import type { World } from './world';
 import { WATER_Y } from './world';
 import { clamp, lerp } from './utils';
 import { weaponMechanismPose } from './combatpresentation';
+import { UNASSIGNED_SQUAD_ID } from './squads';
 
 export type Stance = 'stand' | 'crouch' | 'prone';
 export type CharacterAction = 'interact' | 'pickup' | 'equip' | 'heal' | 'drink';
@@ -771,6 +772,8 @@ export class Character {
   hp = 100;
   alive = true;
   team: 'squad' | 'enemy' = 'enemy'; // 队伍(玩家+3队友=squad)
+  squadId = UNASSIGNED_SQUAD_ID; // 0=玩家小队, 1..15=敌方四人队
+  squadSlot = 0; // 队内位置: 队长/突击/侧翼/支援
   speed2d = 0;
   walkPhase = 0;
   stepAcc = 0;

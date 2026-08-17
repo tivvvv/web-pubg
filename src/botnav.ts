@@ -4,6 +4,7 @@ import { Character, moveChar, SWIM_EXIT_DEPTH } from './character';
 import { clamp, turnToward } from './utils';
 import { riverZAt, WATER_Y, WORLD_HALF, type World } from './world';
 import { random } from './random';
+import { sameSquad } from './squads';
 
 const DETOUR_ANGLES = [0.42, -0.42, 0.78, -0.78, 1.15, -1.15, 1.55, -1.55, 2.15, -2.15] as const;
 const DETOUR_RADII = [3.2, 5.5, 8.2] as const;
@@ -778,7 +779,7 @@ export function allyBlocksShot(
   const len2 = dx * dx + dz * dz;
   if (len2 < 0.01) return false;
   for (const c of chars) {
-    if (c === shooter || c === target || !c.alive || c.team !== shooter.team) continue;
+    if (c === shooter || c === target || !c.alive || !sameSquad(c, shooter)) continue;
     if (Math.abs(c.pos.y - shooter.pos.y) > 2) continue;
     const t = clamp(((c.pos.x - shooter.pos.x) * dx + (c.pos.z - shooter.pos.z) * dz) / len2, 0, 1);
     if (t <= 0.03 || t >= 0.97) continue;

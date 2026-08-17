@@ -15,11 +15,24 @@ describe('对局落点规划', () => {
       { length: SQUAD_SIZE },
       () => ({ x: 0, z: 0 }),
     ));
-    const enemies = plan.points.slice(SQUAD_SIZE);
-    for (let i = 0; i < enemies.length; i++) {
-      for (let j = i + 1; j < enemies.length; j++) {
-        const a = enemies[i] as { x: number; z: number };
-        const b = enemies[j] as { x: number; z: number };
+    const enemySquads = Array.from(
+      { length: (MATCH_PLAYER_COUNT - SQUAD_SIZE) / SQUAD_SIZE },
+      (_, squad) => plan.points.slice(SQUAD_SIZE + squad * SQUAD_SIZE, SQUAD_SIZE + (squad + 1) * SQUAD_SIZE),
+    );
+    const centers = enemySquads.map((members) => ({
+      x: members.reduce((sum, member) => sum + member.x, 0) / members.length,
+      z: members.reduce((sum, member) => sum + member.z, 0) / members.length,
+    }));
+    for (const members of enemySquads) {
+      for (const member of members) {
+        expect(Math.hypot(member.x - (members[0]?.x ?? 0), member.z - (members[0]?.z ?? 0)))
+          .toBeLessThanOrEqual(10);
+      }
+    }
+    for (let i = 0; i < centers.length; i++) {
+      for (let j = i + 1; j < centers.length; j++) {
+        const a = centers[i] as { x: number; z: number };
+        const b = centers[j] as { x: number; z: number };
         expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeGreaterThanOrEqual(DROP_MIN_SEPARATION);
       }
     }

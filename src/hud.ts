@@ -7,7 +7,7 @@ import type { WeatherKind } from './environment';
 import type { ScopeMode } from './gunplay';
 import { SQUAD_ORDER_LABELS, type SquadOrderKind } from './squadcommands';
 import type { PlayerFlowTone } from './playerflow';
-import { MATCH_PLAYER_COUNT } from './matchbalance';
+import { MATCH_PLAYER_COUNT, MATCH_SQUAD_COUNT } from './matchbalance';
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -18,7 +18,7 @@ function el<T extends HTMLElement>(id: string): T {
 export type HitKind = 'hit' | 'head' | 'kill';
 export type ToastTone = PlayerFlowTone;
 
-export function matchCountLabels(playerCount = MATCH_PLAYER_COUNT): {
+export function matchCountLabels(playerCount = MATCH_PLAYER_COUNT, squadCount = MATCH_SQUAD_COUNT): {
   alive: string;
   start: string;
   death: string;
@@ -26,9 +26,9 @@ export function matchCountLabels(playerCount = MATCH_PLAYER_COUNT): {
 } {
   return {
     alive: `剩余 ${playerCount}`,
-    start: `${playerCount} 人孤岛大逃杀 · 单人对战 AI · 活到最后`,
-    death: `#${playerCount} / ${playerCount}`,
-    win: `#1 / ${playerCount}`,
+    start: `${playerCount} 人孤岛大逃杀 · ${squadCount} 支四人小队 · 活到最后`,
+    death: `#${squadCount} / ${squadCount}`,
+    win: `#1 / ${squadCount}`,
   };
 }
 
@@ -238,7 +238,7 @@ export class Hud {
 
   setDeath(stats: GameStats, detail: string): void {
     el('death-reason').textContent = detail;
-    el('death-placement').textContent = `#${stats.placement} / ${MATCH_PLAYER_COUNT}`;
+    el('death-placement').textContent = `#${stats.placement} / ${MATCH_SQUAD_COUNT}`;
     el('death-kills').textContent = String(stats.kills);
     el('death-damage').textContent = String(Math.round(stats.damage));
     el('death-time').textContent = fmtTime(stats.timeSec);

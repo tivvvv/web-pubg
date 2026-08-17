@@ -32,6 +32,8 @@ import {
   type BotDifficultyProfile, type BotDifficultyTier,
 } from './botdifficulty';
 import type { WildlifeEntity } from './wildlife';
+import { REVIVE_RANGE } from './knock';
+import { sameSquad, squadRole, type EnemySquadRole } from './squads';
 
 // bot 降落伞配色(哑光低饱和, 按角色 id 轮换; 队友另用绿色系)
 const BOT_CANOPIES = [0x7a8a6a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a, 0x8a6e62] as const;
@@ -144,12 +146,25 @@ export class BotController {
   private dir = new THREE.Vector3();
   private aim = new THREE.Vector3();
 
-  constructor(name: string, shirtColor: number, difficulty: BotDifficultyTier = 'regular') {
+  constructor(
+    name: string,
+    shirtColor: number,
+    difficulty: BotDifficultyTier = 'regular',
+    squadId = -1,
+    squadSlot = 0,
+  ) {
     this.char = new Character(name, false, shirtColor);
+    this.char.squadId = squadId;
+    this.char.squadSlot = squadSlot;
     this.difficulty = botDifficultyProfile(difficulty);
     this.scanT = random() * this.difficulty.scanMax;
-    const roleRoll = random();
-    this.routeRole = roleRoll < 0.34 ? 'advance' : roleRoll < 0.67 ? 'flank' : 'defend';
+    if (squadId > 0) {
+      this.routeRole = squadSlot === 0 ? 'advance' : squadSlot === 3 ? 'defend' : 'flank';
+      this.routeSide = squadSlot === 1 ? -1 : 1;
+    } else {
+      const roleRoll = random();
+      this.routeRole = roleRoll < 0.34 ? 'advance' : roleRoll < 0.67 ? 'flank' : 'defend';
+    }
   }
 
   private beginReload(gun: GunState, empty: boolean): void {
@@ -172,6 +187,14 @@ export class BotController {
 
   get difficultyTier(): BotDifficultyTier {
     return this.difficulty.id;
+  }
+
+  get squadRole(): EnemySquadRole {
+    return squadRole(this.char.squadSlot);
+  }
+
+  get combatTargetSquadId(): number | null {
+    return this.target?.alive ? this.target.squadId : null;
   }
 
   private nextScanDelay(): number {
@@ -241,6 +264,26 @@ export class BotController {
     // 空降阶段: 自由落体/滑翔, 落地后恢复正常 AI
     if (this.descent) {
       this.updateDescent(dt, game);
+      return;
+    }
+    // 已开始救援后保持原地承诺, 只允许受伤、失能、目标失效或超距中断.
+    if (c.reviveTarget) {
+      const target = c.reviveTarget;
+      const distance = Math.hypot(target.pos.x - c.pos.x, target.pos.z - c.pos.z);
+      if (!target.alive || !target.knocked || !sameSquad(c, target) || distance > REVIVE_RANGE + 0.2) {
+        game.knock.cancelRevive(c);
+      } else {
+        this.cancelReload();
+        this.target = null;
+        this.navigator.reset(c);
+        c.speed2d = 0;
+        c.setStance('crouch');
+        c.yaw = turnToward(c.yaw, Math.atan2(target.pos.x - c.pos.x, target.pos.z - c.pos.z), 7 * dt);
+        return;
+      }
+    }
+    if (c.knocked) {
+      this.updateKnocked(dt, game);
       return;
     }
     if (c.flashT > 0 && !this.driving) {
@@ -319,7 +362,7 @@ export class BotController {
     if (this.shoreExitT > 0) {
       this.shoreExitT = Math.max(0, this.shoreExitT - dt);
       this.navigationIntent = true;
-      this.navigator.move(
+      const nav = this.navigator.move(
         c,
         this.shoreExitPoint.x,
         this.shoreExitPoint.y,
@@ -328,6 +371,8 @@ export class BotController {
         game.world,
         { stopDistance: 0.55, turnRate: 5, allowWater: false, neighbors: game.chars },
       );
+      this.navigationIntent = !nav.reached;
+      this.updateMobilityRecovery(dt, game);
       return;
     }
     if (this.fleePredator(dt, game)) return;
@@ -365,6 +410,8 @@ export class BotController {
     // 手雷威胁: 6m 内有活着的雷, 掉头全速跑
     if (this.fleeGrenade(dt, game)) return;
 
+    if (this.tryReviveSquadmate(dt, game)) return;
+
     this.healCd = Math.max(0, this.healCd - dt);
     if (this.state === 'engage' && this.target) {
       this.updateEngage(dt, game);
@@ -392,6 +439,60 @@ export class BotController {
       }
       if (item === this.lootTarget && !item.active) this.lootTarget = null;
     }
+  }
+
+  private updateKnocked(dt: number, game: Game): void {
+    const c = this.char;
+    this.cancelReload();
+    this.target = null;
+    this.state = 'wander';
+    this.releaseVehicleTarget();
+    c.setStance('prone');
+    // AI 已被队友接手救援时保持原地，避免持续爬行把自己拖出读条范围。
+    if (c.rescuerId !== 0) {
+      moveChar(c, 0, 0, dt, game.world);
+      return;
+    }
+    let dx = c.pos.x - c.lastHitX;
+    let dz = c.pos.z - c.lastHitZ;
+    if (game.zoneArmed && game.zone.isOutside(c.pos.x, c.pos.z)) {
+      dx = game.zone.center.x - c.pos.x;
+      dz = game.zone.center.y - c.pos.z;
+    }
+    const distance = Math.hypot(dx, dz);
+    if (distance < 0.1) {
+      moveChar(c, 0, 0, dt, game.world);
+      return;
+    }
+    moveChar(c, dx / distance * 0.6, dz / distance * 0.6, dt, game.world);
+  }
+
+  private tryReviveSquadmate(dt: number, game: Game): boolean {
+    const c = this.char;
+    const ally = game.enemySquads.nearestKnocked(c, game.chars, 52);
+    if (!ally) return false;
+    const hostilePressure = this.target?.alive && this.losOk &&
+      Math.hypot(this.target.pos.x - c.pos.x, this.target.pos.z - c.pos.z) < 26;
+    if (hostilePressure) return false;
+    this.cancelReload();
+    this.target = null;
+    this.state = 'wander';
+    const distance = Math.hypot(ally.pos.x - c.pos.x, ally.pos.z - c.pos.z);
+    if (distance > REVIVE_RANGE - 0.2) {
+      this.moveTarget.set(ally.pos.x, 0, ally.pos.z);
+      this.hasMoveTarget = true;
+      const nav = this.navigator.move(c, ally.pos.x, ally.pos.z, 5.2, dt, game.world, {
+        stopDistance: REVIVE_RANGE - 0.35,
+        turnRate: 6,
+        allowWater: false,
+        neighbors: game.chars,
+      });
+      this.navigationIntent = !nav.reached;
+      this.updateMobilityRecovery(dt, game);
+      return true;
+    }
+    game.knock.startRevive(c, ally);
+    return true;
   }
 
   private updateMobilityRecovery(dt: number, game: Game): void {
@@ -438,7 +539,7 @@ export class BotController {
       return;
     }
 
-    if (recovery === 'relocate' && findEmergencyNavPoint(
+    if (recovery === 'relocate' && (findEmergencyNavPoint(
       this.tacticPoint,
       c.pos.x,
       c.pos.z,
@@ -447,7 +548,16 @@ export class BotController {
       goalZ,
       game.world,
       allowDrop,
-    )) {
+    ) || (!allowDrop && findEmergencyNavPoint(
+      this.tacticPoint,
+      c.pos.x,
+      c.pos.z,
+      c.pos.y,
+      goalX,
+      goalZ,
+      game.world,
+      true,
+    )))) {
       c.pos.x = this.tacticPoint.x;
       c.pos.z = this.tacticPoint.y;
       c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y + 0.4);
@@ -604,13 +714,16 @@ export class BotController {
     }
     this.predatorThreat = nearest;
     c.setStance('stand');
-    this.navigationIntent = true;
-    this.navigator.move(c, fleeX, fleeZ, 6.4, dt, game.world, {
+    this.moveTarget.set(fleeX, 0, fleeZ);
+    this.hasMoveTarget = true;
+    const nav = this.navigator.move(c, fleeX, fleeZ, 6.4, dt, game.world, {
       stopDistance: 1,
       turnRate: 8,
       allowWater: false,
       neighbors: game.chars,
     });
+    this.navigationIntent = !nav.reached;
+    this.updateMobilityRecovery(dt, game);
     return true;
   }
 
@@ -804,15 +917,21 @@ export class BotController {
     const dx = c.pos.x - this.fragOut.x;
     const dz = c.pos.z - this.fragOut.z;
     const d = Math.hypot(dx, dz) || 1;
-    this.navigator.move(
+    const fleeX = c.pos.x + (dx / d) * 15;
+    const fleeZ = c.pos.z + (dz / d) * 15;
+    this.moveTarget.set(fleeX, 0, fleeZ);
+    this.hasMoveTarget = true;
+    const nav = this.navigator.move(
       c,
-      c.pos.x + (dx / d) * 15,
-      c.pos.z + (dz / d) * 15,
+      fleeX,
+      fleeZ,
       6.2,
       dt,
       game.world,
       { stopDistance: 0.5, turnRate: 8, neighbors: game.chars },
     );
+    this.navigationIntent = !nav.reached;
+    this.updateMobilityRecovery(dt, game);
     return true;
   }
 
@@ -823,15 +942,21 @@ export class BotController {
     this.releaseVehicleTarget();
     const speed = game.bombardment.state === 'active' ? 6.4 : 5.8;
     c.setStance('stand');
-    this.navigator.move(
+    const fleeX = c.pos.x + game.tmpV2.x * 22;
+    const fleeZ = c.pos.z + game.tmpV2.y * 22;
+    this.moveTarget.set(fleeX, 0, fleeZ);
+    this.hasMoveTarget = true;
+    const nav = this.navigator.move(
       c,
-      c.pos.x + game.tmpV2.x * 22,
-      c.pos.z + game.tmpV2.y * 22,
+      fleeX,
+      fleeZ,
       speed,
       dt,
       game.world,
       { stopDistance: 0.5, turnRate: 7, neighbors: game.chars },
     );
+    this.navigationIntent = !nav.reached;
+    this.updateMobilityRecovery(dt, game);
     return true;
   }
 
@@ -1202,6 +1327,7 @@ export class BotController {
     let heardScore = Infinity;
     for (const other of game.chars) {
       if (!other.alive || other === c) continue;
+      if (sameSquad(c, other)) continue;
       if (this.shoreCooldownT > 0 && (
         other.swimming || game.world.getHeight(other.pos.x, other.pos.z) < WATER_Y - SWIM_EXIT_DEPTH
       )) continue;
@@ -1254,6 +1380,7 @@ export class BotController {
       this.state = 'engage';
       this.losOk = true;
       this.lostT = 0;
+      game.enemySquads.report(c, nearest, game.nowSec);
     } else if (this.state === 'engage') {
       // 目标暂不可见, 交给 lostT 逻辑
       this.losOk = false;
@@ -1264,6 +1391,16 @@ export class BotController {
       this.hasMoveTarget = true;
       this.investigateT = 5.5;
       this.repathT = 2.2;
+    } else {
+      const shared = game.enemySquads.contactFor(c, game.nowSec, game.chars);
+      if (shared) {
+        this.moveTarget.set(shared.x, shared.y, shared.z);
+        this.searchOrigin.set(shared.x, shared.y, shared.z);
+        this.searchStep = 0;
+        this.hasMoveTarget = true;
+        this.investigateT = Math.max(this.investigateT, 4.5);
+        this.repathT = 1.8;
+      }
     }
   }
 
@@ -1476,7 +1613,7 @@ export class BotController {
       this.combatNoProgressT += dt;
       // 高层房间和屋顶的复合碰撞极少数会让局部绕行反复选到可采样但实际无法迈出的点.
       // 连续多轮战术改道仍无位移时只做一次短距离合法点校正, 避免整局原地切换搜索/推进.
-      if (this.combatNoProgressT >= 6.4 && !c.vault && !c.swimming && findEmergencyNavPoint(
+      if (this.combatNoProgressT >= 6.4 && !c.vault && !c.swimming && (findEmergencyNavPoint(
         this.tacticPoint,
         c.pos.x,
         c.pos.z,
@@ -1485,7 +1622,16 @@ export class BotController {
         combatGoalZ,
         game.world,
         allowCombatDrop,
-      )) {
+      ) || (!allowCombatDrop && findEmergencyNavPoint(
+        this.tacticPoint,
+        c.pos.x,
+        c.pos.z,
+        c.pos.y,
+        combatGoalX,
+        combatGoalZ,
+        game.world,
+        true,
+      )))) {
         c.pos.x = this.tacticPoint.x;
         c.pos.z = this.tacticPoint.y;
         c.pos.y = game.world.groundHeight(c.pos.x, c.pos.z, c.pos.y + 0.4);
@@ -1786,6 +1932,29 @@ export class BotController {
       this.pickWanderPoint(game);
     }
 
+    // 搜刮结束后优先回到仍存活的队内领队附近, 避免四人组在整张地图永久散开.
+    if (rotation === 'none' && (this.strategicMode === 'patrol' || this.strategicMode === 'hunt')) {
+      const regroup = game.enemySquads.regroupPoint(c, game.chars);
+      if (regroup) {
+        this.moveTarget.set(regroup.x, 0, regroup.z);
+        this.hasMoveTarget = true;
+        this.repathT = 2.4;
+      }
+    }
+
+    const directive = game.matchDirector.directiveFor(c, game.nowSec);
+    const canFollowDirective = directive && this.hasUsableGun() && (
+      this.strategicMode === 'patrol' || this.strategicMode === 'hunt' || this.strategicMode === 'rotate'
+    );
+    if (directive && canFollowDirective) {
+      this.moveTarget.set(directive.x, 0, directive.z);
+      this.hasMoveTarget = true;
+      this.repathT = directive.kind === 'endgame' ? 1.6 : 2.8;
+      if (directive.kind === 'intercept' || directive.kind === 'contest') {
+        this.investigateT = Math.max(this.investigateT, 5);
+      }
+    }
+
     // 搜索阶段优先恢复品, 弹药和可用武器, 再补护具与背包.
     let gearFound = false;
     if (rotation === 'none' && this.strategicMode === 'loot' && this.lootScanT <= 0) {
@@ -1951,7 +2120,7 @@ export class BotController {
           game.world,
           allowDrop,
         );
-        const emergencyEscape = !localEscape && !c.swimming && !c.vault && findEmergencyNavPoint(
+        const emergencyEscape = !localEscape && !c.swimming && !c.vault && (findEmergencyNavPoint(
           this.tacticPoint,
           c.pos.x,
           c.pos.z,
@@ -1960,7 +2129,16 @@ export class BotController {
           navGoalZ,
           game.world,
           allowDrop,
-        );
+        ) || (!allowDrop && findEmergencyNavPoint(
+          this.tacticPoint,
+          c.pos.x,
+          c.pos.z,
+          c.pos.y,
+          navGoalX,
+          navGoalZ,
+          game.world,
+          true,
+        )));
         if (emergencyEscape) {
           c.pos.x = this.tacticPoint.x;
           c.pos.z = this.tacticPoint.y;

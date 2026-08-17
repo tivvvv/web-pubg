@@ -101,10 +101,13 @@ import { Zone } from './zone';
 import { regionOrWilderness } from './regions';
 import {
   FLIGHT_ROUTES,
+  ENEMY_SQUAD_COUNT,
   MATCH_PLAYER_COUNT,
   botJumpDistance,
   SQUAD_SIZE,
   combatDamageScale,
+  squadIdForMatchIndex,
+  squadSlotForMatchIndex,
 } from './matchbalance';
 import { createMatchSpawnPlan } from './matchspawn';
 import { fireModeOf, scopeModeOf, toggleFireMode } from './gunplay';
@@ -121,6 +124,9 @@ import { regionEventAt, selectRegionEvents, type RegionEvent } from './regioneve
 import {
   DEFAULT_MATCH_VARIATION, matchVariationById, selectMatchVariation, type MatchVariation,
 } from './matchvariation';
+import { EnemySquadSystem } from './enemysquads';
+import { hostileTo, sameSquad } from './squads';
+import { MatchDirector, scoreTacticalZoneCandidate } from './matchdirector';
 
 const TOTAL = MATCH_PLAYER_COUNT;
 const SLOT_LABELS = ['主武器1', '主武器2', '手枪', '近战'];
@@ -142,6 +148,8 @@ export class Game {
   readonly input: Input;
   readonly squadCommands: SquadCommandSystem;
   readonly squadIntel = new SquadIntelSystem();
+  readonly enemySquads = new EnemySquadSystem();
+  readonly matchDirector = new MatchDirector();
   regionEvents: RegionEvent[] = [];
   matchVariation: MatchVariation = DEFAULT_MATCH_VARIATION;
   readonly chars: Character[] = [];
@@ -775,6 +783,31 @@ export class Game {
     return !this.zone.isOutside(x, z);
   }
 
+  private tacticalZoneScore(x: number, z: number, nextRadius: number, phase: number): number {
+    const sampleRadius = Math.max(12, Math.min(52, nextRadius * 0.72));
+    let coverCount = 0;
+    for (const collider of this.world.cyls) {
+      if (Math.hypot(collider.x - x, collider.z - z) <= sampleRadius) coverCount++;
+    }
+    for (const collider of this.world.aabbs) {
+      if (collider.off || (collider.tag !== 'wall' && collider.tag !== 'door' && collider.tag !== 'window')) continue;
+      const cx = (collider.minX + collider.maxX) * 0.5;
+      const cz = (collider.minZ + collider.maxZ) * 0.5;
+      if (Math.hypot(cx - x, cz - z) <= sampleRadius) coverCount++;
+    }
+    let landmarkDistance = Infinity;
+    for (const site of this.world.mapSites) {
+      landmarkDistance = Math.min(landmarkDistance, Math.hypot(site.resolvedX - x, site.resolvedZ - z));
+    }
+    return scoreTacticalZoneCandidate({
+      phase,
+      nextRadius,
+      dryLand: this.world.getHeight(x, z) >= WATER_Y - 0.05,
+      coverCount,
+      landmarkDistance,
+    });
+  }
+
   // ---- 对局管理 ----
 
   startMatch(): void {
@@ -809,9 +842,12 @@ export class Game {
     this.flightRouteId = spawnPlan.route.id;
     const pts = spawnPlan.points;
     const botDifficultyDeck = buildBotDifficultyDeck(TOTAL - SQUAD_SIZE, random);
+    const enemySquadJumpDistances: number[] = [];
 
     // 玩家: 进入舱内航线阶段(航线角已在出生点采样时确定)
     this.player.char.team = 'squad';
+    this.player.char.squadId = 0;
+    this.player.char.squadSlot = 0;
     this.player.descent = 'plane';
     this.player.planeS = 0;
     this.player.vy = 0;
@@ -854,24 +890,34 @@ export class Game {
       }
       // 敌方 bot ×60: 分层覆盖整条航线, 同时向各自选择的资源区策略性偏移.
       const difficulty = botDifficultyDeck[i - SQUAD_SIZE] ?? 'regular';
+      const squadId = squadIdForMatchIndex(i);
+      const squadSlot = squadSlotForMatchIndex(i);
       const bot = new BotController(
         BOT_NAMES[(i - 1) % BOT_NAMES.length] ?? `玩家${i}`,
         BOT_SHIRTS[(i - 1) % BOT_SHIRTS.length] ?? 0x888888,
         difficulty,
+        squadId,
+        squadSlot,
       );
       bot.char.pos.copy(this.player.char.pos); // 在机舱内(隐藏)
       bot.char.yaw = rand(0, Math.PI * 2);
       bot.char.airPose = 'sit';
       bot.char.grounded = false;
       bot.char.group.visible = false;
-      bot.jumpS = botJumpDistance(
-        p.x,
-        p.z,
-        this.flightAngle,
-        i - SQUAD_SIZE,
-        TOTAL - SQUAD_SIZE,
-        random(),
-      );
+      const enemySquadIndex = squadId - 1;
+      let squadJump = enemySquadJumpDistances[enemySquadIndex];
+      if (squadJump === undefined) {
+        squadJump = botJumpDistance(
+          p.x,
+          p.z,
+          this.flightAngle,
+          enemySquadIndex,
+          ENEMY_SQUAD_COUNT,
+          random(),
+        );
+        enemySquadJumpDistances[enemySquadIndex] = squadJump;
+      }
+      bot.jumpS = squadJump + squadSlot * 0.32;
       bot.dropTarget.set(p.x, 0, p.z);
       if (random() < bot.difficulty.fragCarryChance) bot.char.throwables.frag = 1;
       if (random() < bot.difficulty.smokeCarryChance) bot.char.throwables.smoke = 1;
@@ -897,6 +943,7 @@ export class Game {
     this.shotDots = this.bots.map(() => ({ x: 0, z: 0 }));
     this.world.buildings.reset(); // 门窗恢复: 窗全修好, 门 30% 预破坏
     this.grenades.reset();
+    this.knock.reset();
     const matchParams = new URLSearchParams(window.location.search);
     const variationOverride = matchParams.get('test') === '1'
       ? matchVariationById(matchParams.get('variation'))
@@ -913,7 +960,8 @@ export class Game {
     this.deathCrates.clear();
     this.vehicles.populate(this.world);
     this.mapVehicles = this.vehicles.list.map(() => ({ x: 0, z: 0, dead: false }));
-    this.zone.reset();
+    this.matchDirector.reset(0);
+    this.zone.reset((x, z, nextRadius, phase) => this.tacticalZoneScore(x, z, nextRadius, phase));
     this.bombardment.reset(this.matchVariation.bombardmentCooldownScale);
     this.effects.reset();
     this.promptVehicle = null;
@@ -933,6 +981,7 @@ export class Game {
     this.zoneArmed = false; // 跳伞前毒圈不计时
     this.squadCommands.reset(this.player.char.pos.x, this.player.char.pos.y, this.player.char.pos.z, this.player.yaw);
     this.squadIntel.reset();
+    this.enemySquads.reset();
     this.hud.setAltitude(-1, 0);
     this.promptItem = null;
     this.promptDoor = null;
@@ -1109,6 +1158,7 @@ export class Game {
     player.update(dt, this.input, this);
     const focusEnded = this.squadCommands.update(this.now, this.chars);
     this.squadIntel.update(this.now, this.chars);
+    this.enemySquads.update(this.now, this.chars);
     if (focusEnded) this.hud.toast('集火目标已失效, 小队恢复跟随');
     // 2 bots + 队友
     for (const b of this.bots) b.update(dt, this);
@@ -1139,6 +1189,23 @@ export class Game {
       this.zone.update(dt);
       const pc = this.player?.char;
       if (pc) this.zone.trackPlayer(pc.pos.x, pc.pos.z);
+      this.matchDirector.update({
+        now: this.now,
+        armed: this.player?.descent == null,
+        player: pc ?? null,
+        chars: this.chars,
+        zone: {
+          centerX: this.zone.center.x,
+          centerZ: this.zone.center.y,
+          radius: this.zone.radius,
+          nextCenterX: this.zone.nextCenter.x,
+          nextCenterZ: this.zone.nextCenter.y,
+          nextRadius: this.zone.nextRadius,
+          state: this.zone.state,
+        },
+        events: this.regionEvents,
+        pointFree: (x, z) => this.world.pointFree(x, z, 0.55, WATER_Y + 0.2, 18),
+      });
     }
     // 运输机: 舱内跟随玩家里程, 跳伞后继续飞离并爬升, 出界销毁(重开时 startMatch 兜底清除)
     if (this.planeMesh) {
@@ -1309,6 +1376,7 @@ export class Game {
     const sp = Math.abs(v.speed);
     for (const c of this.chars) {
       if (!c.alive || c === driver) continue;
+      if (sameSquad(driver, c)) continue;
       const dx = c.pos.x - v.pos.x;
       const dz = c.pos.z - v.pos.z;
       const rr = spec.radius + c.radius * 0.8;
@@ -1747,7 +1815,7 @@ export class Game {
     let bestD = m.range + 0.45;
     for (const c of this.chars) {
       if (!c.alive || c === attacker) continue;
-      if (attacker.team === 'squad' && c.team === 'squad') continue; // 小队近战免伤
+      if (sameSquad(attacker, c)) continue;
       const dx = c.pos.x - attacker.pos.x;
       const dz = c.pos.z - attacker.pos.z;
       const d = Math.hypot(dx, dz);
@@ -1836,6 +1904,7 @@ export class Game {
     source?: THREE.Vector3,
   ): number {
     if (!victim.alive) return 0;
+    if (attacker && attacker !== victim && sameSquad(attacker, victim)) return 0;
     // 护具减伤: 子弹/近战有效; 爆炸与毒圈无视护甲
     if (!ignoreArmor) {
       const armor = head ? victim.helmet : victim.vest;
@@ -1847,6 +1916,12 @@ export class Game {
       }
     }
     dmg = Math.max(0, dmg);
+    if (attacker && hostileTo(attacker, victim) && dmg > 0) {
+      this.matchDirector.recordEngagement(
+        this.now,
+        attacker.squadId === 0 || victim.squadId === 0,
+      );
+    }
     const healthBefore = victim.knocked ? victim.knockHp : victim.hp;
     const appliedDamage = Math.min(healthBefore, dmg);
     // 在死亡与胜利结算前集中累计, 避免最后一击先触发结算而漏掉本次伤害。
@@ -1857,12 +1932,14 @@ export class Game {
       attacker === victim,
     );
     victim.lastAttackerId = attacker?.id ?? 0;
-    if (attacker && attacker.team !== victim.team) {
+    if (attacker && hostileTo(attacker, victim)) {
       if (attacker.team === 'squad' && victim.team === 'enemy') {
         this.squadIntel.report(victim, attacker.id, this.now);
       } else if (victim.team === 'squad' && attacker.team === 'enemy') {
         this.squadIntel.report(attacker, victim.id, this.now);
       }
+      this.enemySquads.report(attacker, victim, this.now);
+      this.enemySquads.report(victim, attacker, this.now);
     }
     victim.lastHitX = attacker?.pos.x ?? source?.x ?? 0;
     victim.lastHitZ = attacker?.pos.z ?? source?.z ?? 0;
@@ -1884,9 +1961,11 @@ export class Game {
     }
     victim.hp -= dmg;
     if (victim.hp <= 0) {
-      // 小队成员转击倒(玩家在无队友存活时直接真死)
-      const soloDeath = victim.isPlayer && !this.mates.some((m) => m.char.alive);
-      if (victim.team === 'squad' && !soloDeath) {
+      // 任意四人队只要仍有可行动队友就进入击倒, 最后一名成员直接淘汰.
+      const hasLivingSquadmate = this.chars.some((candidate) => (
+        candidate !== victim && candidate.alive && !candidate.knocked && sameSquad(candidate, victim)
+      ));
+      if (hasLivingSquadmate) {
         this.knock.knockDown(victim, attacker, head);
       } else {
         this.kill(victim, attacker, head, via);
@@ -1922,7 +2001,10 @@ export class Game {
     victim.reload01 = 0;
     victim.stance = 'stand'; // 死亡复位姿态
     victim.stanceF = 0;
-    const placement = this.aliveCount + 1;
+    const placement = new Set(
+      this.chars.filter((candidate) => candidate.alive && candidate.squadId > 0)
+        .map((candidate) => candidate.squadId),
+    ).size + 1;
 
     // 阵亡角色的全部物资集中保存到死亡盒，避免生成大量散落物。
     const gx = victim.pos.x;

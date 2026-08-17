@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import {
-  findBridgeExit, findEmergencyNavPoint, findLocalEscape, findShoreExitPoint, findSwimBank,
+  allyBlocksShot, findBridgeExit, findEmergencyNavPoint, findLocalEscape, findShoreExitPoint, findSwimBank,
   findVehicleRiverWaypoint, MobilityProgressWatch,
 } from '../src/botnav';
 import {
-  GROUND_SNAP_DISTANCE, shouldEnterSwimming, shouldExitSwimming, shouldSnapToGround, SWIM_ENTER_DEPTH,
+  Character, GROUND_SNAP_DISTANCE, shouldEnterSwimming, shouldExitSwimming, shouldSnapToGround, SWIM_ENTER_DEPTH,
   SWIM_EXIT_DEPTH, SWIM_SPEED, SWIM_SPRINT_SPEED,
 } from '../src/character';
 import {
@@ -83,6 +83,24 @@ describe('游泳上岸点搜索', () => {
 });
 
 describe('长途转移恢复', () => {
+  it('只有本小队成员会阻挡友军射线', () => {
+    const shooter = new Character('射手', false, 0x333333);
+    const target = new Character('目标', false, 0x666666);
+    const ally = new Character('队友', false, 0x999999);
+    const rival = new Character('其他敌队', false, 0xaaaaaa);
+    shooter.squadId = 2;
+    ally.squadId = 2;
+    rival.squadId = 3;
+    target.squadId = 4;
+    shooter.pos.set(0, 0, 0);
+    ally.pos.set(5, 0, 0);
+    rival.pos.set(5, 0, 0);
+    target.pos.set(10, 0, 0);
+
+    expect(allyBlocksShot(shooter, target, [shooter, ally, target])).toBe(true);
+    expect(allyBlocksShot(shooter, target, [shooter, rival, target])).toBe(false);
+  });
+
   it('跨战术状态的原地往复会依次触发改道和合法点校正', () => {
     const watch = new MobilityProgressWatch();
     expect(watch.update(0.75, 0, 0, true)).toBe('none');

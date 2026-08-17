@@ -33,6 +33,35 @@ function distance2D(a: MatchSpawnPoint, x: number, z: number): number {
   return Math.hypot(a.x - x, a.z - z);
 }
 
+function squadDropPoints(
+  anchorX: number,
+  anchorZ: number,
+  memberCount: number,
+  pointFree: MatchSpawnOptions['pointFree'],
+  seedAngle: number,
+): MatchSpawnPoint[] | null {
+  for (const radius of [5.5, 7.5, 9.5] as const) {
+    for (let rotation = 0; rotation < 8; rotation++) {
+      const angleOffset = seedAngle + rotation * Math.PI / 4;
+      const points: MatchSpawnPoint[] = [];
+      let valid = true;
+      for (let slot = 0; slot < memberCount; slot++) {
+        const distance = slot === 0 ? 0 : radius * (slot === 3 ? 0.78 : 1);
+        const angle = angleOffset + (slot - 1) * Math.PI * 2 / 3;
+        const x = anchorX + Math.cos(angle) * distance;
+        const z = anchorZ + Math.sin(angle) * distance;
+        if (!pointFree(x, z)) {
+          valid = false;
+          break;
+        }
+        points.push({ x, z });
+      }
+      if (valid) return points;
+    }
+  }
+  return null;
+}
+
 /**
  * 为一局对战生成航线和全部落点。区域选择、承载限制与兜底网格集中在这里，
  * Game 只负责把生成结果实例化为玩家、队友和机器人。
@@ -46,11 +75,27 @@ export function createMatchSpawnPlan(options: MatchSpawnOptions): MatchSpawnPlan
 
   const route = selectFlightRoute(options.random());
   const points: MatchSpawnPoint[] = Array.from({ length: squadSize }, () => ({ x: 0, z: 0 }));
+  const enemySquadAnchors: MatchSpawnPoint[] = [];
   const dropCounts = emptyDropRegionCounts();
-  const separated = (x: number, z: number, separation = DROP_MIN_SEPARATION): boolean => {
-    for (let index = squadSize; index < points.length; index++) {
-      if (distance2D(points[index] as MatchSpawnPoint, x, z) < separation) return false;
+  const separated = (x: number, z: number, separation = DROP_MIN_SEPARATION + 12): boolean => {
+    for (const anchor of enemySquadAnchors) {
+      if (distance2D(anchor, x, z) < separation) return false;
     }
+    return true;
+  };
+
+  const appendSquad = (x: number, z: number): boolean => {
+    const memberCount = Math.min(squadSize, playerCount - points.length);
+    const squadPoints = squadDropPoints(
+      x,
+      z,
+      memberCount,
+      options.pointFree,
+      enemySquadAnchors.length * 2.399963229728653,
+    );
+    if (!squadPoints) return false;
+    enemySquadAnchors.push({ x, z });
+    points.push(...squadPoints);
     return true;
   };
 
@@ -72,8 +117,10 @@ export function createMatchSpawnPlan(options: MatchSpawnOptions): MatchSpawnPlan
       break;
     }
     if (!sampled || !separated(x, z)) continue;
-    points.push({ x, z });
-    dropCounts[region.id as keyof DropRegionCounts]++;
+    const memberCount = Math.min(squadSize, playerCount - points.length);
+    if (dropCounts[region.id as keyof DropRegionCounts] + memberCount > region.dropCapacity) continue;
+    if (!appendSquad(x, z)) continue;
+    dropCounts[region.id as keyof DropRegionCounts] += memberCount;
   }
 
   // 极端地形或航线组合仍遵守航线距离和区域承载, 仅放宽区域采样策略。
@@ -86,10 +133,13 @@ export function createMatchSpawnPlan(options: MatchSpawnOptions): MatchSpawnPlan
     const fallbackRegion = regionOrWilderness(x, z);
     if (fallbackRegion.id !== 'wilderness') {
       const id = fallbackRegion.id as keyof DropRegionCounts;
-      if (dropCounts[id] >= fallbackRegion.dropCapacity) continue;
-      dropCounts[id]++;
+      const memberCount = Math.min(squadSize, playerCount - points.length);
+      if (dropCounts[id] + memberCount > fallbackRegion.dropCapacity) continue;
+      if (!appendSquad(x, z)) continue;
+      dropCounts[id] += memberCount;
+    } else if (!appendSquad(x, z)) {
+      continue;
     }
-    points.push({ x, z });
   }
 
   // 最终使用确定性安全网格, 保证不会把角色塞入碰撞体或相互重叠。
@@ -97,13 +147,13 @@ export function createMatchSpawnPlan(options: MatchSpawnOptions): MatchSpawnPlan
     for (let z = -300; z <= 300 && points.length < playerCount; z += 24) {
       if (flightLineDistance(x, z, route.angle, route.offset) > DROP_MAX_FLIGHT_DISTANCE + 35) continue;
       if (!options.pointFree(x, z) || !separated(x, z)) continue;
-      points.push({ x, z });
+      appendSquad(x, z);
     }
   }
   for (let x = -300; x <= 300 && points.length < playerCount; x += 16) {
     for (let z = -300; z <= 300 && points.length < playerCount; z += 16) {
-      if (!options.pointFree(x, z) || !separated(x, z, 12)) continue;
-      points.push({ x, z });
+      if (!options.pointFree(x, z) || !separated(x, z, 22)) continue;
+      appendSquad(x, z);
     }
   }
 

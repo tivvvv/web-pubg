@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// knock.ts - 击倒/救援系统(DBNO): 小队成员濒死转击倒 → 流血倒计时 → 扶起复活
-// 敌方 bot 不参与(直接死亡); 全部状态在 Character 字段上, 重开新角色自动清零
+// knock.ts - 击倒/救援系统(DBNO): 四人队成员濒死转击倒 → 流血倒计时 → 扶起复活
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Character } from './character';
 import type { Game } from './game';
 import { reviveCancellationReason } from './interaction';
+import { sameSquad } from './squads';
 
 const KNOCK_HP = 30;        // 击倒血上限
 const REVIVE_TIME = 8;      // 救援读条秒数
@@ -12,9 +12,14 @@ export const REVIVE_RANGE = 2.2; // 发起救援距离
 
 export class KnockSys {
   private game: Game;
+  enemyReviveCount = 0;
 
   constructor(game: Game) {
     this.game = game;
+  }
+
+  reset(): void {
+    this.enemyReviveCount = 0;
   }
 
   // 濒死转击倒(伤害结算在 hp<=0 且为小队成员时调用)
@@ -35,7 +40,7 @@ export class KnockSys {
       g.playerCtl?.cancelTransientActions(g);
       if (g.playerCtl?.driving) g.forceExitVehicle(c, 0);
       if (g.healT > 0) g.cancelHeal('被击倒');
-    } else {
+    } else if (c.team === 'squad') {
       const mate = g.squadMates.find((m) => m.char === c);
       mate?.cancelTransientActions();
       if (mate && mate.riding) {
@@ -49,6 +54,8 @@ export class KnockSys {
         c.pos.set(rv.pos.x + rx * 2.0, 0, rv.pos.z + rz * 2.0);
         c.pos.y = g.world.groundHeight(c.pos.x, c.pos.z, rv.pos.y + 1);
       }
+    } else {
+      g.forceExitVehicle(c, 0);
     }
     // 下车逻辑会复位站姿, 因此最后统一强制成击倒姿态
     c.setStance('prone');
@@ -64,13 +71,14 @@ export class KnockSys {
     } else {
       g.hud.killFeed(`<span class="kf-knock">${ns(c)} 被安全区击倒</span>`);
     }
-    if (!c.isPlayer) g.hud.toast(`队友 ${c.name} 被击倒!`, 'warning');
-    g.audio.warn();
+    if (c.team === 'squad' && !c.isPlayer) g.hud.toast(`队友 ${c.name} 被击倒!`, 'warning');
+    if (c.team === 'squad') g.audio.warn();
   }
 
   // 发起救援读条(玩家 F / 队友 AI); 读条只被救援者自己的移动/受伤打断(被救者爬行不断)
   startRevive(reviver: Character, target: Character): void {
-    if (reviver.knocked || !reviver.alive || !target.knocked || !target.alive) return;
+    if (reviver === target || reviver.knocked || !reviver.alive || !target.knocked || !target.alive ||
+      !sameSquad(reviver, target)) return;
     reviver.reviveTarget = target;
     reviver.reviveT = 0;
     reviver.speed2d = 0; // 清除上一帧的移动速度, 防止误触发移动打断
@@ -135,8 +143,9 @@ export class KnockSys {
             t.setStance('stand');
             c.reviveTarget = null;
             c.reviveT = 0;
+            if (t.squadId > 0) this.enemyReviveCount++;
             if (c.isPlayer) g.hud.setHealCast(-1);
-            g.hud.toast(`${t.name} 被扶起来了`);
+            if (c.team === 'squad') g.hud.toast(`${t.name} 被扶起来了`);
             if (c.isPlayer || t.isPlayer) g.audio.heal();
           }
         }
@@ -149,7 +158,9 @@ export class KnockSys {
     let best: Character | null = null;
     let bestD = maxD;
     for (const c of this.game.chars) {
-      if (!c.alive || !c.knocked || c.team !== 'squad' || c === exclude) continue;
+      if (!c.alive || !c.knocked || c === exclude) continue;
+      if (exclude && !sameSquad(c, exclude)) continue;
+      if (!exclude && c.team !== 'squad') continue;
       const d = Math.hypot(c.pos.x - x, c.pos.z - z);
       if (d < bestD) {
         bestD = d;

@@ -9,6 +9,7 @@ describe('机器人队友持续救援', () => {
     const mate = new TeammateController('队友1', 0x3cb36a, 0);
     const player = new Character('玩家', true, 0x3a6ea5);
     player.team = 'squad';
+    player.squadId = 0;
     player.knocked = true;
     player.hp = 0;
     player.knockHp = 30;

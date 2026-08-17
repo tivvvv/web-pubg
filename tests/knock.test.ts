@@ -14,6 +14,8 @@ function knockFixture(): {
   const target = new Character('倒地队友', false, 0x3cb36a);
   reviver.team = 'squad';
   target.team = 'squad';
+  reviver.squadId = 0;
+  target.squadId = 0;
   const bleedOutKill = vi.fn();
   const setHealCast = vi.fn();
   const game = {
@@ -98,5 +100,31 @@ describe('击倒与救援读条', () => {
     knock.update(60.1);
 
     expect(bleedOutKill).toHaveBeenCalledWith(target);
+  });
+
+  it('敌方小队成员使用同一套击倒与救援规则', () => {
+    const { reviver, target, knock } = knockFixture();
+    reviver.team = 'enemy';
+    target.team = 'enemy';
+    reviver.squadId = 9;
+    target.squadId = 9;
+    knock.knockDown(target, null, false);
+    knock.startRevive(reviver, target);
+    knock.update(8);
+
+    expect(target.knocked).toBe(false);
+    expect(target.hp).toBe(30);
+    expect(reviver.reviveTarget).toBeNull();
+  });
+
+  it('不同敌方小队不能相互救援', () => {
+    const { reviver, target, knock } = knockFixture();
+    reviver.squadId = 3;
+    target.squadId = 4;
+    knock.knockDown(target, null, false);
+    knock.startRevive(reviver, target);
+
+    expect(reviver.reviveTarget).toBeNull();
+    expect(target.rescuerId).toBe(0);
   });
 });

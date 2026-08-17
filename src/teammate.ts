@@ -25,6 +25,7 @@ import {
 } from './squadcommands';
 import { reloadDuration } from './gunplay';
 import { REVIVE_INTERACTION_RANGE } from './interaction';
+import { PLAYER_SQUAD_ID } from './squads';
 
 const ENGAGE_RANGE = 60;
 const FOCUS_RANGE = 180;
@@ -85,6 +86,8 @@ export class TeammateController {
   constructor(name: string, shirtColor: number, jumpSlot = 1) {
     this.char = new Character(name, false, shirtColor);
     this.char.team = 'squad';
+    this.char.squadId = PLAYER_SQUAD_ID;
+    this.char.squadSlot = jumpSlot + 1;
     this.followAng = (jumpSlot - 1) * 0.68;
     this.followDist = rand(4, 9);
     this.jumpSlot = jumpSlot;

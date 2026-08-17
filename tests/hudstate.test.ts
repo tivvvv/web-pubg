@@ -8,9 +8,9 @@ describe('HUD 状态互斥', () => {
   it('所有人数文案统一使用正式对局人数', () => {
     expect(matchCountLabels()).toEqual({
       alive: '剩余 64',
-      start: '64 人孤岛大逃杀 · 单人对战 AI · 活到最后',
-      death: '#64 / 64',
-      win: '#1 / 64',
+      start: '64 人孤岛大逃杀 · 16 支四人小队 · 活到最后',
+      death: '#16 / 16',
+      win: '#1 / 16',
     });
   });
 

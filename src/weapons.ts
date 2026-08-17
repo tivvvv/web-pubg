@@ -5,6 +5,7 @@ import type {
   AmmoType, LootKind, MeleeDef, MeleeId, SurfaceKind, ThrowableId, WeaponDef, WeaponId,
 } from './types';
 import type { World, StaticHit } from './world';
+import { sameSquad } from './squads';
 import { random } from './random';
 
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
@@ -144,7 +145,7 @@ export function hitscan(
   }
   for (const c of chars) {
     if (!c.alive || c === exclude) continue;
-    if (exclude && exclude.team === 'squad' && c.team === 'squad') continue; // 小队免伤
+    if (exclude && sameSquad(exclude, c)) continue; // 所有四人队统一免除队内枪械伤害
     if (c.hitTest(o.x, o.y, o.z, d.x, d.y, d.z, best, charHit)) {
       best = charHit.t;
       char = c;

@@ -22,6 +22,7 @@ const DPS = [1, 2, 4, 7, 11, 16];
 const WALL_H = 90;
 
 export type ZoneState = 'wait' | 'shrink' | 'done';
+export type ZoneCenterScorer = (x: number, z: number, nextRadius: number, phase: number) => number;
 
 export class Zone {
   readonly center = new THREE.Vector2();
@@ -38,6 +39,7 @@ export class Zone {
   private mesh: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
   private timeU = { value: 0 };
   private proxU = { value: 1 };
+  private centerScorer: ZoneCenterScorer | null = null;
 
   constructor(scene: THREE.Scene) {
     const geo = new THREE.CylinderGeometry(1, 1, 1, 96, 1, true);
@@ -87,7 +89,8 @@ export class Zone {
     this.reset();
   }
 
-  reset(): void {
+  reset(centerScorer: ZoneCenterScorer | null = null): void {
+    this.centerScorer = centerScorer;
     // 初始圈: 半径~310, 圆心随机偏移地图中心
     const a = random() * Math.PI * 2;
     const d = random() * 55;
@@ -109,9 +112,22 @@ export class Zone {
     }
     // 新圆心保证整个小圈在当前圈内
     const maxOff = Math.max(0, (this.radius - p.radius) * 0.75);
-    const a = random() * Math.PI * 2;
-    const d = random() * maxOff;
-    this.nextCenter.set(this.center.x + Math.cos(a) * d, this.center.y + Math.sin(a) * d);
+    const samples = this.centerScorer ? (this.phase >= 2 ? 10 : 5) : 1;
+    let bestX = this.center.x;
+    let bestZ = this.center.y;
+    let bestScore = -Infinity;
+    for (let sample = 0; sample < samples; sample++) {
+      const a = random() * Math.PI * 2;
+      const d = random() * maxOff;
+      const x = this.center.x + Math.cos(a) * d;
+      const z = this.center.y + Math.sin(a) * d;
+      const score = this.centerScorer?.(x, z, p.radius, this.phase) ?? 0;
+      if (score <= bestScore) continue;
+      bestScore = score;
+      bestX = x;
+      bestZ = z;
+    }
+    this.nextCenter.set(bestX, bestZ);
     this.nextRadius = p.radius;
   }
 

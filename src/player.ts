@@ -38,6 +38,7 @@ import {
   TRANSPORT_PLANE_STANDING_EYE_HEIGHT,
 } from './planemodel';
 import { resolveMovementDirection, wadingSpeedMultiplier } from './movement';
+import { PLAYER_SQUAD_ID } from './squads';
 
 const BASE_FOV = 75;
 const THROW_SPEED = 15; // 满蓄力投掷速度
@@ -129,6 +130,9 @@ export class PlayerController {
 
   constructor(shirtColor: number) {
     this.char = new Character('你', true, shirtColor);
+    this.char.team = 'squad';
+    this.char.squadId = PLAYER_SQUAD_ID;
+    this.char.squadSlot = 0;
     this.char.setFirstPerson(true);
     this.camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.1, 900);
   }

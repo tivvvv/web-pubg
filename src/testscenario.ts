@@ -23,7 +23,7 @@ import {
 } from './stability';
 
 export const SCENARIO_IDS = [
-  'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'wildlife', 'maptour',
+  'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'director', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'wildlife', 'maptour',
 ] as const;
 export type ScenarioId = typeof SCENARIO_IDS[number];
 
@@ -77,6 +77,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=squadcommand&order=hold',
   'scenario=squadcommand&order=focus',
   'scenario=squadcommand&order=aim',
+  'scenario=director&simSteps=12',
   'scenario=parachute',
   'scenario=parachute&phase=plane',
   'scenario=parachute&collision=apartment',
@@ -127,6 +128,7 @@ const SCENARIO_TEXT: Record<ScenarioId, string> = {
   bottactics: '机器人战术: 同时检查交战, 恢复, 搜索和圈外转移',
   botvehicle: '机器人载具: 检查搜车, 上车, 长途转移, 绕障和到点下车',
   squadcommand: '小队指令: 检查前往, 警戒, 集火, 跟随和三人队形',
+  director: '战局导演: 全部敌方小队落地实战, 检查编组, 共享接敌, 救援和公平调度',
   stability: '长局稳定性: 固定种子加速整局, 检查卡住, 非法状态和重开泄漏',
   parachute: '空降回归: 玩家和队友同高度自由落体, 检查速度和开伞时机',
   vehicle: '载具回归: F 上车, WASD 驾驶, 低速 F 下车并检查碰撞和仪表',
@@ -344,6 +346,12 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       ]),
     ),
   );
+  const enemySquadIds = [...new Set(game.bots.map((bot) => bot.char.squadId))].sort((a, b) => a - b);
+  panel.dataset.enemySquadCount = String(enemySquadIds.length);
+  panel.dataset.enemySquadSizes = enemySquadIds
+    .map((squadId) => game.bots.filter((bot) => bot.char.squadId === squadId).length)
+    .join(',');
+  panel.dataset.enemySquadRoles = game.bots.map((bot) => `${bot.char.squadId}:${bot.squadRole}`).join(',');
   panel.dataset.regionEvents = JSON.stringify(game.regionEvents.map((event) => ({
     kind: event.kind,
     region: event.region,
@@ -569,6 +577,34 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.inputKeys = [...game.input.keys].sort().join(',');
       panel.dataset.characterPosition = [character.pos.x, character.pos.y, character.pos.z]
         .map((value) => value.toFixed(2)).join(',');
+      panel.dataset.enemySquadContacts = String(game.enemySquads.activeContactCount);
+      panel.dataset.enemyFriendlyTargetIssues = game.bots
+        .filter((bot) => bot.combatTargetSquadId === bot.char.squadId)
+        .map((bot) => bot.char.id)
+        .join(',');
+      panel.dataset.enemyRevives = String(game.knock.enemyReviveCount);
+      panel.dataset.enemyKnocked = String(game.bots.filter((bot) => bot.char.knocked).length);
+      panel.dataset.enemyReviveState = game.bots
+        .filter((bot) => bot.char.squadId === 1)
+        .map((bot) => [
+          bot.char.id,
+          bot.char.squadSlot,
+          bot.char.knocked ? 'down' : 'up',
+          bot.char.reviveTarget?.id ?? 0,
+          bot.char.reviveT.toFixed(1),
+          bot.char.rescuerId,
+          bot.tacticalState,
+          bot.char.pos.x.toFixed(1),
+          bot.char.pos.z.toFixed(1),
+        ].join(':'))
+        .join('|');
+      panel.dataset.directorCombatDrought = game.matchDirector.playerCombatDrought(game.nowSec).toFixed(1);
+      panel.dataset.directorDirectives = JSON.stringify(game.matchDirector.activeDirectives.map((directive) => ({
+        squadId: directive.squadId,
+        kind: directive.kind,
+        x: Number(directive.x.toFixed(1)),
+        z: Number(directive.z.toFixed(1)),
+      })));
       const nearestWildlifeDistance = game.wildlife.entities
         .filter((entity) => entity.alive && (entity.kind === 'cow' || entity.kind === 'sheep'))
         .reduce((nearest, entity) => Math.min(
@@ -927,7 +963,7 @@ function stabilityActors(game: Game): StabilityActorSample[] {
       x: c.pos.x,
       y: c.pos.y,
       z: c.pos.z,
-      hp: c.hp,
+      hp: c.knocked ? c.knockHp : c.hp,
       mode: bot.tacticalState,
     };
   });
@@ -948,6 +984,55 @@ function setupStability(game: Game): void {
   game.zoneArmed = true;
 }
 
+function setupDirector(game: Game): void {
+  parkSquad(game);
+  setGroundPlayer(game, -300, 300);
+  const player = game.playerCtl;
+  if (player) player.char.equipGhillie();
+  for (const bot of game.bots) {
+    const x = bot.dropTarget.x;
+    const z = bot.dropTarget.z;
+    bot.jumpS = -1;
+    bot.descent = null;
+    bot.trainingIdle = bot.char.squadId !== 1;
+    bot.trainingPassive = false;
+    bot.char.alive = true;
+    bot.char.hp = 100;
+    bot.char.knocked = false;
+    bot.char.airPose = null;
+    bot.char.group.visible = true;
+    bot.char.pos.set(x, game.world.groundHeight(x, z, 30), z);
+    bot.char.groundH = bot.char.pos.y;
+    bot.char.grounded = true;
+    bot.char.guns[0] = { def: WEAPONS.rifle, mag: 30, att: emptyAttachments() };
+    bot.char.ammo.rifle = 120;
+    bot.char.curSlot = 0;
+  }
+  const reviveLane = testLane(game);
+  for (const bot of game.bots.filter((candidate) => candidate.char.squadId === 1)) {
+    const x = reviveLane[0] + bot.char.squadSlot * 1.75;
+    const z = reviveLane[1];
+    bot.trainingPassive = true;
+    bot.char.pos.set(x, game.world.groundHeight(x, z, 30), z);
+    bot.char.groundH = bot.char.pos.y;
+  }
+  const reviveTarget = game.bots.find((bot) => bot.char.squadId === 1 && bot.char.squadSlot === 1);
+  if (reviveTarget) game.knock.knockDown(reviveTarget.char, null, false);
+  game.zoneArmed = true;
+  const releaseAt = game.nowSec + 10;
+  const releaseDirectorCombatants = (): void => {
+    if (game.nowSec < releaseAt && game.stateStr === 'playing') {
+      window.requestAnimationFrame(releaseDirectorCombatants);
+      return;
+    }
+    for (const bot of game.bots) {
+      bot.trainingIdle = false;
+      bot.trainingPassive = false;
+    }
+  };
+  window.requestAnimationFrame(releaseDirectorCombatants);
+}
+
 function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
   const search = window.location.search;
   const rounds = parseBoundedTestInteger(search, 'rounds', 2, 1, 3);
@@ -964,6 +1049,9 @@ function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
     if (!panel.isConnected) return;
     const actors = stabilityActors(game);
     const summary = monitor.update(game.nowSec, actors);
+    const aliveSquads = new Set(
+      game.bots.filter((bot) => bot.char.alive).map((bot) => bot.char.squadId),
+    ).size;
     for (const issue of summary.issues) {
       const key = `round${round}:${issue}`;
       accumulatedIssues.add(key);
@@ -987,6 +1075,7 @@ function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
     panel.dataset.stabilityRound = `${round}/${rounds}`;
     panel.dataset.stabilityElapsed = game.nowSec.toFixed(1);
     panel.dataset.stabilityAlive = String(summary.alive);
+    panel.dataset.stabilityAliveSquads = String(aliveSquads);
     panel.dataset.stabilityZone = `${game.zone.phase}:${game.zone.state}`;
     panel.dataset.stabilityTransitions = String(summary.transitions);
     panel.dataset.stabilityMaxStuck = summary.maxStagnantSec.toFixed(2);
@@ -1001,9 +1090,9 @@ function beginStabilityMonitoring(panel: HTMLElement, game: Game): void {
       })
       .join('|');
 
-    const timedOut = game.nowSec >= deadline && summary.alive > 1;
-    const completed = summary.alive <= 1 && game.nowSec >= 20;
-    if (timedOut) accumulatedIssues.add(`round${round}:timeout:${summary.alive}`);
+    const timedOut = game.nowSec >= deadline && aliveSquads > 1;
+    const completed = aliveSquads <= 1 && game.nowSec >= 20;
+    if (timedOut) accumulatedIssues.add(`round${round}:timeout:${aliveSquads}-squads`);
     if (timedOut || completed) {
       roundResults.push(`${round},${game.nowSec.toFixed(1)},${summary.alive},${summary.transitions}`);
       if (!timedOut && round < rounds) {
@@ -2390,8 +2479,8 @@ export function applyTestScenarioFromUrl(game: Game): void {
   const params = new URLSearchParams(window.location.search);
   if (id === 'stability') setRandomSeed(parseRandomSeed(window.location.search, 1337) ?? 1337);
   game.startMatch();
-  if (id !== 'stability') parkEnemies(game);
-  if (id !== 'parachute' && id !== 'stability' && id !== 'squadcommand') parkSquad(game);
+  if (id !== 'stability' && id !== 'director') parkEnemies(game);
+  if (id !== 'parachute' && id !== 'stability' && id !== 'squadcommand' && id !== 'director') parkSquad(game);
   if (id === 'stairs') setupStairs(game);
   else if (id === 'swim') setupSwim(game);
   else if (id === 'botswim') setupBotSwim(game);
@@ -2400,6 +2489,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'bottactics') setupBotTactics(game);
   else if (id === 'botvehicle') setupBotVehicle(game);
   else if (id === 'squadcommand') setupSquadCommand(game);
+  else if (id === 'director') setupDirector(game);
   else if (id === 'stability') setupStability(game);
   else if (id === 'parachute') setupParachute(game, params);
   else if (id === 'vehicle') setupVehicle(game);

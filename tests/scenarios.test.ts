@@ -7,7 +7,7 @@ import {
 describe('固定回归场景入口', () => {
   it('所有正式场景 id 均能稳定解析', () => {
     expect(SCENARIO_IDS).toEqual([
-      'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'wildlife', 'maptour',
+      'stairs', 'swim', 'botswim', 'combat', 'effects', 'bottactics', 'botvehicle', 'squadcommand', 'director', 'stability', 'parachute', 'vehicle', 'deathcrate', 'bombardment', 'revive', 'zone', 'endgame', 'defeat', 'wildlife', 'maptour',
     ]);
     for (const id of SCENARIO_IDS) expect(parseScenarioId(id)).toBe(id);
   });

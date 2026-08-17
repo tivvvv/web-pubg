@@ -3,12 +3,22 @@ import { REGIONS, type RegionDef, type RegionId } from './regions';
 export const MATCH_PLAYER_COUNT = 64;
 export const SQUAD_SIZE = 4;
 export const ENEMY_COUNT = MATCH_PLAYER_COUNT - SQUAD_SIZE;
+export const MATCH_SQUAD_COUNT = MATCH_PLAYER_COUNT / SQUAD_SIZE;
+export const ENEMY_SQUAD_COUNT = MATCH_SQUAD_COUNT - 1;
 export const DROP_MAX_FLIGHT_DISTANCE = 168;
 export const DROP_MIN_SEPARATION = 24;
 export const BOT_JUMP_ROUTE_START = 55;
 export const BOT_JUMP_ROUTE_END = 945;
 export const BOT_VS_PLAYER_DAMAGE_SCALE = 0.7;
 export const BOT_VS_BOT_DAMAGE_SCALE = 0.86;
+
+export function squadIdForMatchIndex(index: number, squadSize = SQUAD_SIZE): number {
+  return Math.floor(Math.max(0, Math.trunc(index)) / Math.max(1, Math.trunc(squadSize)));
+}
+
+export function squadSlotForMatchIndex(index: number, squadSize = SQUAD_SIZE): number {
+  return Math.max(0, Math.trunc(index)) % Math.max(1, Math.trunc(squadSize));
+}
 
 export interface FlightRoute {
   readonly id: string;

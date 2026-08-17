@@ -1,10 +1,12 @@
 # 绝地突围
 
-基于 Three.js 和 TypeScript 的网页大逃杀原型。项目包含 64 人对局, 小队 AI, 空降, 枪械配件, 游泳, 载具, 动态天气, 轰炸区, 区域资源和多层建筑。
+基于 Three.js 和 TypeScript 的网页大逃杀原型。项目包含 64 人、16 支四人小队对局, 小队 AI, 空降, 枪械配件, 游泳, 载具, 动态天气, 轰炸区, 区域资源和多层建筑。
 
 自动武器支持用 `B` 在单发和全自动之间切换, 模式会随当前枪械独立保留。背包统一使用 `Tab` 打开。
 
 机器人队友会共享可见目标和受击来源, 并按左侧翼, 中央支援和右侧翼分工接敌。共享情报会随目标失效或超时自动清理。
+
+敌方同样以四人小队行动。同队成员共同跳点, 共享接敌位置, 按队长、突击、侧翼和支援职责保持战术队形, 并会在安全条件下救援倒地队友。战局导演只调度地图中真实存活的小队争夺公开区域事件、分路进圈或前往玩家转移路线前方, 不会在玩家附近生成或瞬移敌人。中后期安全区会优先落向具备建筑、地标或自然掩体的可战区域。
 
 ## 拉取代码后运行游戏
 
@@ -82,6 +84,7 @@ npm run preview
 - `/?test=1&scenario=combat&movement=run`: 自动持续疾跑, 检查步态关节, 重心和起停镜头惯性
 - `/?test=1&scenario=combat&action=pickup&hold=1`: 持枪拾取动作, 也可替换为 interact/equip/heal/drink
 - `/?test=1&scenario=bottactics`: 机器人交战, 恢复, 搜索和跑圈决策
+- `/?test=1&scenario=director&simSteps=12`: 15 支敌方小队落地实战, 编组协同和公平战局导演
 - `/?test=1&scenario=botvehicle`: 机器人搜车, 驾驶转移和到点下车
 - `/?test=1&scenario=botvehicle&route=bridge&contact=1`: 机器人驾车过桥并在接敌后下车
 - `/?test=1&scenario=stability&seed=1337&simSteps=12&rounds=2`: 固定种子长局, 卡住监控和重开资源校验
