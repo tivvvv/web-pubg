@@ -2599,7 +2599,10 @@ export class Game {
       this.hud.setZoneStatus(this.zone.statusText(), this.zone.state === 'shrink');
     }
     this.hud.setZoneTint(outside && c.alive);
-    this.hud.setBombardment(this.bombardment.hudText(), this.bombardment.state === 'active');
+    this.hud.setBombardment(
+      this.bombardment.hudText(c.pos.x, c.pos.z),
+      this.bombardment.state === 'active',
+    );
     const region = regionOrWilderness(c.pos.x, c.pos.z);
     const mapSite = this.world.mapSiteAt(c.pos.x, c.pos.z);
     const regionalEvent = regionEventAt(this.regionEvents, c.pos.x, c.pos.z);

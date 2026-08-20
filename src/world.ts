@@ -166,6 +166,38 @@ export class World {
     return mapContentSiteAt(this.mapSites, x, z);
   }
 
+  // 教堂广场只有南侧是无障碍主入口。机器人若从东西两侧直接追逐广场内物资，
+  // 局部导航窗口会把高地基当作死路。这里先把它引导到宽阶梯脚，再沿阶梯进入广场。
+  churchPlazaAccessWaypoint(
+    out: THREE.Vector2,
+    fromX: number,
+    fromZ: number,
+    goalX: number,
+    goalZ: number,
+  ): boolean {
+    const church = this.scenicSites.find((site) => site.kind === 'church');
+    if (!church) return false;
+    const targetInside = Math.abs(goalX - church.x) <= 12.7 &&
+      goalZ >= church.z + 5.4 && goalZ <= church.z + 22.6;
+    if (!targetInside) return false;
+    const originInside = Math.abs(fromX - church.x) <= 13.15 &&
+      fromZ >= church.z + 5.0 && fromZ <= church.z + 23.15;
+    if (originInside) return false;
+    // 从教堂正门出来时可直接进入北侧广场，不必绕行南入口。
+    if (fromZ < church.z + 6.2 && Math.abs(fromX - church.x) < 6.4) return false;
+    const footZ = church.z + 25.95;
+    const footDistance = Math.hypot(fromX - church.x, fromZ - footZ);
+    out.set(church.x, footDistance > 1.55 ? footZ : church.z + 22.75);
+    return true;
+  }
+
+  churchPlazaCenter(out: THREE.Vector2): boolean {
+    const church = this.scenicSites.find((site) => site.kind === 'church');
+    if (!church) return false;
+    out.set(church.x, church.z);
+    return true;
+  }
+
   constructor(scene: THREE.Scene) {
     const n1 = new Noise2D(1337);
     const n2 = new Noise2D(9001);
@@ -2236,21 +2268,26 @@ varying vec3 vTerrainWorld;`,
       plazaParts += 2;
       this.addCollider({ kind: 'cyl', x, z, r: 0.18, y0: ground, y1: ground + 4.5, tag: 'rock' });
     }
-    // 南侧宽阶梯将地形连续抬升到广场平台, 两侧保留车辆绕行空间.
+    // 南侧宽阶梯将地形连续抬升到广场平台。加密为七级并扩大前后搭接，
+    // 让角色移动采样和机器人 0.8m 导航探针都不会跨过中间踏步。
     const plazaEntryZ = plazaCenterZ + 10.4;
     const plazaEntryGround = this.getHeight(site.x, plazaEntryZ + 1.4);
-    for (let i = 0; i < 5; i++) {
-      const top = plazaEntryGround + (plazaTop - plazaEntryGround) * ((i + 1) / 5);
-      const z = plazaEntryZ + 1.05 - i * 0.55;
+    const plazaStepCount = 7;
+    for (let i = 0; i < plazaStepCount; i++) {
+      const top = plazaEntryGround + (plazaTop - plazaEntryGround) * ((i + 1) / plazaStepCount);
+      const z = plazaEntryZ + 1.25 - i * 0.5;
       const stepHeight = Math.max(0.18, top - plazaEntryGround + 0.04);
-      const step = new THREE.Mesh(new THREE.BoxGeometry(6.6 + i * 0.35, stepHeight, 0.7), stone);
+      const width = 8.4 + i * 0.32;
+      const depth = 0.92;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(width, stepHeight, depth), stone);
+      step.name = 'church-plaza-access-step';
       step.position.set(site.x, top - stepHeight / 2, z);
       step.castShadow = true;
       step.receiveShadow = true;
       scene.add(step);
       this.platforms.push({
-        minX: site.x - (6.6 + i * 0.35) / 2, minZ: z - 0.35,
-        maxX: site.x + (6.6 + i * 0.35) / 2, maxZ: z + 0.35, top,
+        minX: site.x - width / 2, minZ: z - depth / 2,
+        maxX: site.x + width / 2, maxZ: z + depth / 2, top,
       });
       plazaParts++;
     }

@@ -6,6 +6,7 @@ import {
   preferredCombatRange,
   selectCombatGunSlot,
   shouldDeploySmoke,
+  shouldEngageWithoutGun,
   shouldExitVehicle,
   shouldSeekVehicle,
   shouldTacticalReload,
@@ -64,6 +65,12 @@ describe('机器人战术决策', () => {
     expect(chooseStrategicMode(base)).toBe('patrol');
     expect(chooseStrategicMode({ ...base, hp: 64, hasHeal: true, recoverHpThreshold: 68 })).toBe('recover');
     expect(chooseStrategicMode({ ...base, hp: 64, hasHeal: true, recoverHpThreshold: 50 })).toBe('patrol');
+  });
+
+  it('无可用枪时只在贴脸范围自卫并优先继续搜枪', () => {
+    expect(shouldEngageWithoutGun(false, 18)).toBe(false);
+    expect(shouldEngageWithoutGun(false, 5.5)).toBe(true);
+    expect(shouldEngageWithoutGun(true, 80)).toBe(true);
   });
 
   it('战斗状态可切换转移, 掩体, 搜索, 进攻和后撤', () => {

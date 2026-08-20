@@ -207,6 +207,26 @@ export class Minimap {
       ctx.beginPath();
       ctx.arc(bx, bz, br * 0.84, 0, Math.PI * 2);
       ctx.stroke();
+      // 中心炮击准星和警告符号让红圈不再与普通区域事件混淆。
+      ctx.setLineDash([]);
+      ctx.strokeStyle = bombardment.state === 'active' ? '#fff0d0' : '#ffd078';
+      ctx.lineWidth = 1.25;
+      const cross = Math.max(3.2, br * 0.34);
+      ctx.beginPath();
+      ctx.moveTo(bx - cross, bz);
+      ctx.lineTo(bx + cross, bz);
+      ctx.moveTo(bx, bz - cross);
+      ctx.lineTo(bx, bz + cross);
+      ctx.stroke();
+      ctx.fillStyle = bombardment.state === 'active' ? '#ff2d1f' : '#ff7b3c';
+      ctx.beginPath();
+      ctx.arc(bx, bz, 2.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff4cf';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('!', bx, bz + 0.25);
       ctx.restore();
     }
 

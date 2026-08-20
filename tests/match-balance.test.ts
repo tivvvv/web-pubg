@@ -119,8 +119,8 @@ describe('对局节奏和地图最终平衡', () => {
     for (let i = 1; i < durations.length; i++) {
       expect(durations[i]).toBeLessThan(durations[i - 1] as number);
     }
-    expect(total).toBeGreaterThanOrEqual(465);
-    expect(total).toBeLessThanOrEqual(480);
+    expect(total).toBeGreaterThanOrEqual(425);
+    expect(total).toBeLessThanOrEqual(435);
   });
 
   it('所有正式区域均拥有至少一个载具转移点', () => {

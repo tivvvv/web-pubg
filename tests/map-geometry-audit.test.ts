@@ -954,6 +954,44 @@ describe('地图与建筑终极几何巡检', () => {
         `教堂正门通道在 z=${z.toFixed(2)} 被墙体或广场地基封堵`,
       ).toBe(true);
     }
+    const access = new THREE.Vector2();
+    expect(world.churchPlazaAccessWaypoint(
+      access,
+      church.x - 24,
+      church.z + 14,
+      church.x + 4,
+      church.z + 14,
+    )).toBe(true);
+    expect(access.x).toBeCloseTo(church.x, 6);
+    expect(access.y).toBeCloseTo(church.z + 25.95, 6);
+    expect(world.churchPlazaAccessWaypoint(
+      access,
+      church.x,
+      church.z + 25.9,
+      church.x + 4,
+      church.z + 14,
+    )).toBe(true);
+    expect(access.y).toBeCloseTo(church.z + 22.75, 6);
+    expect(world.churchPlazaAccessWaypoint(
+      access,
+      church.x,
+      church.z + 22.7,
+      church.x + 4,
+      church.z + 14,
+    )).toBe(false);
+    const accessSteps = world.platforms.filter((platform) => (
+      platform.minX < church.x - 4 && platform.maxX > church.x + 4 &&
+      platform.minZ > church.z + 21.8 && platform.maxZ < church.z + 27
+    ));
+    expect(accessSteps).toHaveLength(7);
+    let approachY = world.getHeight(church.x, church.z + 26.5);
+    for (let z = church.z + 26.3; z >= church.z + 22.7; z -= 0.2) {
+      const nextY = world.groundHeight(church.x, z, approachY + 0.3);
+      expect(nextY - approachY, `广场入口 z=${z.toFixed(2)} 台阶过高`).toBeLessThanOrEqual(0.45);
+      expect(world.navPointFree(church.x, z, approachY, 0.35, false)).toBe(true);
+      approachY = nextY;
+    }
+    expect(Math.abs(approachY - (plazaPlatform?.top ?? approachY))).toBeLessThan(0.08);
     expect(world.cyls.some((collider) => (
       Math.abs(collider.x - church.x) < 0.05 &&
       Math.abs(collider.z - (church.z + 14)) < 0.05 && collider.r >= 2.2

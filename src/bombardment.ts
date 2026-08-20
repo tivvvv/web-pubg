@@ -45,7 +45,7 @@ const SHELL_CAP = 7;
 const CRATER_CAP = 18;
 const RING_SEGMENTS = 64;
 export const BOMBARDMENT_BOUNDARY_HALF_WIDTH = 0.9;
-export const BOMBARDMENT_BOUNDARY_MARKERS = { posts: 16, chevrons: 24 } as const;
+export const BOMBARDMENT_BOUNDARY_MARKERS = { posts: 24, chevrons: 32, signs: 8 } as const;
 const UP = new THREE.Vector3(0, 1, 0);
 const CIRCLE_NORMAL = new THREE.Vector3(0, 0, 1);
 
@@ -66,6 +66,31 @@ export function bombardmentEscapeVector(
   if (d < 0.05) out.set(1, 0);
   else out.set(dx / d, dz / d);
   return true;
+}
+
+export function bombardmentHudText(
+  state: BombardmentState,
+  timer: number,
+  centerX: number,
+  centerZ: number,
+  radius: number,
+  playerX?: number,
+  playerZ?: number,
+): string | null {
+  if (state === 'idle') return null;
+  const countdown = Math.max(0, Math.ceil(timer));
+  if (playerX !== undefined && playerZ !== undefined) {
+    const edgeDistance = Math.hypot(playerX - centerX, playerZ - centerZ) - radius;
+    if (edgeDistance <= 0) {
+      return state === 'warning'
+        ? `你在轰炸区内 · ${countdown}s 后落弹 · 立即撤离`
+        : '你在轰炸区内 · 炮火正在落下 · 立即撤离';
+    }
+    return state === 'warning'
+      ? `轰炸区预警 · 距你 ${Math.ceil(edgeDistance)}m · 查看小地图`
+      : `轰炸进行中 · 距你 ${Math.ceil(edgeDistance)}m`;
+  }
+  return state === 'warning' ? `轰炸区预警 · ${countdown}s 后落弹` : '轰炸进行中';
 }
 
 function makeCraterTexture(): THREE.Texture {
@@ -115,6 +140,8 @@ export class BombardmentSystem {
   private postMat: THREE.MeshBasicMaterial;
   private chevronMat: THREE.MeshBasicMaterial;
   private beaconMat: THREE.MeshBasicMaterial;
+  private signMat: THREE.MeshBasicMaterial;
+  private signGlyphMat: THREE.MeshBasicMaterial;
   private outerPos = new Float32Array((RING_SEGMENTS + 1) * 3);
   private innerPos = new Float32Array((RING_SEGMENTS + 1) * 3);
   private boundaryPos = new Float32Array((RING_SEGMENTS + 1) * 6);
@@ -122,6 +149,7 @@ export class BombardmentSystem {
   private posts: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>[] = [];
   private chevrons: THREE.Mesh<THREE.ShapeGeometry, THREE.MeshBasicMaterial>[] = [];
   private beacons: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>[] = [];
+  private warningSigns: THREE.Group[] = [];
   private shells: Shell[] = [];
   private shellCursor = 0;
   private craters: Crater[] = [];
@@ -206,8 +234,8 @@ export class BombardmentSystem {
       color: 0xff6a4e, transparent: true, opacity: 0.7,
       blending: THREE.NormalBlending, depthWrite: false, depthTest: true, fog: false, toneMapped: false,
     });
-    const postGeo = new THREE.CylinderGeometry(0.055, 0.1, 1, 8, 1, true);
-    const beaconGeo = new THREE.SphereGeometry(0.18, 8, 6);
+    const postGeo = new THREE.CylinderGeometry(0.09, 0.14, 1, 8, 1, true);
+    const beaconGeo = new THREE.SphereGeometry(0.24, 8, 6);
     this.beaconMat = new THREE.MeshBasicMaterial({
       color: 0xffb24e, transparent: true, opacity: 0.85,
       blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, fog: false, toneMapped: false,
@@ -243,6 +271,33 @@ export class BombardmentSystem {
       chevron.renderOrder = 5;
       this.chevrons.push(chevron);
       this.marker.add(chevron);
+    }
+    this.signMat = new THREE.MeshBasicMaterial({
+      color: 0xff5a2b, transparent: true, opacity: 0.88, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, fog: false, toneMapped: false,
+    });
+    this.signGlyphMat = new THREE.MeshBasicMaterial({
+      color: 0x241006, transparent: true, opacity: 0.96, side: THREE.DoubleSide,
+      depthWrite: false, depthTest: true, fog: false, toneMapped: false,
+    });
+    const signGeo = new THREE.PlaneGeometry(1.75, 1.75);
+    const glyphBarGeo = new THREE.PlaneGeometry(0.19, 0.78);
+    const glyphDotGeo = new THREE.CircleGeometry(0.13, 12);
+    for (let i = 0; i < BOMBARDMENT_BOUNDARY_MARKERS.signs; i++) {
+      const sign = new THREE.Group();
+      sign.name = 'bombardment-warning-sign';
+      const plate = new THREE.Mesh(signGeo, this.signMat);
+      plate.rotation.z = Math.PI / 4;
+      plate.renderOrder = 6;
+      const bar = new THREE.Mesh(glyphBarGeo, this.signGlyphMat);
+      bar.position.set(0, 0.14, 0.012);
+      bar.renderOrder = 7;
+      const dot = new THREE.Mesh(glyphDotGeo, this.signGlyphMat);
+      dot.position.set(0, -0.49, 0.012);
+      dot.renderOrder = 7;
+      sign.add(plate, bar, dot);
+      this.warningSigns.push(sign);
+      this.marker.add(sign);
     }
     this.marker.visible = false;
     scene.add(this.marker);
@@ -348,10 +403,16 @@ export class BombardmentSystem {
     return this.mapState;
   }
 
-  hudText(): string | null {
-    if (this.state === 'warning') return `轰炸区预警 ${Math.max(0, Math.ceil(this.timer))}s`;
-    if (this.state === 'active') return '轰炸进行中';
-    return null;
+  hudText(playerX?: number, playerZ?: number): string | null {
+    return bombardmentHudText(
+      this.state,
+      this.timer,
+      this.center.x,
+      this.center.y,
+      RADIUS,
+      playerX,
+      playerZ,
+    );
   }
 
   // 固定回归场景入口: 跳过随机选区, 直接展示指定位置的预警或落弹阶段.
@@ -379,7 +440,7 @@ export class BombardmentSystem {
     this.timer = BOMBARDMENT_TIMING.warning;
     this.marker.visible = true;
     this.syncMarkerToTerrain(game);
-    game.hud.toast('附近出现轰炸区', 'warning');
+    game.hud.toast('警告: 红色区域即将遭受炮火轰炸, 立即查看小地图并撤离', 'warning');
     game.audio.warn();
   }
 
@@ -387,7 +448,7 @@ export class BombardmentSystem {
     this.state = 'active';
     this.timer = BOMBARDMENT_TIMING.active;
     this.shellTimer = 0;
-    game.hud.toast('轰炸开始', 'danger');
+    game.hud.toast('轰炸区已开火, 立即离开红色边界', 'danger');
   }
 
   private pickCenter(game: Game): boolean {
@@ -439,7 +500,7 @@ export class BombardmentSystem {
       const x = Math.cos(a) * RADIUS;
       const z = Math.sin(a) * RADIUS;
       const localGround = game.world.getHeight(this.center.x + x, this.center.y + z) - baseY;
-      const h = 2.4 + (i % 2) * 0.45;
+      const h = 4.2 + (i % 2) * 0.65;
       const post = this.posts[i] as THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
       post.position.set(x, localGround + h * 0.5 + 0.1, z);
       post.scale.set(1, h, 1);
@@ -455,6 +516,15 @@ export class BombardmentSystem {
       chevron.position.set(x, localGround + 0.48, z);
       chevron.rotation.set(0, -a + Math.PI * 0.5, 0);
       chevron.scale.setScalar(i % 2 === 0 ? 1 : 0.82);
+    }
+    for (let i = 0; i < this.warningSigns.length; i++) {
+      const a = (i / this.warningSigns.length) * Math.PI * 2;
+      const x = Math.cos(a) * RADIUS;
+      const z = Math.sin(a) * RADIUS;
+      const localGround = game.world.getHeight(this.center.x + x, this.center.y + z) - baseY;
+      const sign = this.warningSigns[i] as THREE.Group;
+      sign.position.set(x, localGround + 5.45, z);
+      sign.rotation.set(0, -a - Math.PI * 0.5, 0);
     }
   }
 
@@ -487,6 +557,12 @@ export class BombardmentSystem {
     for (let i = 0; i < this.beacons.length; i++) {
       const localPulse = 0.82 + Math.sin(now * 5.2 + i * 0.72) * 0.18;
       (this.beacons[i] as THREE.Mesh).scale.setScalar(localPulse);
+    }
+    this.signMat.color.setHex(this.state === 'active' ? 0xff2d20 : 0xff7a32);
+    this.signMat.opacity = (this.state === 'active' ? 0.76 : 0.62) + pulse * 0.22;
+    for (let i = 0; i < this.warningSigns.length; i++) {
+      const localPulse = 0.94 + Math.sin(now * 4.4 + i * 0.86) * 0.07;
+      (this.warningSigns[i] as THREE.Group).scale.setScalar(localPulse);
     }
   }
 

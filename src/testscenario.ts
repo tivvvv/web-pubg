@@ -71,6 +71,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=effects',
   'scenario=effects&flash=1',
   'scenario=bottactics',
+  'scenario=bottactics&case=churchplaza',
   'scenario=botvehicle',
   'scenario=botvehicle&route=bridge&contact=1',
   'scenario=squadcommand&order=move',
@@ -784,6 +785,10 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
       panel.dataset.botSpeeds = bots.map((bot) => bot.char.speed2d.toFixed(2)).join('|');
       panel.dataset.botSmoke = bots.map((bot) => bot.char.throwables.smoke).join('|');
       panel.dataset.botFlash = bots.map((bot) => bot.char.throwables.flash).join('|');
+      panel.dataset.botWeapons = bots.map((bot) => (
+        bot.char.guns.map((gun) => gun?.def.id ?? 'empty').join(',')
+      )).join('|');
+      panel.dataset.botNavigation = bots.map((bot) => bot.navigationDiagnostic).join('|');
       window.requestAnimationFrame(publishTactics);
     };
     window.requestAnimationFrame(publishTactics);
@@ -1799,7 +1804,55 @@ function setupEffects(game: Game, params: URLSearchParams): void {
   }
 }
 
-function setupBotTactics(game: Game): void {
+function setupBotTactics(game: Game, params: URLSearchParams): void {
+  if (params.get('case') === 'churchplaza') {
+    const church = new THREE.Vector2();
+    if (!game.world.churchPlazaCenter(church)) return;
+    const bot = game.bots[0];
+    if (!bot) return;
+    const startX = church.x + 10.8;
+    const startZ = church.y + 28.4;
+    const weaponX = church.x;
+    const weaponZ = church.y + 17.2;
+    setGroundPlayer(game, church.x + 18, church.y + 31);
+    const player = game.playerCtl;
+    if (player) {
+      player.yaw = Math.atan2(church.x - player.char.pos.x, church.y + 18 - player.char.pos.z);
+      player.pitch = -0.08;
+    }
+    game.zone.center.set(church.x, church.y);
+    game.zone.nextCenter.set(church.x, church.y);
+    game.zone.radius = 200;
+    game.zone.nextRadius = 200;
+    game.zone.state = 'done';
+    game.zoneArmed = true;
+    bot.jumpS = -1;
+    bot.descent = null;
+    bot.trainingIdle = false;
+    bot.trainingPassive = true;
+    bot.char.alive = true;
+    bot.char.hp = 100;
+    bot.char.airPose = null;
+    bot.char.group.visible = true;
+    bot.char.pos.set(startX, game.world.groundHeight(startX, startZ, 30), startZ);
+    bot.char.groundH = bot.char.pos.y;
+    bot.char.grounded = true;
+    bot.char.guns.fill(null);
+    bot.char.ammo.rifle = 0;
+    bot.char.curSlot = 3;
+    // 对象池可能已满，回收一件远处物资，保证该场景始终有确定的广场武器目标。
+    const recycled = game.loot.items.find((item) => item.active && (
+      Math.hypot(item.group.position.x - church.x, item.group.position.z - church.y) > 80
+    ));
+    if (recycled) {
+      recycled.active = false;
+      recycled.group.visible = false;
+    }
+    const weaponY = game.world.groundHeight(weaponX, weaponZ, 30);
+    const weapon = game.loot.spawn('rifle', weaponX, weaponY, weaponZ, WEAPONS.rifle.magSize, 60);
+    if (weapon) weapon.outdoor = false;
+    return;
+  }
   setGroundPlayer(game, 0, 180);
   const player = game.playerCtl;
   if (player) {
@@ -2486,7 +2539,7 @@ export function applyTestScenarioFromUrl(game: Game): void {
   else if (id === 'botswim') setupBotSwim(game);
   else if (id === 'combat') setupCombat(game);
   else if (id === 'effects') setupEffects(game, params);
-  else if (id === 'bottactics') setupBotTactics(game);
+  else if (id === 'bottactics') setupBotTactics(game, params);
   else if (id === 'botvehicle') setupBotVehicle(game);
   else if (id === 'squadcommand') setupSquadCommand(game);
   else if (id === 'director') setupDirector(game);

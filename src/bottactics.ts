@@ -43,6 +43,13 @@ export function chooseStrategicMode(input: StrategicDecisionInput): BotStrategic
   return 'patrol';
 }
 
+export const UNARMED_SELF_DEFENCE_RANGE = 5.5;
+
+// 没有可用枪械时只处理贴脸威胁，避免看见远处敌人就中断搜枪并一路挥拳追击。
+export function shouldEngageWithoutGun(hasUsableGun: boolean, distance: number): boolean {
+  return hasUsableGun || distance <= UNARMED_SELF_DEFENCE_RANGE;
+}
+
 const PREFERRED_RANGE: Record<WeaponId, number> = {
   pistol: 18,
   rifle: 32,

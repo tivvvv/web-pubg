@@ -19,7 +19,8 @@ import {
 } from './botnav';
 import {
   chooseCombatMode, chooseStrategicMode, preferredCombatRange, selectCombatGunSlot,
-  shouldDeploySmoke, shouldExitVehicle, shouldSeekVehicle, shouldTacticalReload, zoneRotationUrgency,
+  shouldDeploySmoke, shouldEngageWithoutGun, shouldExitVehicle, shouldSeekVehicle, shouldTacticalReload,
+  zoneRotationUrgency,
   type BotCombatMode, type BotStrategicMode, type ZoneRotationUrgency,
 } from './bottactics';
 import { autoLootDeathCrate } from './deathcrate';
@@ -71,6 +72,7 @@ export class BotController {
   private hasMoveTarget = false;
   private swimBank = new THREE.Vector2();
   private bridgeWaypoint = new THREE.Vector2();
+  private landmarkWaypoint = new THREE.Vector2();
   private swimRepathT = 0;
   private swimStuckT = 0;
   private swimLastX = 0;
@@ -1296,7 +1298,7 @@ export class BotController {
   private wantsWeapon(kind: WeaponId | Exclude<MeleeId, 'fists'>): boolean {
     const c = this.char;
     if (isMeleeKind(kind)) return !c.hasGun() && c.melee.def.id === 'fists';
-    if (!c.hasGun()) return true;
+    if (!this.hasUsableGun()) return true;
     if (kind === 'pistol') return false;
     let minTier = 99;
     for (const g of c.guns) {
@@ -1332,6 +1334,7 @@ export class BotController {
         other.swimming || game.world.getHeight(other.pos.x, other.pos.z) < WATER_Y - SWIM_EXIT_DEPTH
       )) continue;
       const d = Math.hypot(other.pos.x - c.pos.x, other.pos.z - c.pos.z);
+      if (!shouldEngageWithoutGun(this.hasUsableGun(), d)) continue;
       const shotAge = game.nowSec - other.lastLoudShotT;
       if (shotAge >= 0 && shotAge < 1.4 && d < this.difficulty.hearingDistance) {
         const score = d + shotAge * 18;
@@ -1384,7 +1387,7 @@ export class BotController {
     } else if (this.state === 'engage') {
       // 目标暂不可见, 交给 lostT 逻辑
       this.losOk = false;
-    } else if (heard) {
+    } else if (heard && this.hasUsableGun()) {
       this.moveTarget.copy(heard.pos);
       this.searchOrigin.copy(heard.pos);
       this.searchStep = 0;
@@ -1392,7 +1395,7 @@ export class BotController {
       this.investigateT = 5.5;
       this.repathT = 2.2;
     } else {
-      const shared = game.enemySquads.contactFor(c, game.nowSec, game.chars);
+      const shared = this.hasUsableGun() ? game.enemySquads.contactFor(c, game.nowSec, game.chars) : null;
       if (shared) {
         this.moveTarget.set(shared.x, shared.y, shared.z);
         this.searchOrigin.set(shared.x, shared.y, shared.z);
@@ -1430,6 +1433,17 @@ export class BotController {
     const dx = t.pos.x - c.pos.x;
     const dz = t.pos.z - c.pos.z;
     const dist = Math.hypot(dx, dz);
+    if (!shouldEngageWithoutGun(this.hasUsableGun(), dist)) {
+      this.target = null;
+      this.state = 'wander';
+      this.hasMoveTarget = false;
+      this.repathT = 0;
+      this.lootScanT = 0;
+      this.tacticT = 0;
+      c.setStance('stand');
+      this.navigator.reset(c);
+      return;
+    }
     const desiredYaw = Math.atan2(dx, dz);
     const combatSlot = selectCombatGunSlot(c.guns, c.ammo, dist);
     if (combatSlot >= 0 && this.reloadT <= 0) c.curSlot = combatSlot;
@@ -1576,7 +1590,18 @@ export class BotController {
     } else if (this.tacticMode === 'retreat') {
       combatSpeed = 4.9;
     }
-    if (findBridgeExit(this.bridgeWaypoint, c.pos.x, c.pos.z, combatGoalX, combatGoalZ)) {
+    const landmarkAccess = game.world.churchPlazaAccessWaypoint(
+      this.landmarkWaypoint,
+      c.pos.x,
+      c.pos.z,
+      combatGoalX,
+      combatGoalZ,
+    );
+    if (landmarkAccess) {
+      combatGoalX = this.landmarkWaypoint.x;
+      combatGoalZ = this.landmarkWaypoint.y;
+      stopDistance = 0.85;
+    } else if (findBridgeExit(this.bridgeWaypoint, c.pos.x, c.pos.z, combatGoalX, combatGoalZ)) {
       combatGoalX = this.bridgeWaypoint.x;
       combatGoalZ = this.bridgeWaypoint.y;
       stopDistance = 0.9;
@@ -1955,11 +1980,23 @@ export class BotController {
       }
     }
 
-    // 搜索阶段优先恢复品, 弹药和可用武器, 再补护具与背包.
+    // 无可用枪时把枪械放在所有非紧急物资之前；持枪后再按恢复品、弹药、升级枪械补给。
     let gearFound = false;
     if (rotation === 'none' && this.strategicMode === 'loot' && this.lootScanT <= 0) {
-      this.lootScanT = (tier === 0 ? 0.35 : 0.75) * this.difficulty.lootScanScale;
-      if (c.hp < 65 && !hasHeal) {
+      const needsCombatWeapon = !this.hasUsableGun();
+      this.lootScanT = (needsCombatWeapon ? 0.18 : tier === 0 ? 0.35 : 0.75) * this.difficulty.lootScanScale;
+      if (needsCombatWeapon) {
+        const item = game.loot.nearestWeapon(
+          c.pos.x,
+          c.pos.y,
+          c.pos.z,
+          72 * this.difficulty.lootRangeScale,
+        );
+        if (item && isWeaponKind(item.kind) && this.wantsWeapon(item.kind)) {
+          gearFound = this.setLootTarget(game, item);
+        }
+      }
+      if (!gearFound && c.hp < 65 && !hasHeal) {
         const item = game.loot.nearestRecovery(
           c.pos.x,
           c.pos.y,
@@ -1978,7 +2015,7 @@ export class BotController {
         );
         if (ai) gearFound = this.setLootTarget(game, ai);
       }
-      if (!gearFound && tier < 3) {
+      if (!gearFound && !needsCombatWeapon && tier < 3) {
         const item = game.loot.nearestWeapon(
           c.pos.x,
           c.pos.y,
@@ -2056,15 +2093,26 @@ export class BotController {
       }
       const dx = this.moveTarget.x - c.pos.x;
       const dz = this.moveTarget.z - c.pos.z;
-      const bridgeExit = findBridgeExit(
+      const landmarkAccess = game.world.churchPlazaAccessWaypoint(
+        this.landmarkWaypoint,
+        c.pos.x,
+        c.pos.z,
+        this.moveTarget.x,
+        this.moveTarget.z,
+      );
+      const bridgeExit = !landmarkAccess && findBridgeExit(
         this.bridgeWaypoint,
         c.pos.x,
         c.pos.z,
         this.moveTarget.x,
         this.moveTarget.z,
       );
-      const navGoalX = bridgeExit ? this.bridgeWaypoint.x : this.moveTarget.x;
-      const navGoalZ = bridgeExit ? this.bridgeWaypoint.y : this.moveTarget.z;
+      const navGoalX = landmarkAccess
+        ? this.landmarkWaypoint.x
+        : bridgeExit ? this.bridgeWaypoint.x : this.moveTarget.x;
+      const navGoalZ = landmarkAccess
+        ? this.landmarkWaypoint.y
+        : bridgeExit ? this.bridgeWaypoint.y : this.moveTarget.z;
       const speed = this.strategicMode === 'rotate'
         ? rotation === 'immediate' ? 5.7 : 5.1
         : this.strategicMode === 'hunt' ? 4.7
@@ -2166,7 +2214,7 @@ export class BotController {
         this.rotationAttempt = (this.rotationAttempt + 1) % 8;
         this.navigator.reset(c);
       }
-      if (nav.reached && !bridgeExit) this.hasMoveTarget = false;
+      if (nav.reached && !bridgeExit && !landmarkAccess) this.hasMoveTarget = false;
       this.vaultProbeT -= dt;
       if (nav.blocked && this.vaultProbeT <= 0 && !c.vault && c.vaultCd <= 0) {
         this.vaultProbeT = 0.35;

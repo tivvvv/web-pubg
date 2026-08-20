@@ -5,11 +5,12 @@ import {
   BOMBARDMENT_BOUNDARY_MARKERS,
   BOMBARDMENT_TIMING,
   bombardmentEscapeVector,
+  bombardmentHudText,
 } from '../src/bombardment';
 
 describe('轰炸区避险方向', () => {
   it('边界使用密集低矮信标和方向标识', () => {
-    expect(BOMBARDMENT_BOUNDARY_MARKERS).toEqual({ posts: 16, chevrons: 24 });
+    expect(BOMBARDMENT_BOUNDARY_MARKERS).toEqual({ posts: 24, chevrons: 32, signs: 8 });
   });
 
   it('贴地高亮边界带具备足够辨识宽度', () => {
@@ -39,5 +40,15 @@ describe('轰炸区避险方向', () => {
     expect(out.toArray()).toEqual([1, 0]);
     expect(bombardmentEscapeVector('active', 0, 0, 30, 40, 0, out)).toBe(false);
     expect(bombardmentEscapeVector('idle', 0, 0, 30, 2, 0, out)).toBe(false);
+  });
+
+  it('HUD 明确区分区内危险和区外距离', () => {
+    expect(bombardmentHudText('warning', 12.2, 0, 0, 30, 4, 5))
+      .toContain('你在轰炸区内');
+    expect(bombardmentHudText('warning', 12.2, 0, 0, 30, 42, 0))
+      .toContain('距你 12m');
+    expect(bombardmentHudText('active', 8, 0, 0, 30, 0, 0))
+      .toContain('炮火正在落下');
+    expect(bombardmentHudText('idle', 0, 0, 0, 30, 0, 0)).toBeNull();
   });
 });
