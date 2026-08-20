@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { CANOPY_DEPLOY_VELOCITY, moveAirDescentHorizontal, stepAirDescentVelocity } from '../src/character';
+import { BotController } from '../src/bot';
+import type { Game } from '../src/game';
+import { isInsideFlightMap } from '../src/matchbalance';
 import { World } from '../src/world';
 
 function simulate(vy: number, phase: 'freefall' | 'canopy', seconds: number, step = 1 / 60): number {
@@ -49,5 +52,30 @@ describe('共享空降垂直物理', () => {
     expect(moveAirDescentHorizontal(position, 1.5, -0.75, 0.72, world)).toBe(false);
     expect(position.x).toBeCloseTo(3.5, 6);
     expect(position.z).toBeCloseTo(-3.75, 6);
+  });
+
+  it('机器人达到预定里程后仍需等飞机进入地图才离机', () => {
+    const bot = new BotController('边界跳伞测试', 0x335577);
+    bot.jumpS = 55;
+    const game = {
+      planeS: 55,
+      flightPoint(out: THREE.Vector3, distance: number) {
+        out.set(distance - 500, 200, 0);
+      },
+      isInsideFlightJumpZone(x: number, z: number) {
+        return isInsideFlightMap(x, z);
+      },
+    } as unknown as Game;
+
+    bot.update(1 / 60, game);
+    expect(bot.jumpS).toBe(55);
+    expect(bot.descent).toBeNull();
+    expect(bot.char.pos.x).toBeLessThan(-350);
+
+    game.planeS = 150;
+    bot.update(1 / 60, game);
+    expect(bot.jumpS).toBe(-1);
+    expect(bot.descent).toBe('freefall');
+    expect(bot.char.pos.x).toBe(-350);
   });
 });

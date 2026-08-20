@@ -67,7 +67,10 @@ describe('枪械操控模型', () => {
     expect(reloadDuration(
       { def: WEAPONS.shotgun, mag: 0, att: emptyAttachments() },
       true,
-    )).toBe(WEAPONS.shotgun.reloadTime);
+    )).toBeCloseTo(WEAPONS.shotgun.reloadTime * 0.9, 8);
+    for (const def of Object.values(WEAPONS)) {
+      expect(reloadDuration({ def, mag: 0, att: emptyAttachments() }, true)).toBeLessThan(def.reloadTime * 1.11);
+    }
   });
 
   it('每种枪械都有独立且有效的后坐恢复参数', () => {

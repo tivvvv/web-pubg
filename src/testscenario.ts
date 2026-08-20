@@ -81,6 +81,7 @@ export const RELEASE_SCENARIO_ROUTES = [
   'scenario=director&simSteps=12',
   'scenario=parachute',
   'scenario=parachute&phase=plane',
+  'scenario=parachute&phase=plane&approach=1',
   'scenario=parachute&collision=apartment',
   'scenario=parachute&stress=1',
   'scenario=vehicle&drive=1',
@@ -882,6 +883,10 @@ function showScenarioPanel(id: ScenarioId, game: Game): void {
         panel.dataset.playerAirPose = character.airPose ?? 'none';
         panel.dataset.playerHeight = character.pos.y.toFixed(2);
         panel.dataset.playerPosition = `${character.pos.x.toFixed(2)},${character.pos.z.toFixed(2)}`;
+        panel.dataset.flightJumpReady = String(
+          controller.descent === 'plane' && game.isInsideFlightJumpZone(character.pos.x, character.pos.z),
+        );
+        panel.dataset.flightRoute = game.flightRouteId;
         const params = new URLSearchParams(window.location.search);
         if (params.get('collision') === 'apartment') {
           const plot = game.world.buildings.plots.find((candidate) => candidate.arch === 'apartment');
@@ -2181,7 +2186,7 @@ function setupParachute(game: Game, params: URLSearchParams): void {
   if (!player) return;
   if (params.get('phase') === 'plane') {
     player.descent = 'plane';
-    player.planeS = 500;
+    player.planeS = params.get('approach') === '1' ? 0 : 500;
     game.flightPoint(player.char.pos, player.planeS);
     player.char.swimming = false;
     player.char.swimDip = 0;

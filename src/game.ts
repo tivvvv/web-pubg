@@ -104,6 +104,7 @@ import {
   ENEMY_SQUAD_COUNT,
   MATCH_PLAYER_COUNT,
   botJumpDistance,
+  isInsideFlightMap,
   SQUAD_SIZE,
   combatDamageScale,
   squadIdForMatchIndex,
@@ -778,9 +779,9 @@ export class Game {
     this.hud.toast('已着陆, 搜寻武器和护具', 'success');
   }
 
-  // 运输机只有位于当前白圈内时允许玩家主动跳伞
+  // 运输机进入地图边界后才开放离机。航线仍在地图外时，玩家和机器人都必须留在机上。
   isInsideFlightJumpZone(x: number, z: number): boolean {
-    return !this.zone.isOutside(x, z);
+    return isInsideFlightMap(x, z);
   }
 
   private tacticalZoneScore(x: number, z: number, nextRadius: number, phase: number): number {
@@ -1043,6 +1044,8 @@ export class Game {
     const t = performance.now();
     const dt = Math.min((t - this.lastT) / 1000, 0.05);
     this.lastT = t;
+    // 离散键盘操作只在帧边界串行处理，避免多个按键事件重入修改同一角色状态。
+    this.input.flushActions();
     if (this.state === 'playing') {
       const simulationDt = this.testSimulationSteps > 1 ? 1 / 60 : dt;
       for (let step = 0; step < this.testSimulationSteps && this.state === 'playing'; step++) {
@@ -1240,6 +1243,7 @@ export class Game {
     this.loot.update(dt);
     this.deathCrates.update(dt);
     this.effects.update(dt);
+    this.wildlife.setTreasureFlightBeacon(player.descent === 'plane');
     this.wildlife.update(dt, this.chars, (target, damage, attacker) => this.handleWildlifeAttack(target, damage, attacker));
     this.wildlife.resolveVehicleCollisions(this.vehicles.list);
     this.grenades.update(dt, this);
@@ -2592,7 +2596,7 @@ export class Game {
 
     // 毒圈状态
     if (inPlane) {
-      this.hud.setZoneStatus(flightJumpReady ? '可跳伞' : '航线外', false);
+      this.hud.setZoneStatus(flightJumpReady ? '可跳伞' : '尚未进入地图', false);
     } else if (outside && c.alive) {
       this.hud.setZoneStatus(`圈外 -${this.zone.dps}/s`, true);
     } else {
@@ -2661,6 +2665,7 @@ export class Game {
       this.mapSquad,
       this.squadCommands.mapState(),
       this.airdrop.icon(),
+      this.wildlife.treasureMapIcon(player.descent === 'plane'),
       this.bombardment.icon(),
       this.regionEvents,
     );

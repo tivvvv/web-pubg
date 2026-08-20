@@ -15,6 +15,7 @@ import {
   emptyDropRegionCounts,
   flightLineDistance,
   flightRouteOrigin,
+  isInsideFlightMap,
   selectFlightRoute,
   selectDropRegion,
 } from '../src/matchbalance';
@@ -42,6 +43,15 @@ describe('对局节奏和地图最终平衡', () => {
       const alongZ = origin.z + Math.sin(route.angle) * 320;
       expect(flightLineDistance(alongX, alongZ, route.angle, route.offset)).toBeCloseTo(0, 8);
     }
+  });
+
+  it('运输机进入地图边界后才开放跳伞', () => {
+    expect(isInsideFlightMap(-351, 0)).toBe(false);
+    expect(isInsideFlightMap(0, 351)).toBe(false);
+    expect(isInsideFlightMap(-350, 0)).toBe(true);
+    expect(isInsideFlightMap(0, 350)).toBe(true);
+    expect(isInsideFlightMap(120, -85)).toBe(true);
+    expect(isInsideFlightMap(Number.NaN, 0)).toBe(false);
   });
 
   it('六个区域的落点容量足以容纳全部敌人且都有稳定战斗套件', () => {

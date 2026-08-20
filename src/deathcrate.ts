@@ -109,7 +109,7 @@ export function autoLootDeathCrate(c: Character, crate: DeathCrate): number {
       taken++;
     }
   }
-  const meleeRank = { fists: 0, knife: 1, crowbar: 2, pan: 3 } as const;
+  const meleeRank = { fists: 0, knife: 1, bat: 2, crowbar: 3, pan: 4, axe: 5 } as const;
   if (bag.melee && meleeRank[bag.melee] > meleeRank[c.melee.def.id]) {
     const old = c.melee.def.id === 'fists' ? null : c.melee.def.id;
     c.melee = { def: MELEE[bag.melee] };

@@ -4,6 +4,53 @@ export type Action =
   | 'reload' | 'mute' | 'pickup' | 'heal' | 'backpack' | 'fireMode' | 'crouch' | 'prone'
   | 'wheelUp' | 'wheelDown' | 'squadContext' | 'squadHold' | 'squadFollow';
 
+const ACTION_QUEUE_CAPACITY = 16;
+const ACTIONS_PER_FRAME = 4;
+
+function actionFamily(action: Action): string | null {
+  if (action.startsWith('slot')) return 'slot';
+  if (action === 'crouch' || action === 'prone') return 'stance';
+  if (action === 'wheelUp' || action === 'wheelDown') return 'wheel';
+  if (action === 'squadContext' || action === 'squadHold' || action === 'squadFollow') return 'squad';
+  return null;
+}
+
+/**
+ * 将离散操作从浏览器事件回调隔离到游戏帧中处理。
+ * 同一帧的重复键和互斥操作只保留最新一次，并设置硬上限，避免组合键风暴造成重入状态切换。
+ */
+export class ActionQueue {
+  private readonly pending: Action[] = [];
+
+  enqueue(action: Action): void {
+    const family = actionFamily(action);
+    const existing = this.pending.findIndex((queued) => (
+      queued === action || (family !== null && actionFamily(queued) === family)
+    ));
+    if (existing >= 0) this.pending.splice(existing, 1);
+    if (this.pending.length >= ACTION_QUEUE_CAPACITY) this.pending.shift();
+    this.pending.push(action);
+  }
+
+  flush(dispatch: (action: Action) => void, limit = ACTIONS_PER_FRAME): number {
+    let count = 0;
+    while (count < limit && this.pending.length > 0) {
+      const action = this.pending.shift() as Action;
+      dispatch(action);
+      count++;
+    }
+    return count;
+  }
+
+  clear(): void {
+    this.pending.length = 0;
+  }
+
+  get size(): number {
+    return this.pending.length;
+  }
+}
+
 export class Input {
   keys = new Set<string>();
   lmb = false;
@@ -16,6 +63,7 @@ export class Input {
   private el: HTMLElement;
   private onAction: (a: Action) => void;
   private onLockChange: (locked: boolean) => void;
+  private readonly actionQueue = new ActionQueue();
   private disposers: (() => void)[] = [];
   // ?test 模式: 无指针锁定(自动化测试/调试)
   readonly testMode = new URLSearchParams(window.location.search).has('test');
@@ -43,22 +91,22 @@ export class Input {
       if (e.repeat) return;
       this.keys.add(e.code);
       switch (e.code) {
-        case 'Digit1': this.onAction('slot1'); break;
-        case 'Digit2': this.onAction('slot2'); break;
-        case 'Digit3': this.onAction('slot3'); break;
-        case 'Digit4': this.onAction('slot4'); break;
-        case 'Digit5': this.onAction('slot5'); break;
-        case 'KeyR': this.onAction('reload'); break;
-        case 'KeyB': this.onAction('fireMode'); break;
-        case 'KeyM': this.onAction('mute'); break;
-        case 'KeyF': this.onAction('pickup'); break;
-        case 'KeyX': this.onAction('heal'); break;
-        case 'KeyC': this.onAction('crouch'); break;
-        case 'KeyZ': this.onAction('prone'); break;
-        case 'KeyG': this.onAction('squadContext'); break;
-        case 'KeyH': this.onAction('squadHold'); break;
-        case 'KeyJ': this.onAction('squadFollow'); break;
-        case 'Tab': this.onAction('backpack'); break;
+        case 'Digit1': this.actionQueue.enqueue('slot1'); break;
+        case 'Digit2': this.actionQueue.enqueue('slot2'); break;
+        case 'Digit3': this.actionQueue.enqueue('slot3'); break;
+        case 'Digit4': this.actionQueue.enqueue('slot4'); break;
+        case 'Digit5': this.actionQueue.enqueue('slot5'); break;
+        case 'KeyR': this.actionQueue.enqueue('reload'); break;
+        case 'KeyB': this.actionQueue.enqueue('fireMode'); break;
+        case 'KeyM': this.actionQueue.enqueue('mute'); break;
+        case 'KeyF': this.actionQueue.enqueue('pickup'); break;
+        case 'KeyX': this.actionQueue.enqueue('heal'); break;
+        case 'KeyC': this.actionQueue.enqueue('crouch'); break;
+        case 'KeyZ': this.actionQueue.enqueue('prone'); break;
+        case 'KeyG': this.actionQueue.enqueue('squadContext'); break;
+        case 'KeyH': this.actionQueue.enqueue('squadHold'); break;
+        case 'KeyJ': this.actionQueue.enqueue('squadFollow'); break;
+        case 'Tab': this.actionQueue.enqueue('backpack'); break;
       }
     });
     this.listen(window, 'keyup', (e: KeyboardEvent) => this.keys.delete(e.code));
@@ -66,6 +114,7 @@ export class Input {
       this.keys.clear();
       this.lmb = false;
       this.rmb = false;
+      this.actionQueue.clear();
     });
     this.listen(document, 'mousemove', (e: MouseEvent) => {
       if (!this.locked && !this.testMode) return;
@@ -79,7 +128,7 @@ export class Input {
         this.firePressed = true;
       } else if (e.button === 1) {
         e.preventDefault();
-        this.onAction('squadContext');
+        this.actionQueue.enqueue('squadContext');
       } else if (e.button === 2) {
         this.rmb = true;
       }
@@ -91,7 +140,7 @@ export class Input {
     this.listen(document, 'contextmenu', (e: Event) => e.preventDefault());
     this.listen(document, 'wheel', (e: WheelEvent) => {
       if (!this.locked && !this.testMode) return;
-      this.onAction(e.deltaY > 0 ? 'wheelDown' : 'wheelUp');
+      this.actionQueue.enqueue(e.deltaY > 0 ? 'wheelDown' : 'wheelUp');
     }, { passive: true });
     this.listen(document, 'pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.el;
@@ -99,6 +148,7 @@ export class Input {
         this.lmb = false;
         this.rmb = false;
         this.keys.clear();
+        this.actionQueue.clear();
       }
       this.onLockChange(this.locked);
     });
@@ -132,8 +182,17 @@ export class Input {
     return v;
   }
 
+  flushActions(): number {
+    return this.actionQueue.flush(this.onAction);
+  }
+
+  clearActions(): void {
+    this.actionQueue.clear();
+  }
+
   dispose(): void {
     for (const d of this.disposers) d();
     this.disposers.length = 0;
+    this.actionQueue.clear();
   }
 }

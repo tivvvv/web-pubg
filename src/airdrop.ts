@@ -6,8 +6,9 @@ import * as THREE from 'three';
 import { buildTransportPlane } from './planemodel';
 import { WATER_Y, type Platform, type World } from './world';
 import { AMMO_LOOT_KIND, WEAPONS } from './weapons';
+import { magSizeOf } from './attachments';
 import { rand, clamp } from './utils';
-import type { AabbCollider } from './types';
+import type { AabbCollider, GunAttachments, LootKind, WeaponId } from './types';
 import type { Game } from './game';
 import { random } from './random';
 
@@ -18,6 +19,44 @@ const SMOKE_TIME = 60;    // 红烟持续时间(s)
 const INTEREST_TIME = 45; // bot 兴趣窗口(s)
 const INTEREST_DIST = 120; // bot 好奇半径(m)
 const MAX_DROPS = 3;
+
+export interface AirdropLootItem {
+  kind: LootKind;
+  mag?: number;
+  att?: GunAttachments;
+}
+
+/** 空投固定提供两把高级主武器、完整三级套和成组战术物资。 */
+export function createAirdropLootManifest(rng: () => number = random): AirdropLootItem[] {
+  const precision: WeaponId = rng() < 0.52 ? 'sniper' : 'lmg';
+  const assault: WeaponId = rng() < 0.5 ? 'akm' : 'dmr';
+  const precisionAtt: GunAttachments = precision === 'sniper'
+    ? { sight: null, mag: 'extmag', muzzle: 'suppressor' }
+    : { sight: 'scope2', mag: 'extmag', muzzle: 'comp' };
+  const assaultAtt: GunAttachments = {
+    sight: assault === 'dmr' ? 'scope4' : 'scope2',
+    mag: 'extmag',
+    muzzle: 'comp',
+  };
+  const precisionGun = { def: WEAPONS[precision], mag: 0, att: precisionAtt };
+  const assaultGun = { def: WEAPONS[assault], mag: 0, att: assaultAtt };
+  return [
+    { kind: precision, mag: magSizeOf(precisionGun), att: precisionAtt },
+    { kind: assault, mag: magSizeOf(assaultGun), att: assaultAtt },
+    { kind: AMMO_LOOT_KIND[precisionGun.def.ammo] },
+    { kind: AMMO_LOOT_KIND[precisionGun.def.ammo] },
+    { kind: AMMO_LOOT_KIND[assaultGun.def.ammo] },
+    { kind: AMMO_LOOT_KIND[assaultGun.def.ammo] },
+    { kind: 'helmet3' },
+    { kind: 'vest3' },
+    { kind: 'pack3' },
+    { kind: 'medkit' },
+    { kind: 'drink' },
+    { kind: 'attReddot' },
+    { kind: 'frag' },
+    { kind: 'smoke' },
+  ];
+}
 
 export interface AirdropPacing {
   firstDelay: number;
@@ -180,27 +219,14 @@ export class AirdropManager {
     crate.state = 'opened';
     crate.smokeT = 0; // 开过后烟/图标停止(已舔标记)
     this.game.soundAt(crate.pos, (d, p) => this.game.audio.hiss(d, p));
-    // 保底高级套: 狙击或步枪(满弹匣) + 1~2 盒匹配弹药 + 三级甲 + 医疗箱 + 概率饮料/手雷
-    const gunRoll = random();
-    const gunKind = gunRoll < 0.38 ? 'sniper' : gunRoll < 0.72 ? 'lmg' : 'rifle';
-    const gdef = WEAPONS[gunKind];
-    const items: { kind: import('./types').LootKind; mag?: number }[] = [
-      { kind: gunKind, mag: gdef.magSize },
-      { kind: AMMO_LOOT_KIND[gdef.ammo] },
-      { kind: random() < 0.5 ? 'helmet3' : 'vest3' },
-      { kind: 'medkit' },
-    ];
-    if (random() < 0.5) items.push({ kind: AMMO_LOOT_KIND[gdef.ammo] });
-    if (random() < 0.6) items.push({ kind: 'drink' });
-    if (random() < 0.4) items.push({ kind: 'frag' });
-    if (random() < 0.45) items.push({ kind: 'flash' });
+    const items = createAirdropLootManifest();
     for (let i = 0; i < items.length; i++) {
       const a = (i / items.length) * Math.PI * 2 + random() * 0.6;
       const r = 1.6 + random() * 0.7;
       const x = crate.pos.x + Math.cos(a) * r;
       const z = crate.pos.z + Math.sin(a) * r;
-      const it = items[i] as { kind: import('./types').LootKind; mag?: number };
-      this.game.loot.spawn(it.kind, x, this.world.getHeight(x, z), z, it.mag ?? -1, 0);
+      const it = items[i] as AirdropLootItem;
+      this.game.loot.spawn(it.kind, x, this.world.getHeight(x, z), z, it.mag ?? -1, 0, it.att ?? null);
     }
   }
 

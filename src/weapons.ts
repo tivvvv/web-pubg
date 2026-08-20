@@ -72,6 +72,8 @@ export const MELEE: Record<MeleeId, MeleeDef> = {
   knife: { id: 'knife', name: '砍刀', damage: 40, range: 2.4, cooldown: 0.6 },
   pan: { id: 'pan', name: '平底锅', damage: 55, range: 2.25, cooldown: 0.75 },
   crowbar: { id: 'crowbar', name: '撬棍', damage: 46, range: 2.55, cooldown: 0.62 },
+  axe: { id: 'axe', name: '消防斧', damage: 62, range: 2.45, cooldown: 0.82 },
+  bat: { id: 'bat', name: '棒球棍', damage: 44, range: 2.65, cooldown: 0.58 },
 };
 
 // 投掷物定义(手雷伤害逻辑在 throwables.ts)

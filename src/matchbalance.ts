@@ -1,4 +1,5 @@
 import { REGIONS, type RegionDef, type RegionId } from './regions';
+import { WORLD_HALF } from './worldlayout';
 
 export const MATCH_PLAYER_COUNT = 64;
 export const SQUAD_SIZE = 4;
@@ -49,6 +50,11 @@ export function flightRouteOrigin(route: FlightRoute): { x: number; z: number } 
     x: Math.sin(route.angle) * route.offset,
     z: -Math.cos(route.angle) * route.offset,
   };
+}
+
+export function isInsideFlightMap(x: number, z: number, mapHalf = WORLD_HALF): boolean {
+  if (![x, z, mapHalf].every(Number.isFinite) || mapHalf <= 0) return false;
+  return Math.abs(x) <= mapHalf && Math.abs(z) <= mapHalf;
 }
 
 export type CombatTeam = 'squad' | 'enemy';

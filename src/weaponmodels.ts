@@ -634,6 +634,37 @@ function buildCrowbar(): WeaponModel {
   return { group: g, muzzle: muzzleAt(g, 0, 0.11, 0.62), mag: null };
 }
 
+// ── 消防斧: 红色复合柄、钢制斧头、背部破拆锥 ──
+function buildAxe(): WeaponModel {
+  const g = new THREE.Group();
+  b(g, MAT_BD, 0.035, 0.035, 0.64, 0, 0, 0.14);
+  b(g, MAT_RUBBER, 0.047, 0.047, 0.23, 0, 0, -0.24);
+  b(g, MAT_LT, 0.32, 0.16, 0.055, 0, 0.045, 0.5, 0, 0, -0.08);
+  b(g, MAT_DK, 0.12, 0.11, 0.065, -0.2, 0.045, 0.5, 0, 0, -0.4);
+  const edge = b(g, MAT_LT, 0.018, 0.19, 0.07, 0.17, 0.035, 0.5, 0, 0, -0.08);
+  edge.name = 'axe-cutting-edge';
+  return { group: g, muzzle: muzzleAt(g, 0.2, 0.04, 0.55), mag: null };
+}
+
+// ── 棒球棍: 木质锥形击打段、缠带握把和尾帽 ──
+function buildBat(): WeaponModel {
+  const g = new THREE.Group();
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.075, 0.62, 14), MAT_TN);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.z = 0.15;
+  barrel.castShadow = true;
+  g.add(barrel);
+  cz(g, MAT_RUBBER, 0.048, 0.25, 0, 0, -0.28);
+  for (let z = -0.38; z <= -0.18; z += 0.05) {
+    const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.049, 0.006, 6, 14), MAT_DK);
+    wrap.position.z = z;
+    wrap.rotation.x = Math.PI / 2;
+    g.add(wrap);
+  }
+  cz(g, MAT_DK, 0.06, 0.035, 0, 0, -0.42);
+  return { group: g, muzzle: muzzleAt(g, 0, 0, 0.48), mag: null };
+}
+
 // ── 手雷: 微扁球体 + 菠萝刻槽 + 银色压柄 + 引信座 + 拉环 ──
 function buildFrag(): WeaponModel {
   const g = new THREE.Group();
@@ -751,6 +782,8 @@ function proto(id: WeaponModelId): WeaponModel {
       case 'knife': p = buildKnife(); break;
       case 'pan': p = buildPan(); break;
       case 'crowbar': p = buildCrowbar(); break;
+      case 'axe': p = buildAxe(); break;
+      case 'bat': p = buildBat(); break;
       case 'frag': p = buildFrag(); break;
       case 'smoke': p = buildSmoke(); break;
       case 'flash': p = buildFlash(); break;

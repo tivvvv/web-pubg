@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { forestCoreMetrics, WildlifeSystem, WILDLIFE_COUNTS, type WildlifeKind } from '../src/wildlife';
+import {
+  forestCoreMetrics, TIGER_DETECTION_RADIUS, TIGER_GUARD_RADIUS, TIGER_PATROL_RADIUS,
+  WildlifeSystem, WILDLIFE_COUNTS, type WildlifeKind,
+} from '../src/wildlife';
 import { WATER_Y, World } from '../src/world';
 import { Vehicle, VEHICLE_SPEC } from '../src/vehicles';
 
@@ -140,6 +143,14 @@ describe('环境动物系统', () => {
     expect(treasure.group.children.filter((child) => child.name === 'treasure-spark')).toHaveLength(12);
     expect(treasure.group.getObjectByName('treasure-lock-gem')).toBeDefined();
     expect(treasure.group.getObjectByName('treasure-golden-halo')).toBeDefined();
+    const flightBeacon = treasure.group.getObjectByName('treasure-flight-beacon');
+    expect(flightBeacon).toBeDefined();
+    expect(flightBeacon?.visible).toBe(false);
+    wildlife.setTreasureFlightBeacon(true);
+    expect(flightBeacon?.visible).toBe(true);
+    expect(wildlife.treasureMapIcon(true)).toEqual(treasure.pos);
+    wildlife.setTreasureFlightBeacon(false);
+    expect(flightBeacon?.visible).toBe(false);
     const aura = treasure.group.getObjectByName('treasure-aura-light') as THREE.PointLight | undefined;
     expect(aura?.intensity).toBeGreaterThan(2);
 
@@ -151,6 +162,9 @@ describe('环境动物系统', () => {
       expect(tiger.group.position.distanceTo(treasure.pos)).toBeGreaterThan(3.4);
       expect(tiger.group.position.distanceTo(treasure.pos)).toBeLessThan(7.5);
     }
+    expect(TIGER_PATROL_RADIUS).toBeGreaterThan(12);
+    expect(TIGER_DETECTION_RADIUS).toBeGreaterThan(TIGER_PATROL_RADIUS);
+    expect(TIGER_GUARD_RADIUS).toBeGreaterThan(TIGER_DETECTION_RADIUS);
     expect(wildlife.nearestClosedTreasure(
       treasure.pos.x,
       treasure.pos.y + 0.55,
@@ -279,6 +293,8 @@ describe('环境动物系统', () => {
         expect(Math.hypot(x - entity.anchor.x, z - entity.anchor.z)).toBeLessThanOrEqual(13);
       } else if (entity.kind === 'bird') {
         expect(Math.hypot(x - entity.anchor.x, z - entity.anchor.z)).toBeLessThanOrEqual(24);
+      } else if (entity.kind === 'tiger') {
+        expect(Math.hypot(x - entity.anchor.x, z - entity.anchor.z)).toBeLessThanOrEqual(TIGER_PATROL_RADIUS + 2);
       } else {
         expect(Math.hypot(x - entity.anchor.x, z - entity.anchor.z)).toBeLessThanOrEqual(17);
       }

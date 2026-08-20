@@ -74,6 +74,10 @@ export const WILDLIFE_COUNTS: Readonly<Record<WildlifeKind, number>> = Object.fr
   crocodile: 4,
 });
 
+export const TIGER_PATROL_RADIUS = 18;
+export const TIGER_GUARD_RADIUS = 48;
+export const TIGER_DETECTION_RADIUS = 34;
+
 const MAT = {
   cow: new THREE.MeshStandardMaterial({ color: 0x6a4430, roughness: 0.92 }),
   cowDark: new THREE.MeshStandardMaterial({ color: 0x29201b, roughness: 0.95 }),
@@ -683,6 +687,48 @@ function buildForestTreasure(): { group: THREE.Group; lid: THREE.Group; loot: TH
   halo.rotation.x = -Math.PI / 2;
   group.add(halo);
 
+  // 飞机阶段使用的远距离金色信标。仅在尚未跳伞时显示，落地后不会长期干扰战斗视线。
+  const beacon = new THREE.Group();
+  beacon.name = 'treasure-flight-beacon';
+  beacon.visible = false;
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.28, 1.35, 150, 12, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xffcf45,
+      transparent: true,
+      opacity: 0.22,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    }),
+  );
+  beam.name = 'treasure-flight-beam';
+  beam.position.y = 75;
+  beam.frustumCulled = false;
+  beacon.add(beam);
+  for (let index = 0; index < 3; index++) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(2.4 + index * 1.25, 2.7 + index * 1.25, 36),
+      new THREE.MeshBasicMaterial({
+        color: index === 1 ? 0xfff1a0 : 0xffb21f,
+        transparent: true,
+        opacity: 0.58 - index * 0.1,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        fog: false,
+      }),
+    );
+    ring.name = 'treasure-flight-ring';
+    ring.userData.phase = index * 0.9;
+    ring.position.y = 2.2 + index * 3.4;
+    ring.rotation.x = -Math.PI / 2;
+    ring.frustumCulled = false;
+    beacon.add(ring);
+  }
+  group.add(beacon);
+
   const lining = mesh(new THREE.BoxGeometry(1.25, 0.075, 0.7), MAT.chestDark, 0, 0.76, 0);
   lining.name = 'treasure-lining';
   group.add(lining);
@@ -1045,6 +1091,7 @@ export class WildlifeSystem {
     this.treasure.loot.rotation.y = 0;
     const glow = this.treasure.group.getObjectByName('forest-treasure-glow');
     if (glow) glow.visible = false;
+    this.setTreasureFlightBeacon(false);
     let tigerIndex = 0;
     for (const entity of this.entities) {
       entity.alive = true;
@@ -1081,6 +1128,18 @@ export class WildlifeSystem {
       halo.rotation.z = this.time * 0.22;
       halo.scale.setScalar(0.96 + Math.sin(this.time * 1.8) * 0.045);
     }
+    const beacon = this.treasure.group.getObjectByName('treasure-flight-beacon');
+    if (beacon?.visible) {
+      beacon.rotation.y = this.time * 0.18;
+      for (const ring of beacon.children.filter((child) => child.name === 'treasure-flight-ring')) {
+        const phase = Number(ring.userData.phase ?? 0);
+        const cycle = (this.time * 0.28 + phase) % 1;
+        ring.position.y = 2.2 + cycle * 14;
+        ring.scale.setScalar(0.65 + cycle * 1.15);
+        const material = (ring as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        material.opacity = (1 - cycle) * 0.62;
+      }
+    }
     if (this.treasure.opened && this.treasure.lidT < 1) {
       this.treasure.lidT = Math.min(1, this.treasure.lidT + dt * 2.3);
       this.treasure.lid.rotation.x = -1.72 * this.treasure.lidT;
@@ -1112,6 +1171,15 @@ export class WildlifeSystem {
     const dy = this.treasure.pos.y + 0.55 - y;
     const dz = this.treasure.pos.z - z;
     return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance ? this.treasure : null;
+  }
+
+  setTreasureFlightBeacon(active: boolean): void {
+    const beacon = this.treasure.group.getObjectByName('treasure-flight-beacon');
+    if (beacon) beacon.visible = active && !this.treasure.opened;
+  }
+
+  treasureMapIcon(revealed: boolean): { x: number; z: number } | null {
+    return revealed && !this.treasure.opened ? this.treasure.pos : null;
   }
 
   openTreasure(): boolean {
@@ -1244,7 +1312,7 @@ export class WildlifeSystem {
     entity.attackCooldown = Math.max(0, entity.attackCooldown - dt);
     entity.attackPose = Math.max(0, entity.attackPose - dt * 2.8);
     let target: WildlifeCharacterBody | null = null;
-    let targetDistance = 22;
+    let targetDistance = TIGER_DETECTION_RADIUS;
     for (const character of characters) {
       if (!character.alive || character.swimming || Math.abs(character.pos.y - entity.group.position.y) > 2.6) continue;
       const distance = Math.hypot(
@@ -1260,7 +1328,7 @@ export class WildlifeSystem {
       entity.anchor.x - entity.group.position.x,
       entity.anchor.z - entity.group.position.z,
     );
-    if (target && homeDistance < 28) {
+    if (target && homeDistance < TIGER_GUARD_RADIUS) {
       const dx = target.pos.x - entity.group.position.x;
       const dz = target.pos.z - entity.group.position.z;
       entity.heading = Math.atan2(dx, dz);
@@ -1272,7 +1340,7 @@ export class WildlifeSystem {
       }
     } else {
       entity.decisionTimer -= dt;
-      if (homeDistance > 7.5) {
+      if (homeDistance > TIGER_PATROL_RADIUS) {
         entity.heading = Math.atan2(entity.anchor.x - entity.group.position.x, entity.anchor.z - entity.group.position.z);
         entity.speed = 1.7;
       } else if (entity.decisionTimer <= 0) {

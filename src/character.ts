@@ -182,6 +182,8 @@ interface SharedCanopyAssets {
 
 let sharedCanopyAssets: SharedCanopyAssets | null = null;
 const canopyMaterialCache = new Map<number, readonly [THREE.MeshStandardMaterial, THREE.MeshStandardMaterial]>();
+export const CANOPY_GROUP_OFFSET_Y = 2.72;
+export const CANOPY_HARNESS_HEIGHT = 1.3;
 
 function canopyAssets(): SharedCanopyAssets {
   if (sharedCanopyAssets) return sharedCanopyAssets;
@@ -203,9 +205,13 @@ function canopyAssets(): SharedCanopyAssets {
 
   const linePos: number[] = [];
   for (const [lx, lz] of [[-2.15, -0.82], [-2.15, 0.82], [-0.8, -1.28], [-0.8, 1.28], [0.8, -1.28], [0.8, 1.28], [2.15, -0.82], [2.15, 0.82]] as const) {
-    const harnessX = Math.sign(lx) * 0.3;
-    const harnessZ = Math.sign(lz) * 0.18;
-    linePos.push(lx, 0.2, lz, harnessX, -2.48, harnessZ);
+    // 吊绳收束在左右肩背的伞具吊带，而不是继续垂到腰腿和脚边。
+    const harnessX = Math.sign(lx) * 0.27;
+    const harnessZ = Math.sign(lz) * 0.12;
+    linePos.push(
+      lx, 0.2, lz,
+      harnessX, CANOPY_HARNESS_HEIGHT - CANOPY_GROUP_OFFSET_Y, harnessZ,
+    );
   }
   const lines = new THREE.BufferGeometry();
   lines.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
@@ -943,7 +949,7 @@ export class Character {
     g.add(new THREE.LineSegments(assets.lines, assets.lineMaterial));
     // 伞盖后缘黑色导流带, 远距离也能读出伞面轮廓。
     g.add(new THREE.Mesh(assets.trailing, assets.trailingMaterial));
-    g.position.set(0, 2.72, 0);
+    g.position.set(0, CANOPY_GROUP_OFFSET_Y, 0);
     this.parts.inner.add(g);
     this.canopyGroup = g;
   }

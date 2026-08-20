@@ -19,6 +19,8 @@ describe('武器数据与弹道边界', () => {
       expect(def.cooldown).toBeGreaterThanOrEqual(0.45);
       expect(def.range).toBeGreaterThan(2);
     }
+    expect(MELEE.axe.damage).toBeGreaterThan(MELEE.fists.damage);
+    expect(MELEE.bat.range).toBeGreaterThan(MELEE.fists.range);
   });
 
   it('全部枪械的距离衰减连续单调且射程边界一致', () => {

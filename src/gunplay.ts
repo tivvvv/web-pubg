@@ -114,10 +114,11 @@ export function calculateRecoilImpulse(
 }
 
 export function reloadDuration(gun: GunState, empty: boolean): number {
-  if (gun.def.id === 'shotgun') return gun.def.reloadTime;
+  const speedUp = 0.9;
+  if (gun.def.id === 'shotgun') return gun.def.reloadTime * speedUp;
   const reloadState = empty ? 1.1 : 0.9;
   const magazineWeight = gun.att.mag === 'extmag' ? 1.04 : 1;
-  return gun.def.reloadTime * reloadState * magazineWeight;
+  return gun.def.reloadTime * reloadState * magazineWeight * speedUp;
 }
 
 export interface SpreadInput {

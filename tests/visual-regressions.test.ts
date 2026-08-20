@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  advancePoseBlend, Character, firstPersonWeaponPose, locomotionPose, meleeMotionPose, ownModelVisibility,
+  advancePoseBlend, CANOPY_GROUP_OFFSET_Y, CANOPY_HARNESS_HEIGHT, Character, firstPersonWeaponPose,
+  locomotionPose, meleeMotionPose, ownModelVisibility,
 } from '../src/character';
 import { emptyAttachments } from '../src/attachments';
 import { environmentLighting, environmentSurfaceDetail, environmentVisualProfile } from '../src/environment';
@@ -250,6 +251,15 @@ describe('画面回归保护', () => {
     expect(firstMeshes[0].geometry).toBe(secondMeshes[0].geometry);
     expect(firstMeshes[1].geometry).toBe(secondMeshes[1].geometry);
     expect(firstMeshes[2].geometry).toBe(secondMeshes[2].geometry);
+    const suspensionLines = first.canopyGroup!.children.find(
+      (child): child is THREE.LineSegments => child instanceof THREE.LineSegments,
+    );
+    expect(suspensionLines).toBeDefined();
+    const linePositions = suspensionLines?.geometry.getAttribute('position') as THREE.BufferAttribute;
+    expect(linePositions.count).toBe(16);
+    for (let endpoint = 1; endpoint < linePositions.count; endpoint += 2) {
+      expect(linePositions.getY(endpoint) + CANOPY_GROUP_OFFSET_Y).toBeCloseTo(CANOPY_HARNESS_HEIGHT, 6);
+    }
 
     const firstGroup = first.canopyGroup;
     first.removeCanopy();

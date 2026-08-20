@@ -207,6 +207,8 @@ const RING_MAT: Record<LootKind, THREE.MeshBasicMaterial> = {
   knife: new THREE.MeshBasicMaterial({ color: 0xdfe6ee, transparent: true, opacity: 0.5 }),
   pan: new THREE.MeshBasicMaterial({ color: 0xb8bec5, transparent: true, opacity: 0.5 }),
   crowbar: new THREE.MeshBasicMaterial({ color: 0xd66a54, transparent: true, opacity: 0.5 }),
+  axe: new THREE.MeshBasicMaterial({ color: 0xf07a46, transparent: true, opacity: 0.5 }),
+  bat: new THREE.MeshBasicMaterial({ color: 0xd6a25d, transparent: true, opacity: 0.5 }),
   ammoRifle: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
   ammoSmg: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
   ammoSniper: new THREE.MeshBasicMaterial({ color: 0x7be06a, transparent: true, opacity: 0.5 }),
@@ -367,7 +369,7 @@ export function gunHasMatchingAmmoNearby(
 }
 
 export function isMeleeKind(kind: LootKind): kind is Exclude<MeleeId, 'fists'> {
-  return kind === 'knife' || kind === 'pan' || kind === 'crowbar';
+  return kind === 'knife' || kind === 'pan' || kind === 'crowbar' || kind === 'axe' || kind === 'bat';
 }
 
 export function isWeaponKind(kind: LootKind): kind is WeaponId | Exclude<MeleeId, 'fists'> {
@@ -804,14 +806,14 @@ export class LootManager {
     const common: Entry[] = table === 'wild'
       ? [['ammoRifle', 12], ['ammoSmg', 9], ['ammoPistol', 7], ['ammoShotgun', 5], ['bandage', 8], ['drink', 4], ['helmet1', 5], ['vest1', 5], ['pack1', 4], ['frag', 3], ['smoke', 3], ['flash', 1.5]]
       : [['ammoRifle', 8], ['ammoSmg', 6], ['ammoPistol', 4], ['ammoShotgun', 3], ['bandage', 5], ['drink', 3], ['medkit', 1.5], ['helmet1', 4], ['vest1', 4], ['pack1', 3], ['frag', 3], ['smoke', 3], ['flash', 2], ['attReddot', 3], ['attExtmag', 2.5], ['attComp', 2]];
-    const low: Entry[] = [['pistol', 11], ['smg', 8], ['shotgun', 8], ['rifle', 3], ['knife', 4], ['crowbar', 4], ['pan', 2], ['pack2', 1], ['helmet2', 1], ['vest2', 1]];
-    const medium: Entry[] = [['pistol', 6], ['smg', 9], ['shotgun', 7], ['rifle', 8], ['akm', 5], ['dmr', 2], ['knife', 2], ['crowbar', 2], ['pan', 2], ['pack2', 3], ['helmet2', 3], ['vest2', 3], ['attScope2', 2], ['attSuppressor', 1]];
-    const high: Entry[] = [['smg', 5], ['shotgun', 4], ['rifle', 10], ['akm', 9], ['lmg', 4], ['dmr', 7], ['sniper', 3], ['pan', 2], ['pack2', 4], ['pack3', 2], ['helmet2', 4], ['vest2', 4], ['helmet3', 2], ['vest3', 2], ['attScope2', 3], ['attScope4', 2], ['attSuppressor', 2], ['attExtmag', 2]];
+    const low: Entry[] = [['pistol', 11], ['smg', 8], ['shotgun', 8], ['rifle', 3], ['knife', 4], ['crowbar', 4], ['axe', 2], ['bat', 3], ['pan', 2], ['pack2', 1], ['helmet2', 1], ['vest2', 1]];
+    const medium: Entry[] = [['pistol', 6], ['smg', 9], ['shotgun', 7], ['rifle', 8], ['akm', 5], ['dmr', 2], ['knife', 2], ['crowbar', 2], ['axe', 2], ['bat', 2], ['pan', 2], ['pack2', 3], ['helmet2', 3], ['vest2', 3], ['attScope2', 2], ['attSuppressor', 1]];
+    const high: Entry[] = [['smg', 5], ['shotgun', 4], ['rifle', 10], ['akm', 9], ['lmg', 4], ['dmr', 7], ['sniper', 3], ['axe', 2], ['bat', 1], ['pan', 2], ['pack2', 4], ['pack3', 2], ['helmet2', 4], ['vest2', 4], ['helmet3', 2], ['vest3', 2], ['attScope2', 3], ['attScope4', 2], ['attSuppressor', 2], ['attExtmag', 2]];
     const profileBonus: Record<LootProfile, Entry[]> = {
       urban: [['rifle', 4], ['smg', 4], ['frag', 2], ['attReddot', 2]],
       arena: [['akm', 5], ['rifle', 4], ['lmg', 3], ['shotgun', 4], ['flash', 2], ['helmet2', 2], ['vest2', 2]],
-      farm: [['shotgun', 5], ['rifle', 3], ['crowbar', 4], ['bandage', 3]],
-      forest: [['smg', 3], ['pistol', 3], ['knife', 3], ['smoke', 3], ['drink', 2]],
+      farm: [['shotgun', 5], ['rifle', 3], ['crowbar', 4], ['axe', 3], ['bandage', 3]],
+      forest: [['smg', 3], ['pistol', 3], ['knife', 3], ['bat', 3], ['smoke', 3], ['drink', 2]],
       ridge: [['dmr', 6], ['sniper', 4], ['attScope4', 3], ['attComp', 2]],
       harbor: [['smg', 5], ['shotgun', 4], ['pan', 3], ['medkit', 2], ['smoke', 2]],
     };

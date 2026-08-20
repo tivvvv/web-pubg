@@ -9,6 +9,11 @@ describe('武器配件规则', () => {
     expect(buildWeaponModel('rifle').group.scale.x).toBe(FIREARM_MODEL_SCALE);
     expect(buildWeaponModel('pistol').group.scale.x).toBe(FIREARM_MODEL_SCALE);
     expect(buildWeaponModel('knife').group.scale.x).toBe(1);
+    const axe = buildWeaponModel('axe');
+    const bat = buildWeaponModel('bat');
+    expect(axe.group.getObjectByName('axe-cutting-edge')).toBeTruthy();
+    expect(new THREE.Box3().setFromObject(axe.group).isEmpty()).toBe(false);
+    expect(new THREE.Box3().setFromObject(bat.group).isEmpty()).toBe(false);
   });
   it('瞄具和枪口配件具有可辨认的近景结构', () => {
     const scoped = buildWeaponModel('rifle');

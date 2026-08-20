@@ -147,6 +147,7 @@ export class Minimap {
     squad: readonly { x: number; z: number }[],
     squadOrder: SquadOrderMapState | null = null,
     airdrop: { x: number; z: number } | null = null,
+    treasure: { x: number; z: number } | null = null,
     bombardment: BombardmentMapState | null = null,
     regionalEvents: readonly RegionEvent[] = [],
   ): void {
@@ -245,6 +246,33 @@ export class Minimap {
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
       ctx.lineWidth = 1;
       ctx.stroke();
+    }
+
+    // 飞机阶段的林区宝箱引导: 金色脉冲靶标，跳伞后自动隐藏。
+    if (treasure) {
+      const tx = this.toMap(treasure.x);
+      const tz = this.toMap(treasure.z);
+      const pulse = 5.2 + Math.sin(performance.now() * 0.006) * 1.2;
+      ctx.save();
+      ctx.strokeStyle = '#ffe16a';
+      ctx.fillStyle = '#ffb51f';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(tx, tz, pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      for (let point = 0; point < 8; point++) {
+        const angle = -Math.PI / 2 + point * Math.PI / 4;
+        const radius = point % 2 === 0 ? 4 : 1.8;
+        const x = tx + Math.cos(angle) * radius;
+        const y = tz + Math.sin(angle) * radius;
+        if (point === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
     }
 
     // 载具标记(深灰方块, 残骸变暗)

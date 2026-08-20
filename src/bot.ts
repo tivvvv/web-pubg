@@ -250,10 +250,13 @@ export class BotController {
       c.grounded = true;
       return;
     }
-    // 舱内等待: 跟随飞机(隐藏), 到达出舱里程跳伞
+    // 舱内等待: 跟随飞机(隐藏), 到达地图内且满足预定里程后跳伞。
     if (this.jumpS >= 0) {
-      game.flightPoint(c.pos, Math.min(game.planeS, this.jumpS));
-      if (game.planeS >= this.jumpS) {
+      game.flightPoint(c.pos, game.planeS);
+      const insideMap = game.isInsideFlightJumpZone(c.pos.x, c.pos.z);
+      game.flightPoint(this.tgtPos, game.planeS + 92 * dt);
+      const leavingMap = insideMap && !game.isInsideFlightJumpZone(this.tgtPos.x, this.tgtPos.z);
+      if (insideMap && (game.planeS >= this.jumpS || leavingMap)) {
         this.jumpS = -1;
         this.descent = 'freefall';
         this.vy = -2;
@@ -903,6 +906,25 @@ export class BotController {
   private setLootTarget(game: Game, item: LootItem): boolean {
     if (game.zoneArmed && game.zone.isOutside(item.group.position.x, item.group.position.z)) return false;
     if (item === this.blockedLoot && this.blockedLootT > 0) return false;
+    const myDistance = Math.hypot(
+      this.char.pos.x - item.group.position.x,
+      this.char.pos.z - item.group.position.z,
+    );
+    // 64 人局中同一高价值枪会吸引整队挤到一个点。物资采用软预约：较近者持有目标，
+    // 明显更近的后来者可以接管，原持有者立即重新扫描，避免人群长期互相阻挡。
+    for (const other of game.bots) {
+      if (other === this || !other.char.alive || other.lootTarget !== item) continue;
+      const otherDistance = Math.hypot(
+        other.char.pos.x - item.group.position.x,
+        other.char.pos.z - item.group.position.z,
+      );
+      if (otherDistance <= myDistance + 2.5) return false;
+      other.lootTarget = null;
+      other.hasMoveTarget = false;
+      other.repathT = 0;
+      other.lootScanT = Math.min(other.lootScanT, 0.15);
+      other.navigator.reset(other.char);
+    }
     this.lootTarget = item;
     this.moveTarget.copy(item.group.position);
     this.hasMoveTarget = true;

@@ -61,4 +61,17 @@ describe('死亡盒集中掉落与自动搜索', () => {
     expect(crate.contents.ammo.rifle).toBe(20);
     expect(carryWeight(looter)).toBeLessThanOrEqual(carryCapacity(looter.pack));
   });
+
+  it('新增近战武器仍只占一个槽且高品质武器会替换旧武器', () => {
+    const donor = new Character('斧手', false, 0x777777);
+    donor.melee = { def: MELEE.axe };
+    const crate = new DeathCrateManager(new THREE.Scene()).spawn(donor, 0);
+    const looter = new Character('棍手', true, 0x3a6ea5);
+    looter.melee = { def: MELEE.bat };
+
+    autoLootDeathCrate(looter, crate);
+
+    expect(looter.melee.def.id).toBe('axe');
+    expect(crate.contents.melee).toBe('bat');
+  });
 });
