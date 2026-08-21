@@ -30,6 +30,7 @@ type CylinderCollider = Extract<Collider, { kind: 'cyl' }>;
 type BoxCollider = Extract<Collider, { kind: 'aabb' }>;
 
 const ROAD_WATER_DECK_Y = WATER_Y + 0.72;
+const ROAD_HALF_WIDTH = 3.6;
 const MAIN_BRIDGE_XS = [-50, 170] as const;
 const MAIN_BRIDGE_HALF_LENGTH = 14;
 const MAIN_BRIDGE_HALF_WIDTH = 2.7;
@@ -1378,7 +1379,7 @@ varying vec3 vTerrainWorld;`,
   }
 
   private nearRoad(x: number, z: number, margin: number): boolean {
-    return this.roadDistanceAt(x, z) < 2.5 + margin;
+    return this.roadDistanceAt(x, z) < ROAD_HALF_WIDTH + margin;
   }
 
   private addRoadNetwork(scene: THREE.Scene): void {
@@ -2384,7 +2385,10 @@ varying vec3 vTerrainWorld;`,
         const x = x0 + dx * t;
         const z = z0 + dz * t;
         const h = this.getHeight(x, z);
-        if (h < WATER_Y + 0.3 || this.inPlot(x, z, 0.5) || this.inScenicSite(x, z, 0.35)) continue;
+        if (
+          h < WATER_Y + 0.3 || this.inPlot(x, z, 0.5) || this.inScenicSite(x, z, 0.35) ||
+          this.nearRoad(x, z, 0.62)
+        ) continue;
         m.compose(new THREE.Vector3(x, h + 0.625, z), q, s);
         postMesh.setMatrixAt(postCount++, m);
         if (i === steps || railCount + 6 > 660) continue;
@@ -2406,7 +2410,10 @@ varying vec3 vTerrainWorld;`,
           if (
             sh0 < WATER_Y + 0.3 || sh1 < WATER_Y + 0.3 ||
             Math.abs(sh1 - sh0) > 0.9 || this.slopeAt(smx, smz) > 0.58 ||
-            this.inPlot(smx, smz, 0.45) || this.inScenicSite(smx, smz, 0.3)
+            this.inPlot(smx, smz, 0.45) || this.inScenicSite(smx, smz, 0.3) ||
+            // 不能只检查中点。斜向道路可能从短围栏端部切入，形成视觉上不明显的整路阻挡。
+            this.nearRoad(sx0, sz0, 0.62) || this.nearRoad(smx, smz, 0.62) ||
+            this.nearRoad(sx1, sz1, 0.62)
           ) continue;
           // 只给实际生成出来的短围栏增加阻挡，避免用一整圈隐形墙封死因水面、
           // 建筑或坡度而保留的通行缺口。碰撞体覆盖两根横杆之间的空间，角色不能钻入。
@@ -2551,7 +2558,10 @@ varying vec3 vTerrainWorld;`,
       const x = -60 + (furnitureRng() * 2 - 1) * 78;
       const z = -20 + (furnitureRng() * 2 - 1) * 72;
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.4 || this.inPlot(x, z, 2.1) || !this.pointFree(x, z, 1.25, WATER_Y + 0.3, 15)) continue;
+      if (
+        h < WATER_Y + 0.4 || this.inPlot(x, z, 2.1) || this.nearRoad(x, z, 0.85) ||
+        !this.pointFree(x, z, 1.25, WATER_Y + 0.3, 15)
+      ) continue;
       const yaw = furnitureRng() * Math.PI * 2;
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const base = benchCount * 6;
@@ -2613,7 +2623,10 @@ varying vec3 vTerrainWorld;`,
       const x = region.x + (furnitureRng() * 2 - 1) * region.radius * 0.82;
       const z = region.z + (furnitureRng() * 2 - 1) * region.radius * 0.82;
       const h = this.getHeight(x, z);
-      if (h < WATER_Y + 0.25 || h > 15 || this.inPlot(x, z, 1.2) || !this.pointFree(x, z, 0.42, WATER_Y + 0.2, 16)) continue;
+      if (
+        h < WATER_Y + 0.25 || h > 15 || this.inPlot(x, z, 1.2) || this.nearRoad(x, z, 0.72) ||
+        !this.pointFree(x, z, 0.42, WATER_Y + 0.2, 16)
+      ) continue;
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), furnitureRng() * Math.PI * 2);
       s.set(0.82 + furnitureRng() * 0.24, 0.88 + furnitureRng() * 0.2, 0.82 + furnitureRng() * 0.24);
       m.compose(new THREE.Vector3(x, h + 0.39 * s.y, z), q, s);
@@ -3114,7 +3127,10 @@ varying vec3 vTerrainWorld;`,
     applySurfaceAsset(mats.metal, 'paintedMetal', 3.1, 0.82);
     applySurfaceAsset(mats.sand, 'terrain', 2.2, 0.48);
     const box = (x: number, z: number, w: number, h: number, d: number, mat: THREE.Material, yaw = 0, block = true): void => {
-      if (this.inPlot(x, z, Math.hypot(w, d) * 0.5 + 0.8)) return;
+      const cw = Math.abs(Math.cos(yaw)) * w + Math.abs(Math.sin(yaw)) * d;
+      const cd = Math.abs(Math.sin(yaw)) * w + Math.abs(Math.cos(yaw)) * d;
+      const clearance = Math.hypot(cw, cd) * 0.5;
+      if (this.inPlot(x, z, clearance + 0.8) || this.nearRoad(x, z, clearance + 0.55)) return;
       const y = this.getHeight(x, z);
       if (y < WATER_Y + 0.12) return;
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -3125,8 +3141,6 @@ varying vec3 vTerrainWorld;`,
       scene.add(mesh);
       if (block) {
         // 碰撞使用旋转后的保守 AABB，轻微放宽转角但不产生穿透。
-        const cw = Math.abs(Math.cos(yaw)) * w + Math.abs(Math.sin(yaw)) * d;
-        const cd = Math.abs(Math.sin(yaw)) * w + Math.abs(Math.cos(yaw)) * d;
         this.addCollider({ kind: 'aabb', minX: x - cw / 2, minY: y, minZ: z - cd / 2, maxX: x + cw / 2, maxY: y + h, maxZ: z + cd / 2, tag: 'wall' });
       }
     };
@@ -3204,6 +3218,7 @@ varying vec3 vTerrainWorld;`,
           const tz = point[1] + Math.sin(angle) * ring;
           const ty = this.getHeight(tx, tz);
           if (ty < WATER_Y + 0.2 || ty > 16 || this.slopeAt(tx, tz) > 0.7) continue;
+          if (this.nearRoad(tx, tz, radius + 0.62)) continue;
           if (this.inPlot(tx, tz, radius + 0.45) || !this.pointFree(tx, tz, radius + 0.25, WATER_Y, 17)) continue;
           x = tx;
           z = tz;
@@ -3389,6 +3404,14 @@ varying vec3 vTerrainWorld;`,
 
   private resolveMapContentSite(def: (typeof MAP_CONTENT_SITES)[number]): ResolvedMapContentSite | null {
     const maxAttempts = def.kind === 'lumber' ? 360 : 180;
+    const footprintRadius: Record<MapContentKind, number> = {
+      market: 7.2,
+      freight: 7,
+      grain: 5.8,
+      lumber: 7.2,
+      relay: 6.2,
+      fishmarket: 6.4,
+    };
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const ring = attempt === 0 ? 0 : 3.5 + Math.floor((attempt - 1) / 10) * 3;
       const angle = attempt * 2.399963;
@@ -3396,16 +3419,18 @@ varying vec3 vTerrainWorld;`,
       const z = def.z + Math.sin(angle) * ring;
       if (regionAt(x, z)?.id !== def.region) continue;
       if (this.inPlot(x, z, 5.2) || this.inScenicSite(x, z, 3.5)) continue;
+      // 地标应位于道路旁而不是压在道路中央。按完整设施外沿避让，确保装饰和碰撞都不截断 AI 通道。
+      if (this.nearRoad(x, z, footprintRadius[def.kind] + 0.7)) continue;
       // 木场的构筑物跨度较大, 但只需保证中心活动区不与树石重叠.
       // 外圈单独做十二向地形探测, 避免大半径碰撞检查被林区植被误判为无可用场地.
-      const footprintRadius = def.kind === 'lumber' ? 7.2 : 4.8;
+      const landProbeRadius = def.kind === 'lumber' ? 7.2 : 4.8;
       const collisionClearance = 4.8;
       if (this.slopeAt(x, z) > 0.42 || !this.pointFree(x, z, collisionClearance, WATER_Y + 0.35, 16)) continue;
       let footprintOnLand = true;
       for (let probe = 0; probe < 12; probe++) {
         const angle = probe / 12 * Math.PI * 2;
-        const px = x + Math.cos(angle) * footprintRadius;
-        const pz = z + Math.sin(angle) * footprintRadius;
+        const px = x + Math.cos(angle) * landProbeRadius;
+        const pz = z + Math.sin(angle) * landProbeRadius;
         if (this.getHeight(px, pz) < WATER_Y + 0.55 || this.slopeAt(px, pz) > 0.55) {
           footprintOnLand = false;
           break;

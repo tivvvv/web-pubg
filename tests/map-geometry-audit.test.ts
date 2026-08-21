@@ -898,6 +898,72 @@ describe('地图与建筑终极几何巡检', () => {
     }
   });
 
+  it('道路核心通道全线可供角色与机器人连续通行', () => {
+    const scene = new THREE.Scene();
+    const world = new World(scene);
+    const blocked: string[] = [];
+    const terminusPoints = [[194, -43], [205, -209], [20, -200]] as const;
+    const supportAt = (x: number, z: number): number => {
+      const terrainY = world.getHeight(x, z);
+      return world.platforms.reduce((highest, platform) => (
+        x >= platform.minX - 0.06 && x <= platform.maxX + 0.06 &&
+        z >= platform.minZ - 0.06 && z <= platform.maxZ + 0.06
+          ? Math.max(highest, platform.top)
+          : highest
+      ), terrainY);
+    };
+    for (let pathIndex = 0; pathIndex < ROAD_PATHS.length; pathIndex++) {
+      const path = ROAD_PATHS[pathIndex] as readonly (readonly [number, number])[];
+      for (let segmentIndex = 0; segmentIndex < path.length - 1; segmentIndex++) {
+        const a = path[segmentIndex] as readonly [number, number];
+        const b = path[segmentIndex + 1] as readonly [number, number];
+        const dx = b[0] - a[0];
+        const dz = b[1] - a[1];
+        const length = Math.hypot(dx, dz);
+        const sideX = -dz / length;
+        const sideZ = dx / length;
+        const samples = Math.max(2, Math.ceil(length / 0.7));
+        for (let sample = 0; sample <= samples; sample++) {
+          const t = sample / samples;
+          const centerX = a[0] + dx * t;
+          const centerZ = a[1] + dz * t;
+          if (terminusPoints.some(([x, z]) => Math.hypot(centerX - x, centerZ - z) < 5.2)) continue;
+          const lanes = [-1.75, 0, 1.75].map((lateral) => {
+            const x = centerX + sideX * lateral;
+            const z = centerZ + sideZ * lateral;
+            const feetY = supportAt(x, z);
+            return {
+              x, z, feetY,
+              open: world.navPointFree(x, z, feetY, 0.48, false, false, true),
+            };
+          });
+          const openLanes = lanes.filter((lane) => lane.open);
+          if (openLanes.length === 0) {
+            const reasons = lanes.map((lane) => {
+              const cylinder = world.cyls.find((collider) => (
+                Math.hypot(lane.x - collider.x, lane.z - collider.z) < 0.48 + collider.r &&
+                lane.feetY < collider.y1 - 0.05 && lane.feetY + 1.65 > collider.y0
+              ));
+              const box = world.aabbs.find((collider) => (
+                !collider.off && collider.tag !== 'floor' && collider.tag !== 'roof' && collider.tag !== 'door' &&
+                lane.feetY < collider.maxY - 0.02 && lane.feetY + 1.65 > collider.minY &&
+                Math.hypot(
+                  lane.x - Math.max(collider.minX, Math.min(lane.x, collider.maxX)),
+                  lane.z - Math.max(collider.minZ, Math.min(lane.z, collider.maxZ)),
+                ) < 0.48
+              ));
+              return cylinder ? `cyl-${cylinder.tag}` : box
+                ? `box-${box.tag}:${box.minX.toFixed(1)},${box.minZ.toFixed(1)}-${box.maxX.toFixed(1)},${box.maxZ.toFixed(1)}`
+                : 'height';
+            });
+            blocked.push(`${pathIndex}:${segmentIndex}@${centerX.toFixed(1)},${centerZ.toFixed(1)}[${reasons.join(',')}]`);
+          }
+        }
+      }
+    }
+    expect(blocked, `道路全宽被阻断: ${blocked.slice(0, 20).join(' | ')}`).toEqual([]);
+  });
+
   it('树木, 自然岩石和半身灌木之间没有严重穿模', () => {
     const world = createWorld();
     const trees = world.cyls.filter((collider) => collider.tag === 'tree');
