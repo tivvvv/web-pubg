@@ -12,6 +12,7 @@ export interface TerrainSurfaceWeights {
 
 export interface NaturalDetailBudget {
   grass: number;
+  nearGrass: number;
   understory: number;
   flowers: number;
   shore: number;
@@ -21,8 +22,8 @@ export interface NaturalDetailBudget {
 export function naturalDetailBudget(hardwareConcurrency: number): NaturalDetailBudget {
   const compact = Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 4;
   return compact
-    ? { grass: 12000, understory: 1500, flowers: 850, shore: 900, screePerRock: 2 }
-    : { grass: 22000, understory: 2400, flowers: 1400, shore: 1400, screePerRock: 3 };
+    ? { grass: 12000, nearGrass: 4200, understory: 1500, flowers: 850, shore: 900, screePerRock: 2 }
+    : { grass: 22000, nearGrass: 7600, understory: 2400, flowers: 1400, shore: 1400, screePerRock: 3 };
 }
 
 // 统一地表生态权重. 所有颜色和自然物散布都使用同一套高度, 坡度和湿度语义.

@@ -340,15 +340,18 @@ export class Buildings {
   private handleGeoZ = new THREE.BoxGeometry(0.05, 0.05, 0.1);
   private plateGeoX = new THREE.BoxGeometry(0.09, 0.16, 0.02);
   private plateGeoZ = new THREE.BoxGeometry(0.02, 0.16, 0.09);
-  private paneMat = new THREE.MeshStandardMaterial({
+  private paneMat = new THREE.MeshPhysicalMaterial({
     color: PANE_C,
-    emissive: 0x18313b,
-    emissiveIntensity: 0.32,
+    emissive: 0x10242d,
+    emissiveIntensity: 0.18,
     transparent: true,
-    opacity: 0.57,
+    opacity: 0.48,
     depthWrite: false,
-    roughness: 0.14,
-    metalness: 0.22,
+    roughness: 0.09,
+    metalness: 0,
+    clearcoat: 1,
+    clearcoatRoughness: 0.08,
+    ior: 1.46,
     side: THREE.DoubleSide,
   });
 
@@ -541,11 +544,15 @@ export class Buildings {
       const palette: Palette = {
         wall: featuredSlice
           ? 0xd2bda7
+          : plot.arch === 'apartment'
+          ? idx % 2 === 0 ? 0xcbb392 : 0xaabbb8
           : regionalStyle
           ? regionalStyle.walls[Math.floor(rng() * regionalStyle.walls.length)] as number
           : WALL_COLORS[Math.floor(rng() * WALL_COLORS.length)] as number,
         roof: featuredSlice
           ? 0x76584c
+          : plot.arch === 'apartment'
+          ? idx % 2 === 0 ? 0x874d40 : 0x4f6168
           : regionalStyle
           ? regionalStyle.roofs[Math.floor(rng() * regionalStyle.roofs.length)] as number
           : ROOF_COLORS[Math.floor(rng() * ROOF_COLORS.length)] as number,
@@ -566,7 +573,9 @@ export class Buildings {
       this.europeanFacadeDetailsByArch[plot.arch] += europeanDetails;
       if (plot.arch !== 'gym') this.addInteriorDetails(world, plot, box, idx);
       this.addYardCover(plot, box, idx);
-      if (regionalStyle) this.addRegionalFacade(
+      // 公寓拥有独立的整面墙体配色和入口构造。再次套用区域外墙层会让墙脚、
+      // 檐线与窗套处于近乎共面的深度，移动镜头时产生闪烁。
+      if (regionalStyle && plot.arch !== 'apartment') this.addRegionalFacade(
         plot,
         box,
         featuredSlice
@@ -1237,6 +1246,36 @@ export class Buildings {
       count++;
     };
 
+    if (plot.arch === 'apartment') {
+      // 高层立面只保留一套构造。墙面本身在 addApartment 中按楼层使用轻微色差，
+      // 这里不再叠加通高壁柱、逐层柱头、腰线或第二套窗框，彻底避免近共面闪烁。
+      const portalHalf = DOOR_W + 0.36;
+      const plinthTop = f1 + 0.48;
+      for (const [a0, a1] of facadeSegments(ix0 - 0.08, ix1 + 0.08, exteriorOpenings.front)) {
+        add('wall', a0, f1 - 0.08, iz0 - 0.16, a1, plinthTop, iz0 - 0.1, stoneColor, stone);
+      }
+      for (const [a0, a1] of facadeSegments(ix0 - 0.08, ix1 + 0.08, exteriorOpenings.back)) {
+        add('wall', a0, f1 - 0.08, iz1 + 0.1, a1, plinthTop, iz1 + 0.16, stoneColor, stone);
+      }
+      add('wall', ix0 - 0.16, f1 - 0.08, iz0, ix0 - 0.1, plinthTop, iz1, stoneColor, stone);
+      add('wall', ix1 + 0.1, f1 - 0.08, iz0, ix1 + 0.16, plinthTop, iz1, stoneColor, stone);
+
+      // 单层石质门套与一块雨棚建立入口重点，所有构件都位于墙面之外且彼此不重叠。
+      for (const x of [cx - portalHalf, cx + portalHalf]) {
+        add('wall', x - 0.15, f1 + 0.02, iz0 - 0.28, x + 0.15, f1 + 2.5, iz0 - 0.14,
+          lightStone, stone);
+      }
+      add('wall', cx - portalHalf - 0.15, f1 + 2.42, iz0 - 0.28,
+        cx + portalHalf + 0.15, f1 + 2.62, iz0 - 0.14, lightStone, stone);
+      add('roof', cx - portalHalf - 0.3, f1 + 2.62, iz0 - 0.74,
+        cx + portalHalf + 0.3, f1 + 2.78, iz0 - 0.12, p.roof, roof);
+      for (const x of [cx - portalHalf + 0.3, cx + portalHalf - 0.3]) {
+        add('wall', x - 0.09, f1 + 1.7, iz0 - 0.39, x + 0.09, f1 + 1.98, iz0 - 0.27,
+          0xc89d4f, { collider: false, detail: true, surface: 'metal' });
+      }
+      return count;
+    }
+
     // 石质墙脚、双层檐口和转角隅石形成所有原型一致的欧式比例基准。
     const plinthTop = f1 + (plot.arch === 'gym' ? 0.72 : 0.52);
     for (const [a0, a1] of facadeSegments(ix0 - 0.09, ix1 + 0.09, exteriorOpenings.front)) {
@@ -1280,45 +1319,112 @@ export class Buildings {
     // 层间腰线沿四周连续闭合，远距离也能读出明确楼层尺度。
     for (let floor = 1; floor < storeys; floor++) {
       const y = f1 + floor * (WALL_H + SLAB_T) - 0.2;
-      add('wall', ix0 - 0.13, y, iz0 - 0.1, ix1 + 0.13, y + 0.18, iz0 + 0.03, lightStone, stone);
-      add('wall', ix0 - 0.13, y, iz1 - 0.03, ix1 + 0.13, y + 0.18, iz1 + 0.1, lightStone, stone);
-      add('wall', ix0 - 0.1, y, iz0, ix0 + 0.03, y + 0.18, iz1, lightStone, stone);
-      add('wall', ix1 - 0.03, y, iz0, ix1 + 0.1, y + 0.18, iz1, lightStone, stone);
+      const bandHeight = 0.18;
+      const bandColor = lightStone;
+      add('wall', ix0 - 0.13, y, iz0 - 0.1, ix1 + 0.13, y + bandHeight, iz0 + 0.03, bandColor, stone);
+      add('wall', ix0 - 0.13, y, iz1 - 0.03, ix1 + 0.13, y + bandHeight, iz1 + 0.1, bandColor, stone);
+      add('wall', ix0 - 0.1, y, iz0, ix0 + 0.03, y + bandHeight, iz1, bandColor, stone);
+      add('wall', ix1 - 0.03, y, iz0, ix1 + 0.1, y + bandHeight, iz1, bandColor, stone);
     }
 
     if (plot.arch === 'cottage1' || plot.arch === 'cottage2') {
-      // 门楣小山花和成对托臂把住宅入口从墙洞提升为正式门廊。
-      for (const x of [cx - 0.92, cx + 0.92]) {
-        add('wall', x - 0.09, f1, iz0 - 0.42, x + 0.09, f1 + 2.38, iz0 - 0.24, lightStone, stone);
-        add('wall', x - 0.16, f1 + 2.22, iz0 - 0.5, x + 0.16, f1 + 2.42, iz0 - 0.18, stoneColor, stone);
+      // 正立面采用完整石质窗套。相比散落的小横条，连续侧壁、窗台和过梁在中远景也能读出真实墙厚。
+      const frontWindows = [ix0 + 0.7 + WIN_W * 0.5, ix1 - 0.7 - WIN_W * 0.5];
+      const levels = plot.arch === 'cottage2' ? [f1, f1 + WALL_H + SLAB_T] : [f1];
+      for (const [levelIndex, floorY] of levels.entries()) {
+        const windowY0 = floorY + (levelIndex === 0 ? WIN_SILL : 0.9);
+        const windowY1 = windowY0 + WIN_H;
+        for (const windowX of frontWindows) {
+          const half = WIN_W * 0.5 + 0.15;
+          add('wall', windowX - half, windowY0 - 0.13, iz0 - 0.16,
+            windowX - half + 0.14, windowY1 + 0.18, iz0 + 0.015, lightStone, stone);
+          add('wall', windowX + half - 0.14, windowY0 - 0.13, iz0 - 0.16,
+            windowX + half, windowY1 + 0.18, iz0 + 0.015, lightStone, stone);
+          add('wall', windowX - half - 0.06, windowY0 - 0.14, iz0 - 0.22,
+            windowX + half + 0.06, windowY0 + 0.03, iz0 + 0.02, stoneColor, stone);
+          add('wall', windowX - half - 0.02, windowY1 + 0.02, iz0 - 0.19,
+            windowX + half + 0.02, windowY1 + 0.22, iz0 + 0.02, lightStone, stone);
+          if (levelIndex === 0) {
+            add('wall', windowX - 0.58, windowY0 - 0.32, iz0 - 0.32,
+              windowX + 0.58, windowY0 - 0.14, iz0 - 0.08, 0x806045, wood);
+            for (const plantX of [windowX - 0.36, windowX, windowX + 0.36]) {
+              add('wall', plantX - 0.1, windowY0 - 0.16, iz0 - 0.31,
+                plantX + 0.1, windowY0 + 0.08, iz0 - 0.1, 0x657b4f,
+                { collider: false, detail: true, surface: 'foliage' });
+            }
+          }
+        }
       }
+
+      // 深门廊由石质柱础、实体立柱和双层瓦檐组成，不再像贴在门洞上的小装饰。
+      for (const x of [cx - 1.12, cx + 1.12]) {
+        add('wall', x - 0.2, f1, iz0 - 1.08, x + 0.2, f1 + 2.48, iz0 - 0.72, lightStone, stone);
+        add('wall', x - 0.3, f1 - 0.02, iz0 - 1.18, x + 0.3, f1 + 0.28, iz0 - 0.62, stoneColor, stone);
+        add('wall', x - 0.28, f1 + 2.26, iz0 - 1.15, x + 0.28, f1 + 2.54, iz0 - 0.64, stoneColor, stone);
+      }
+      add('roof', cx - 1.55, f1 + 2.48, iz0 - 1.5, cx + 1.55, f1 + 2.66, iz0 + 0.03, lightStone, stone);
+      add('roof', cx - 1.42, f1 + 2.66, iz0 - 1.38, cx + 1.42, f1 + 2.8, iz0 - 0.02, p.roof, roof);
       for (let layer = 0; layer < 6; layer++) {
-        const half = 1.15 * (1 - layer / 7);
-        const y = f1 + 2.42 + layer * 0.1;
-        add('wall', cx - half, y, iz0 - 0.39, cx + half, y + 0.09, iz0 - 0.19, p.roof, roof);
+        const half = 1.42 * (1 - layer / 7);
+        const y = f1 + 2.78 + layer * 0.12;
+        add('wall', cx - half, y, iz0 - 1.3, cx + half, y + 0.11, iz0 - 0.86, p.roof, roof);
       }
-      // 正立面老虎窗嵌入屋坡，底座与屋瓦重叠，避免出现悬浮盒体。
-      const dormerZ = iz0 + d * 0.23;
-      const dormerBase = wallTop + 0.32;
-      add('wall', cx - 0.62, wallTop + 0.18, dormerZ - 0.05, cx + 0.62, dormerBase + 0.68, dormerZ + 0.5, p.wall, plaster);
+      // 老虎窗前移到檐口外缘并抬高，正面观察时能成为屋顶轮廓的一部分，而不是被坡面完全遮住。
+      const dormerZ = iz0 + 0.42;
+      const dormerBase = wallTop + 0.52;
+      // 外凸泛水基座把老虎窗实体接回主屋檐，正面不再出现悬浮空隙。
+      add('roof', cx - 0.9, wallTop - 0.18, iz0 - 0.5, cx + 0.9, wallTop + 0.08, iz0 + 0.14,
+        p.roof, roof);
+      add('wall', cx - 0.76, wallTop - 0.1, iz0 - 0.38, cx + 0.76, wallTop + 0.5, iz0 - 0.12,
+        lightStone, stone);
+      add('wall', cx - 0.72, wallTop - 0.04, iz0 - 0.12, cx + 0.72, dormerBase + 0.86, dormerZ + 0.52, p.wall, plaster);
       add('wall', cx - 0.29, dormerBase + 0.14, dormerZ - 0.09, cx + 0.29, dormerBase + 0.58, dormerZ - 0.02, 0x7491a0, metal);
       for (const x of [cx - 0.34, cx + 0.34]) {
         add('wall', x - 0.045, dormerBase + 0.08, dormerZ - 0.12, x + 0.045, dormerBase + 0.64, dormerZ + 0.01, lightStone, stone);
       }
       add('wall', cx - 0.38, dormerBase + 0.05, dormerZ - 0.13, cx + 0.38, dormerBase + 0.13, dormerZ + 0.02, lightStone, stone);
       add('wall', cx - 0.38, dormerBase + 0.61, dormerZ - 0.13, cx + 0.38, dormerBase + 0.69, dormerZ + 0.02, lightStone, stone);
-      for (let layer = 0; layer < 5; layer++) {
-        const half = 0.78 * (1 - layer / 6);
-        add('roof', cx - half, dormerBase + 0.68 + layer * 0.095, dormerZ - 0.18,
-          cx + half, dormerBase + 0.76 + layer * 0.095, dormerZ + 0.58, p.roof, roof);
+      for (let layer = 0; layer < 6; layer++) {
+        const half = 0.92 * (1 - layer / 7);
+        add('roof', cx - half, dormerBase + 0.78 + layer * 0.11, dormerZ - 0.5,
+          cx + half, dormerBase + 0.88 + layer * 0.11, dormerZ + 0.62, p.roof, roof);
       }
     } else if (plot.arch === 'terrace') {
-      // 露台使用石质瓶柱节奏和深色铁艺横杆，保持原有狙击视野与通行碰撞。
+      // 露台住宅使用厚窗套、正式门廊和石铁混合栏杆，保持原有狙击视野与通行碰撞。
       const zRoom = iz0 + d * 0.55;
       const f2 = f1 + WALL_H + SLAB_T;
+      const lowerCenters = [ix0 + 0.72 + WIN_W * 0.5, ix1 - 0.72 - WIN_W * 0.5];
+      const upperCenters = [ix0 + w * 0.2 + WIN_W * 0.5, ix1 - w * 0.2 - WIN_W * 0.5];
+      for (const [floorY, centers] of [[f1, lowerCenters], [f2, upperCenters]] as const) {
+        const y0 = floorY + (floorY === f1 ? WIN_SILL : 0.9);
+        const y1 = y0 + WIN_H;
+        for (const windowX of centers) {
+          const half = WIN_W * 0.5 + 0.15;
+          add('wall', windowX - half, y0 - 0.12, iz0 - 0.16,
+            windowX - half + 0.14, y1 + 0.18, iz0 + 0.02, lightStone, stone);
+          add('wall', windowX + half - 0.14, y0 - 0.12, iz0 - 0.16,
+            windowX + half, y1 + 0.18, iz0 + 0.02, lightStone, stone);
+          add('wall', windowX - half - 0.05, y0 - 0.14, iz0 - 0.22,
+            windowX + half + 0.05, y0 + 0.03, iz0 + 0.02, stoneColor, stone);
+          add('wall', windowX - half - 0.02, y1 + 0.02, iz0 - 0.19,
+            windowX + half + 0.02, y1 + 0.22, iz0 + 0.02, lightStone, stone);
+        }
+      }
+      for (const x of [cx - 1.02, cx + 1.02]) {
+        add('wall', x - 0.17, f1, iz0 - 0.88, x + 0.17, f1 + 2.5, iz0 - 0.58, lightStone, stone);
+        add('wall', x - 0.26, f1 - 0.02, iz0 - 0.96, x + 0.26, f1 + 0.25, iz0 - 0.5, stoneColor, stone);
+      }
+      add('roof', cx - 1.42, f1 + 2.46, iz0 - 1.2, cx + 1.42, f1 + 2.64, iz0 + 0.02, lightStone, stone);
+      add('roof', cx - 1.3, f1 + 2.64, iz0 - 1.08, cx + 1.3, f1 + 2.78, iz0 - 0.02, p.roof, roof);
+      for (let layer = 0; layer < 6; layer++) {
+        const half = 1.3 * (1 - layer / 7);
+        add('wall', cx - half, f1 + 2.76 + layer * 0.11, iz0 - 1.0,
+          cx + half, f1 + 2.86 + layer * 0.11, iz0 - 0.62, p.roof, roof);
+      }
       for (let i = 0; i <= 8; i++) {
         const x = ix0 + w * i / 8;
-        add('wall', x - 0.055, f2 + 0.16, iz1 - 0.14, x + 0.055, f2 + 0.86, iz1 + 0.04, lightStone, stone);
+        add('wall', x - 0.055, f2 + 0.16, iz1 - 0.14, x + 0.055, f2 + 0.86, iz1 + 0.04,
+          i % 2 === 0 ? lightStone : iron, i % 2 === 0 ? stone : metal);
       }
       for (const y of [f2 + 0.42, f2 + 0.86]) {
         add('wall', ix0, y, iz1 - 0.16, ix1, y + 0.08, iz1 + 0.06, iron, metal);
@@ -1327,133 +1433,6 @@ export class Buildings {
         for (let i = 0; i <= 4; i++) {
           const z = zRoom + (iz1 - zRoom) * i / 4;
           add('wall', x - 0.07, f2 + 0.16, z - 0.055, x + 0.07, f2 + 0.86, z + 0.055, lightStone, stone);
-        }
-      }
-    } else if (plot.arch === 'apartment') {
-      // 城区公寓使用完整石质窗套、浅挑铁艺阳台和中央入口轴线，形成连续欧洲街墙而非高盒子。
-      const windowCenters = [
-        ix0 + w * 0.12 + WIN_W * 0.5,
-        cx,
-        ix1 - w * 0.12 - WIN_W * 0.5,
-      ];
-      // 双扇入口采用外移巨柱和加深门廊，柱体不再压进 2.6m 门洞。
-      const portalHalf = DOOR_W + 0.42;
-      for (const x of [cx - portalHalf, cx + portalHalf]) {
-        add('wall', x - 0.17, f1 + 0.04, iz0 - 0.42, x + 0.17, f1 + 2.55, iz0 - 0.08, lightStone, stone);
-        add('wall', x - 0.3, f1 - 0.02, iz0 - 0.5, x + 0.3, f1 + 0.22, iz0 - 0.02, stoneColor, stone);
-        add('wall', x - 0.29, f1 + 2.36, iz0 - 0.5, x + 0.29, f1 + 2.62, iz0 - 0.02, stoneColor, stone);
-      }
-      add('roof', cx - portalHalf - 0.34, f1 + 2.55, iz0 - 0.82,
-        cx + portalHalf + 0.34, f1 + 2.72, iz0 + 0.02, stoneColor, stone);
-      add('roof', cx - portalHalf - 0.16, f1 + 2.72, iz0 - 0.68,
-        cx + portalHalf + 0.16, f1 + 2.84, iz0 - 0.04, lightStone, stone);
-      // 黄铜壁灯与门牌使入口在雨夜也有明确视觉焦点。
-      for (const x of [cx - portalHalf + 0.32, cx + portalHalf - 0.32]) {
-        add('wall', x - 0.08, f1 + 1.72, iz0 - 0.55, x + 0.08, f1 + 2.03, iz0 - 0.39,
-          0xc59745, { ...metal, surface: 'metal' });
-        add('wall', x - 0.13, f1 + 1.8, iz0 - 0.62, x + 0.13, f1 + 1.96, iz0 - 0.5,
-          0xf0d58d, { ...metal, surface: 'paintedMetal' });
-      }
-      for (let layer = 0; layer < 7; layer++) {
-        const half = 1.18 * (1 - layer / 8);
-        const y = f1 + 2.48 + layer * 0.09;
-        add('wall', cx - half, y, iz0 - 0.31, cx + half, y + 0.085, iz0 - 0.03,
-          layer % 2 === 0 ? p.roof : lightStone, layer % 2 === 0 ? roof : stone);
-      }
-      // 中央竖向壁柱把多层窗格组织成左右两翼，减弱整块平墙的盒状感。
-      for (const x of [cx - 0.12, cx + 0.12]) {
-        add('wall', x - 0.075, f1 + 3.05, iz0 - 0.12, x + 0.075, wallTop - 0.26, iz0 + 0.02, stoneColor, stone);
-      }
-      // 三列窗间用浅凹灰泥面和竖向阴影缝组织开间。构件分段落在窗间墙肢上，
-      // 不用整块贴片覆盖真实窗洞，近看也能读出墙体厚度。
-      for (let level = 1; level < storeys; level++) {
-        const fy = f1 + level * (WALL_H + SLAB_T);
-        const sillBottom = fy + 0.34;
-        const sillTop = fy + WIN_SILL - 0.2;
-        const crownBottom = fy + WIN_SILL + WIN_H + 0.22;
-        const crownTop = fy + WALL_H - 0.2;
-        for (const wx of windowCenters) {
-          add('wall', wx - WIN_W * 0.48, sillBottom, iz0 - 0.075,
-            wx + WIN_W * 0.48, sillTop, iz0 + 0.01, idx % 2 === 0 ? 0xc8c2b5 : 0xb8c0bd, plaster);
-          add('wall', wx - WIN_W * 0.48, crownBottom, iz0 - 0.075,
-            wx + WIN_W * 0.48, crownTop, iz0 + 0.01, idx % 2 === 0 ? 0xc8c2b5 : 0xb8c0bd, plaster);
-        }
-      }
-      // 首层石材横纹与四条通高壁柱形成基座、主体、冠部的古典三段式比例。
-      for (let course = 0; course < 7; course++) {
-        const y = f1 + 0.34 + course * 0.34;
-        for (const [x0, x1] of [[ix0 + 0.2, cx - portalHalf - 0.38], [cx + portalHalf + 0.38, ix1 - 0.2]] as const) {
-          if (x1 <= x0) continue;
-          add('wall', x0, y, iz0 - 0.12, x1, y + 0.08, iz0 + 0.01,
-            course % 2 === 0 ? stoneColor : lightStone, stone);
-        }
-      }
-      for (const x of [ix0 + 0.42, cx - w * 0.24, cx + w * 0.24, ix1 - 0.42]) {
-        add('wall', x - 0.085, f1 + 2.95, iz0 - 0.13, x + 0.085, wallTop - 0.24, iz0 + 0.025,
-          lightStone, stone);
-        for (let level = 1; level < storeys; level++) {
-          const baseY = f1 + level * (WALL_H + SLAB_T);
-          add('wall', x - 0.15, baseY + 0.2, iz0 - 0.16, x + 0.15, baseY + 0.42, iz0 + 0.03,
-            stoneColor, stone);
-          add('wall', x - 0.15, baseY + 2.36, iz0 - 0.16, x + 0.15, baseY + 2.58, iz0 + 0.03,
-            stoneColor, stone);
-        }
-      }
-      for (let level = 1; level < storeys; level++) {
-        const fy = f1 + level * (WALL_H + SLAB_T);
-        for (const wx of windowCenters) {
-          const frameHalf = WIN_W * 0.5 + 0.12;
-          const frameBottom = fy + WIN_SILL - 0.1;
-          const frameTop = fy + WIN_SILL + WIN_H + 0.12;
-          add('wall', wx - frameHalf, frameBottom, iz0 - 0.14,
-            wx - frameHalf + 0.11, frameTop, iz0 + 0.02, lightStone, stone);
-          add('wall', wx + frameHalf - 0.11, frameBottom, iz0 - 0.14,
-            wx + frameHalf, frameTop, iz0 + 0.02, lightStone, stone);
-          add('wall', wx - frameHalf, frameBottom, iz0 - 0.16,
-            wx + frameHalf, frameBottom + 0.13, iz0 + 0.02, stoneColor, stone);
-          const hasBalcony = Math.abs(wx - cx) < 0.2 && level % 2 === 1;
-          if (hasBalcony) {
-            add('floor', wx - 0.82, fy + 0.79, iz0 - 0.56, wx + 0.82, fy + 0.92, iz0 + 0.02, stoneColor, stone);
-            add('wall', wx - 0.82, fy + 1.62, iz0 - 0.6, wx + 0.82, fy + 1.7, iz0 - 0.52, iron, metal);
-            for (let post = 0; post <= 5; post++) {
-              const x = wx - 0.76 + post * 0.304;
-              add('wall', x - 0.022, fy + 0.9, iz0 - 0.6, x + 0.022, fy + 1.66, iz0 - 0.52, iron, metal);
-            }
-          } else {
-            add('floor', wx - 0.78, frameBottom - 0.04, iz0 - 0.25,
-              wx + 0.78, frameBottom + 0.07, iz0 + 0.02, stoneColor, stone);
-          }
-          add('wall', wx - 0.72, fy + 2.13, iz0 - 0.12, wx + 0.72, fy + 2.27, iz0 + 0.02, lightStone, stone);
-          add('wall', wx - 0.12, fy + 2.23, iz0 - 0.15, wx + 0.12, fy + 2.44, iz0 + 0.03, stoneColor, stone);
-        }
-      }
-      const roofY = f1 + storeys * (WALL_H + SLAB_T);
-      // 三层退台檐冠围绕可战斗屋顶外缘，不侵入屋顶走线。
-      for (let course = 0; course < 3; course++) {
-        const out = 0.32 - course * 0.08;
-        const y = roofY + 0.86 + course * 0.2;
-        add('roof', ix0 - out, y, iz0 - out, ix1 + out, y + 0.14, iz0 + 0.08, p.roof, roof);
-        add('roof', ix0 - out, y, iz1 - 0.08, ix1 + out, y + 0.14, iz1 + out, p.roof, roof);
-        add('roof', ix0 - out, y, iz0, ix0 + 0.08, y + 0.14, iz1, p.roof, roof);
-        add('roof', ix1 - 0.08, y, iz0, ix1 + out, y + 0.14, iz1, p.roof, roof);
-      }
-      // 中央屋顶山花只贴在外立面，保留整片可战斗屋顶和女儿墙碰撞。
-      for (let layer = 0; layer < 11; layer++) {
-        const half = Math.min(w * 0.24, 2.85) * (1 - layer / 12);
-        const y = roofY + 0.9 + layer * 0.13;
-        add('wall', cx - half, y, iz0 - 0.31, cx + half, y + 0.12, iz0 + 0.02,
-          layer % 2 === 0 ? p.roof : lightStone, layer % 2 === 0 ? roof : stone);
-      }
-      // 屋顶中央铜色徽章和两侧小尖顶强化两栋塔楼的城市地标感。
-      add('wall', cx - 0.62, roofY + 1.2, iz0 - 0.38, cx + 0.62, roofY + 2.12, iz0 - 0.18,
-        0x8c7044, metal);
-      add('wall', cx - 0.42, roofY + 1.38, iz0 - 0.41, cx + 0.42, roofY + 1.94, iz0 - 0.15,
-        0xd1b778, metal);
-      for (const x of [ix0 + 1.15, ix1 - 1.15]) {
-        for (let tier = 0; tier < 5; tier++) {
-          const half = 0.48 * (1 - tier / 6);
-          add('roof', x - half, roofY + 1.02 + tier * 0.16, iz0 - 0.25,
-            x + half, roofY + 1.16 + tier * 0.16, iz0 + 0.28, tier % 2 === 0 ? p.roof : stoneColor, roof);
         }
       }
     } else if (plot.arch === 'barn') {
@@ -1737,9 +1716,10 @@ export class Buildings {
     for (const [a0, a1] of facadeSegments(iz0, iz1, exteriorOpenings.right, 0.14)) {
       box('wall', ix1 - 0.02, f1 - 0.08, a0, ix1 + 0.07, f1 + 0.42, a1, style.accent, masonry);
     }
-    const floorBandColor = plot.arch === 'apartment' ? 0xb8b2a7 : style.accent;
-    const floorBandHeight = plot.arch === 'apartment' ? 0.11 : 0.18;
-    for (let floor = 1; floor < storeys; floor++) {
+    const floorBandColor = style.accent;
+    const floorBandHeight = 0.18;
+    // 公寓已有加厚石材分层线脚；区域层不再重复叠一套细横线。
+    for (let floor = 1; floor < storeys && plot.arch !== 'apartment'; floor++) {
       const y = f1 + floor * (WALL_H + SLAB_T) - 0.14;
       box('wall', ix0 - 0.11, y, iz0 - 0.1, ix1 + 0.11, y + floorBandHeight, iz0 + 0.03, floorBandColor, masonry);
       box('wall', ix0 - 0.11, y, iz1 - 0.03, ix1 + 0.11, y + floorBandHeight, iz1 + 0.1, floorBandColor, masonry);
@@ -1752,7 +1732,7 @@ export class Buildings {
     // 禁止在所有房屋外墙额外贴贯穿门窗的横带和四角深色竖线。区域差异由墙色、
     // 石材墙脚、檐口、门廊和屋顶设备表达，避免再次出现木板或黑胶带式立面。
 
-    if (plot.arch === 'shop' || plot.arch === 'apartment' || idx % 4 === 0) {
+    if (plot.arch === 'shop' || idx % 4 === 0) {
       const signW = Math.min(2.4, (ix1 - ix0) * 0.32);
       const signX = (ix0 + ix1) * 0.5;
       box(
@@ -2399,7 +2379,9 @@ export class Buildings {
     const t = 0.06;
     // 窗台挑檐 + 部分窗户百叶板(纯装饰, 位置确定性抽样)
     const st = 0.16;
-    const withShutters = !open && Math.floor(Math.abs(a0 * 7 + fixed * 3)) % 3 === 0;
+    const withShutters = !open &&
+      (this.activeArch === 'cottage1' || this.activeArch === 'cottage2' || this.activeArch === 'terrace') &&
+      Math.floor(Math.abs(a0 * 7 + fixed * 3)) % 3 === 0;
     if (axis === 'x') {
       box('wall', a0 - 0.12, y0 - 0.08, fixed - st, a1 + 0.12, y0, fixed + st, TRIM_C, { collider: false });
       if (withShutters) {
@@ -2612,6 +2594,10 @@ export class Buildings {
     const holeZ1 = iz1 - STAIR_LANDING;
     for (let level = 0; level < storeys; level++) {
       const fy = f1 + level * storeyStep;
+      // 通过墙体本身的细微明度变化建立楼层节奏，不再往外墙叠加成排饰条。
+      const levelWall = level % 2 === 0
+        ? p.wall
+        : new THREE.Color(p.wall).multiplyScalar(0.95).getHex();
       const wallBottom = level === 0 ? buried : fy - STOREY_JOINT_OVERLAP;
       const wallTop = fy + WALL_H + (level < storeys - 1 ? STOREY_JOINT_OVERLAP : 0);
       const wallThickness = level === 0 ? WT : WT2;
@@ -2629,13 +2615,13 @@ export class Buildings {
             },
           ]
         : [win(ix0 + w * 0.12, fy), win(ix0 + w * 0.5 - WIN_W * 0.5, fy), win(ix1 - w * 0.12 - WIN_W, fy)];
-      this.wallRun(world, box, 'x', iz0, ix0, ix1, wallBottom, wallTop, frontOpenings, p.wall, wallThickness, 1);
+      this.wallRun(world, box, 'x', iz0, ix0, ix1, wallBottom, wallTop, frontOpenings, levelWall, wallThickness, 1);
       this.wallRun(world, box, 'x', iz1, ix0, ix1, wallBottom, wallTop,
-        [win(ix0 + w * 0.12, fy), win(ix0 + w * 0.5 - WIN_W * 0.5, fy), win(ix1 - w * 0.12 - WIN_W, fy)], p.wall, wallThickness, -1);
+        [win(ix0 + w * 0.12, fy), win(ix0 + w * 0.5 - WIN_W * 0.5, fy), win(ix1 - w * 0.12 - WIN_W, fy)], levelWall, wallThickness, -1);
       this.wallRun(world, box, 'z', ix0, iz0, iz1, wallBottom, wallTop,
-        stairOnWest ? [] : [win(iz0 + d * 0.2, fy), win(iz1 - d * 0.2 - WIN_W, fy)], p.wall, wallThickness, 1);
+        stairOnWest ? [] : [win(iz0 + d * 0.2, fy), win(iz1 - d * 0.2 - WIN_W, fy)], levelWall, wallThickness, 1);
       this.wallRun(world, box, 'z', ix1, iz0, iz1, wallBottom, wallTop,
-        stairOnWest ? [win(iz0 + d * 0.2, fy), win(iz1 - d * 0.2 - WIN_W, fy)] : [], p.wall, wallThickness, -1);
+        stairOnWest ? [win(iz0 + d * 0.2, fy), win(iz1 - d * 0.2 - WIN_W, fy)] : [], levelWall, wallThickness, -1);
 
       // 两端楼梯落脚区之间用连续的视觉线索串联。地毯、灯具和墙裙均不参与碰撞，
       // 既让玩家一眼看懂转向路线，也不会再次侵占楼层交通核。
@@ -2750,13 +2736,13 @@ export class Buildings {
         // 开放式护栏和墙侧托臂取代整块实心板，远看不再像悬浮黑箱。
         for (const railY of [fy + 0.48, fy + 0.9]) {
           box('wall', balconyX0, railY, iz1 + 0.53, balconyX1, railY + 0.08, iz1 + 0.61,
-            RAIL_C, { collider: false, detail: true, surface: 'paintedMetal' });
+            0x343b3b, { collider: false, detail: true, surface: 'paintedMetal' });
         }
         const balconyPosts = 4;
         for (let post = 0; post <= balconyPosts; post++) {
           const x = balconyX0 + (balconyX1 - balconyX0) * post / balconyPosts;
           box('wall', x - 0.035, fy + 0.14, iz1 + 0.53, x + 0.035, fy + 0.96, iz1 + 0.61,
-            RAIL_C, { collider: false, detail: true, surface: 'paintedMetal' });
+            0x343b3b, { collider: false, detail: true, surface: 'paintedMetal' });
         }
         for (const x of [balconyX0 + 0.3, balconyX1 - 0.3]) {
           box('wall', x - 0.07, fy - 0.34, iz1 + 0.04, x + 0.07, fy + 0.16, iz1 + 0.18,

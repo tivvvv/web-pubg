@@ -5,13 +5,62 @@ import type { World } from './world';
 
 export const RENDER_QUALITY = Object.freeze({
   antialias: true,
-  maxPixelRatio: 1.5,
+  maxPixelRatio: 1.75,
   shadows: true,
-  shadowRefreshHz: 20,
-  baseExposure: 1.1,
-  saturation: 1.08,
-  contrast: 1.02,
+  shadowRefreshHz: 24,
+  baseExposure: 1.12,
+  saturation: 1.045,
+  contrast: 1.035,
+  environmentIntensity: 0.82,
 });
+
+function createOutdoorEnvironment(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
+  const width = 512;
+  const height = 256;
+  const pixels = new Uint8Array(width * height * 4);
+  const zenith = new THREE.Color(0x72a9d6);
+  const horizon = new THREE.Color(0xdde7df);
+  const ground = new THREE.Color(0x526143);
+  const sunColor = new THREE.Color(0xfff4d1);
+  const sun = new THREE.Vector3(0.72, 0.54, 0.3).normalize();
+  const direction = new THREE.Vector3();
+  const color = new THREE.Color();
+  for (let y = 0; y < height; y++) {
+    const latitude = (0.5 - (y + 0.5) / height) * Math.PI;
+    const cosLatitude = Math.cos(latitude);
+    for (let x = 0; x < width; x++) {
+      const longitude = ((x + 0.5) / width - 0.5) * Math.PI * 2;
+      direction.set(
+        Math.sin(longitude) * cosLatitude,
+        Math.sin(latitude),
+        -Math.cos(longitude) * cosLatitude,
+      );
+      if (direction.y >= 0) {
+        const skyBlend = Math.pow(direction.y, 0.42);
+        color.copy(horizon).lerp(zenith, skyBlend);
+        const sunAmount = Math.pow(Math.max(0, direction.dot(sun)), 420);
+        color.lerp(sunColor, sunAmount * 0.92);
+      } else {
+        color.copy(horizon).lerp(ground, Math.min(1, -direction.y * 2.2));
+      }
+      const offset = (y * width + x) * 4;
+      pixels[offset] = Math.round(THREE.MathUtils.clamp(color.r, 0, 1) * 255);
+      pixels[offset + 1] = Math.round(THREE.MathUtils.clamp(color.g, 0, 1) * 255);
+      pixels[offset + 2] = Math.round(THREE.MathUtils.clamp(color.b, 0, 1) * 255);
+      pixels[offset + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(pixels, width, height, THREE.RGBAFormat);
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  const generator = new THREE.PMREMGenerator(renderer);
+  generator.compileEquirectangularShader();
+  const target = generator.fromEquirectangular(texture);
+  generator.dispose();
+  texture.dispose();
+  return target;
+}
 
 export interface RenderStats {
   fps: number;
@@ -43,6 +92,8 @@ export class GameRenderer {
   private contextLost = false;
   private shadowRefreshElapsed = 0;
   private readonly lastShadowCameraPosition = new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0);
+  private environmentTarget: THREE.WebGLRenderTarget | null = null;
+  private environmentScene: THREE.Scene | null = null;
 
   constructor(container: HTMLElement) {
     const renderer = new THREE.WebGLRenderer({
@@ -56,9 +107,9 @@ export class GameRenderer {
     // 20Hz 更新对缓慢太阳移动和角色阴影足够平滑, 贴地阴影仍然逐帧跟随。
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
-    // three.js 新版的 PCF 已内置可调半径软化，避免使用已废弃的 PCFSoftShadowMap。
+    // three.js 新版 PCF 结合灯光 shadow.radius 完成柔化，避免使用已废弃的 PCFSoftShadowMap。
     renderer.shadowMap.type = THREE.PCFShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMapping = THREE.AgXToneMapping;
     renderer.toneMappingExposure = RENDER_QUALITY.baseExposure;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.domElement.style.filter = `saturate(${RENDER_QUALITY.saturation}) contrast(${RENDER_QUALITY.contrast})`;
@@ -88,6 +139,13 @@ export class GameRenderer {
 
   dispose(): void {
     this.renderer.setAnimationLoop(null);
+    const environmentScene = this.environmentScene;
+    if (environmentScene && environmentScene.environment === this.environmentTarget?.texture) {
+      environmentScene.environment = null;
+    }
+    this.environmentTarget?.dispose();
+    this.environmentTarget = null;
+    this.environmentScene = null;
     this.renderer.dispose();
     this.domElement.remove();
   }
@@ -110,6 +168,15 @@ export class GameRenderer {
     world.updateVisuals(dt, camera.position, advanceEnvironment);
     const environment = world.environmentState;
     if (this.contextLost) return environment;
+    if (this.environmentScene !== scene || !this.environmentTarget) {
+      this.environmentTarget?.dispose();
+      this.environmentTarget = createOutdoorEnvironment(this.renderer);
+      this.environmentScene = scene;
+      scene.environment = this.environmentTarget.texture;
+    }
+    scene.environmentIntensity = RENDER_QUALITY.environmentIntensity * (
+      0.72 + environment.daylight * 0.28 + environment.cloudiness * 0.08
+    );
     this.renderer.toneMappingExposure = environment.exposure;
     const visualFilter = `saturate(${environment.saturation.toFixed(3)}) contrast(${environment.contrast.toFixed(3)})`;
     if (visualFilter !== this.lastVisualFilter) {

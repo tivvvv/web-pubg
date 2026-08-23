@@ -124,6 +124,7 @@ export class World {
   tacticalRockCount = 0;
   halfBushCount = 0;
   grassPatchCount = 0;
+  nearGrassPatchCount = 0;
   churchDetailCount = 0;
   plazaDetailCount = 0;
   stonegatePaverCount = 0;
@@ -142,6 +143,9 @@ export class World {
   private heights = new Float32Array((GRID + 1) * (GRID + 1));
   private sun: THREE.DirectionalLight;
   private sky: Sky;
+  private interiorFill: THREE.PointLight;
+  private nearGrassMesh: THREE.InstancedMesh | null = null;
+  private readonly nearGrassAnchor = new THREE.Vector2(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
   private timeU = { value: 0 };   // 共享时间 uniform(水波/植被摇摆)
   private camU = { value: new THREE.Vector3() }; // 共享相机 uniform(草距离消退)
   private elapsed = 0;
@@ -254,9 +258,9 @@ export class World {
     const colors = new Float32Array(pos.count * 3);
     const cSand = new THREE.Color(0xd7c18a);
     const cSandWet = new THREE.Color(0x8f8972);
-    const cGrassA = new THREE.Color(0x507f40);
-    const cGrassB = new THREE.Color(0x76a34f);
-    const cForest = new THREE.Color(0x456b47);
+    const cGrassA = new THREE.Color(0x44783a);
+    const cGrassB = new THREE.Color(0x6a9d49);
+    const cForest = new THREE.Color(0x365f3e);
     const cDry = new THREE.Color(0x9a925b);
     const cRock = new THREE.Color(0x92938c);
     const cRoadBed = new THREE.Color(0x948267);
@@ -451,6 +455,11 @@ varying vec3 vTerrainWorld;`,
     scene.add(this.sun.target);
     this.sky = new Sky(scene);
     this.environment = new EnvironmentSystem(scene, this.sky, this.sun, hemi, fog, terrainMat, waterMat);
+    // 单个相机邻域补光代替每栋楼常驻点光源。进入室内后轻柔提亮木作和家具接触面，
+    // 避免天花遮住太阳时整个房间只剩平坦的环境灰，同时保持固定的灯光着色成本。
+    this.interiorFill = new THREE.PointLight(0xffd6a3, 0, 15, 1.9);
+    this.interiorFill.name = 'camera-interior-fill';
+    scene.add(this.interiorFill);
 
     this.buildStatics(scene);
     for (const platform of this.platforms) {
@@ -640,9 +649,10 @@ varying vec3 vTerrainWorld;`,
     // ---- 树木(四种树冠轮廓, 北境密林加密, 草原保留疏林层次) ----
     const treeCap = 600;
     const upY = new THREE.Vector3(0, 1, 0);
-    const trunkMat = new THREE.MeshLambertMaterial({
+    const trunkMat = new THREE.MeshStandardMaterial({
       color: 0xffffff, vertexColors: true,
-      emissive: 0x70472b, emissiveIntensity: 0.5,
+      roughness: 0.96,
+      emissive: 0x332115, emissiveIntensity: 0.08,
     });
     applySurfaceAsset(trunkMat, 'wood', 3.6, 0.58);
     const trunkMesh = new THREE.InstancedMesh(
@@ -650,13 +660,15 @@ varying vec3 vTerrainWorld;`,
       trunkMat,
       treeCap * 2, // 两段收分树干
     );
-    const canopyMat = new THREE.MeshLambertMaterial({
+    const canopyMat = new THREE.MeshStandardMaterial({
       color: 0xffffff, flatShading: false, vertexColors: true,
-      emissive: 0x173d20, emissiveIntensity: 0.22,
+      roughness: 0.94,
+      emissive: 0x102818, emissiveIntensity: 0.1,
     });
-    const broadMat = new THREE.MeshLambertMaterial({
+    const broadMat = new THREE.MeshStandardMaterial({
       color: 0xffffff, flatShading: false, vertexColors: true,
-      emissive: 0x23491f, emissiveIntensity: 0.24,
+      roughness: 0.94,
+      emissive: 0x183018, emissiveIntensity: 0.1,
     });
     applySurfaceAsset(canopyMat, 'foliage', 4.8, 0.52);
     applySurfaceAsset(broadMat, 'foliage', 4.2, 0.56);
@@ -667,14 +679,18 @@ varying vec3 vTerrainWorld;`,
     // 枝丫残桩(小斜枝)
     const branchMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.04, 0.085, 0.88, 7),
-      new THREE.MeshLambertMaterial({ color: 0x765136, emissive: 0x4a301e, emissiveIntensity: 0.42 }),
+      new THREE.MeshStandardMaterial({
+        color: 0x765136, roughness: 0.96, emissive: 0x2a1b11, emissiveIntensity: 0.08,
+      }),
       treeCap * 3,
     );
     const rootGeometry = new THREE.CapsuleGeometry(0.062, 0.74, 2, 7);
     rootGeometry.rotateX(Math.PI * 0.5);
     const rootMesh = new THREE.InstancedMesh(
       rootGeometry,
-      new THREE.MeshLambertMaterial({ color: 0x65452d, emissive: 0x382416, emissiveIntensity: 0.3 }),
+      new THREE.MeshStandardMaterial({
+        color: 0x65452d, roughness: 0.98, emissive: 0x24170f, emissiveIntensity: 0.06,
+      }),
       treeCap * 3,
     );
     this.addSway(canopyMat, 0.09, -2.0, 2.5);
@@ -966,7 +982,8 @@ varying vec3 vTerrainWorld;`,
     const BUSH_COLORS = [0x2f5c2a, 0x3f7a33, 0x5c6e2e, 0x8a9438];
     const bushMeshes: THREE.InstancedMesh[] = [];
     for (let layer = 0; layer < 4; layer++) {
-      const bm = new THREE.MeshLambertMaterial({ color: 0xffffff });
+      const bm = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96 });
+      applySurfaceAsset(bm, 'foliage', 4.4 + layer * 0.35, 0.4);
       this.addSway(bm, 0.07, -1.0, 1.2, true, false, 180, 200);
       const mesh = new THREE.InstancedMesh(bushGeo, bm, bushCap);
       mesh.castShadow = true;
@@ -1051,8 +1068,8 @@ varying vec3 vTerrainWorld;`,
     const forestGrassCap = 1600;
     const grassMesh = new THREE.InstancedMesh(grassGeo, grassMat, grassCap + forestGrassCap);
     grassMesh.receiveShadow = true;
-    const cG1 = new THREE.Color(0x5e9440); // 与地形草地同管线(sRGB→线性)
-    const cG2 = new THREE.Color(0xa8ad5e);
+    const cG1 = new THREE.Color(0x4d8439); // 与地形草地同管线(sRGB→线性)
+    const cG2 = new THREE.Color(0x889447);
     let grassCount = 0;
     for (let t = 0; t < grassCap * 4 && grassCount < grassCap; t++) {
       // 按簇散布: 每簇 8-14 丛, 形成连续草坪和自然疏密边缘.
@@ -1068,8 +1085,8 @@ varying vec3 vTerrainWorld;`,
         const h = this.getHeight(x, z);
         if (h < WATER_Y + 0.4 || h > 16.2 || this.slopeAt(x, z) > 0.64) continue;
         if (this.inPlot(x, z, 1.5) || this.inScenicSite(x, z, 0.4) || this.nearRoad(x, z, 0.25)) continue;
-        const tallPatch = rng() > 0.78;
-        const s = tallPatch ? 0.92 + rng() * 0.38 : 0.52 + rng() * 0.42;
+        const tallPatch = rng() > 0.84;
+        const s = tallPatch ? 0.72 + rng() * 0.3 : 0.4 + rng() * 0.3;
         vPos.set(x, h - 0.02, z);
         vScale.set(s, s, s);
         q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
@@ -1095,7 +1112,7 @@ varying vec3 vTerrainWorld;`,
       const h = this.getHeight(x, z);
       if (h < WATER_Y + 0.4 || h > 16.2 || this.slopeAt(x, z) > 0.64) continue;
       if (this.inPlot(x, z, 1.5) || this.inScenicSite(x, z, 0.4) || this.nearRoad(x, z, 0.25)) continue;
-      const s = 0.68 + rng() * 0.5;
+      const s = 0.5 + rng() * 0.38;
       vPos.set(x, h - 0.02, z);
       vScale.set(s, s, s);
       q0.setFromAxisAngle(upY, rng() * Math.PI * 2);
@@ -1284,6 +1301,84 @@ varying vec3 vTerrainWorld;`,
     this.addBridge(scene, 170);
     this.assetUsage.add('map.infrastructure.bridge', 2);
     this.addRoadWaterCrossings(scene);
+    this.setupNearFieldGrass(scene, naturalBudget.nearGrass);
+  }
+
+  // 全图保留中远景草簇, 镜头附近再铺一层世界坐标稳定的细草。
+  // 它只在跨过 7m 网格时重建, 因此第一人称脚边更饱满且不会产生逐帧 CPU 负担。
+  private setupNearFieldGrass(scene: THREE.Scene, capacity: number): void {
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      roughness: 0.96,
+      side: THREE.DoubleSide,
+    });
+    applySurfaceAsset(material, 'foliage', 5.6, 0.34);
+    this.addSway(material, 0.045, 0, 0.55, false, true);
+    const mesh = new THREE.InstancedMesh(makeGrassGeo(), material, capacity);
+    mesh.name = 'near-field-grass';
+    mesh.count = 0;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    this.nearGrassMesh = mesh;
+    scene.add(mesh);
+  }
+
+  private updateNearFieldGrass(camPos: THREE.Vector3): void {
+    const mesh = this.nearGrassMesh;
+    if (!mesh) return;
+    const anchorX = Math.round(camPos.x / 7) * 7;
+    const anchorZ = Math.round(camPos.z / 7) * 7;
+    if (Math.hypot(anchorX - this.nearGrassAnchor.x, anchorZ - this.nearGrassAnchor.y) < 4.5) return;
+    this.nearGrassAnchor.set(anchorX, anchorZ);
+
+    const compact = navigator.hardwareConcurrency <= 4;
+    const radius = compact ? 33 : 44;
+    const spacing = compact ? 1.55 : 1.3;
+    const minGridX = Math.floor((anchorX - radius) / spacing);
+    const maxGridX = Math.ceil((anchorX + radius) / spacing);
+    const minGridZ = Math.floor((anchorZ - radius) / spacing);
+    const maxGridZ = Math.ceil((anchorZ + radius) / spacing);
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    const tint = new THREE.Color();
+    const green = new THREE.Color(0x4e873b);
+    const dry = new THREE.Color(0x7f8e43);
+    const hash = (x: number, z: number, salt: number): number => {
+      const value = Math.sin(x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453123;
+      return value - Math.floor(value);
+    };
+    let count = 0;
+    for (let gridZ = minGridZ; gridZ <= maxGridZ && count < mesh.instanceMatrix.count; gridZ++) {
+      for (let gridX = minGridX; gridX <= maxGridX && count < mesh.instanceMatrix.count; gridX++) {
+        if (hash(gridX, gridZ, 1) < 0.16) continue;
+        const x = (gridX + hash(gridX, gridZ, 2) * 0.82) * spacing;
+        const z = (gridZ + hash(gridX, gridZ, 3) * 0.82) * spacing;
+        const distance = Math.hypot(x - anchorX, z - anchorZ);
+        if (distance > radius) continue;
+        const h = this.getHeight(x, z);
+        if (h < WATER_Y + 0.42 || h > 16.2 || this.slopeAt(x, z) > 0.6) continue;
+        if (this.inPlot(x, z, 0.9) || this.inScenicSite(x, z, 0.25) || this.nearRoad(x, z, 0.08)) continue;
+        const edgeFade = 1 - smoothstep(radius - 7, radius, distance);
+        const size = (0.26 + hash(gridX, gridZ, 4) * 0.28) * Math.max(0.2, edgeFade);
+        position.set(x, h - 0.015, z);
+        rotation.setFromAxisAngle(up, hash(gridX, gridZ, 5) * Math.PI * 2);
+        scale.set(size * (0.78 + hash(gridX, gridZ, 6) * 0.36), size, size);
+        matrix.compose(position, rotation, scale);
+        mesh.setMatrixAt(count, matrix);
+        tint.copy(green).lerp(dry, Math.pow(hash(gridX, gridZ, 7), 2.6));
+        tint.multiplyScalar(0.86 + hash(gridX, gridZ, 8) * 0.24);
+        mesh.setColorAt(count, tint);
+        count++;
+      }
+    }
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.nearGrassPatchCount = count;
   }
 
   private prepareScenicSites(): void {
@@ -1519,13 +1614,15 @@ varying vec3 vTerrainWorld;`,
       const normals = new Float32Array(vertices.length);
       for (let index = 1; index < normals.length; index += 3) normals[index] = 1;
       geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-      const mat = new THREE.MeshBasicMaterial({
+      const mat = new THREE.MeshStandardMaterial({
         color,
-        fog: true,
+        roughness: 0.97,
+        metalness: 0,
         polygonOffset: true,
         polygonOffsetFactor: -2,
         polygonOffsetUnits: -2,
       });
+      applySurfaceAsset(mat, 'terrain', 0.21, 0.46, true);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = name;
       mesh.receiveShadow = true;
@@ -4689,7 +4786,10 @@ varying vec3 vTerrainWorld;`,
   ): void {
     const timeU = this.timeU;
     const camU = this.camU;
-    mat.onBeforeCompile = (shader) => {
+    const previousCompile = mat.onBeforeCompile;
+    const previousCacheKey = mat.customProgramCacheKey;
+    mat.onBeforeCompile = (shader, renderer) => {
+      previousCompile.call(mat, shader, renderer);
       shader.uniforms.uTime = timeU;
       shader.uniforms.uCamPos = camU;
       shader.vertexShader = shader.vertexShader
@@ -4714,7 +4814,7 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
         );
       }
     };
-    mat.customProgramCacheKey = () => `sway:${amp}:${lo}:${hi}:${fade}:${upNormal}:${fadeNear}:${fadeFar}`;
+    mat.customProgramCacheKey = () => `${previousCacheKey.call(mat)}|sway-v2:${amp}:${lo}:${hi}:${fade}:${upNormal}:${fadeNear}:${fadeFar}`;
   }
 
   get environmentState(): EnvironmentSnapshot {
@@ -4752,6 +4852,22 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
     this.elapsed += dt;
     this.timeU.value = this.elapsed;
     this.camU.value.copy(camPos);
+    this.updateNearFieldGrass(camPos);
+    const indoors = this.buildings.plots.some((plot) => {
+      if (camPos.x <= plot.minX || camPos.x >= plot.maxX || camPos.z <= plot.minZ || camPos.z >= plot.maxZ) {
+        return false;
+      }
+      const fallbackStoreys = plot.arch === 'apartment' ? 7 : plot.arch === 'cottage1' || plot.arch === 'barn' ? 1 : 2;
+      const roofHeight = plot.flatH + (plot.storeys ?? fallbackStoreys) * 3.34 + 1.4;
+      return camPos.y > plot.flatH + 0.25 && camPos.y < roofHeight;
+    });
+    this.interiorFill.intensity = THREE.MathUtils.damp(
+      this.interiorFill.intensity,
+      indoors ? 2.1 : 0,
+      indoors ? 7 : 4,
+      dt,
+    );
+    this.interiorFill.position.set(camPos.x, camPos.y + 1.25, camPos.z - 0.4);
     this.environment.update(dt, camPos, advanceEnvironment ? this.shadowAnchor : camPos, advanceEnvironment);
     this.sky.update(dt, camPos);
   }
@@ -5104,31 +5220,53 @@ normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);`,
   }
 }
 
-// 草丛几何体: 11 叶片组成三团交错草簇, 根深暗/尖亮(顶点色围绕 1.0, 与 instanceColor 相乘)
+// 草丛几何体: 九片分段收尖叶片组成三团交错草簇, 根深暗/尖亮。
+// 旧版每片草只有一个巨大三角形, 近景会呈现纸片锯齿；现在用根段四边形和弯曲叶尖维持纤细轮廓。
 // 法线统一朝上 -- 让叶片接受与地形一致的光照, 避免逆光黑刺
 function makeGrassGeo(): THREE.BufferGeometry {
   const pos: number[] = [];
   const col: number[] = [];
   const nrm: number[] = [];
   const rng = mulberry32(9917);
-  for (let b = 0; b < 11; b++) {
+  for (let b = 0; b < 9; b++) {
     const a = rng() * Math.PI * 2;
     const cluster = b % 3;
     const clusterAngle = cluster / 3 * Math.PI * 2;
-    const rr = rng() * 0.22;
-    const ox = Math.cos(a) * rr + Math.cos(clusterAngle) * 0.14;
-    const oz = Math.sin(a) * rr + Math.sin(clusterAngle) * 0.14;
+    const rr = rng() * 0.17;
+    const ox = Math.cos(a) * rr + Math.cos(clusterAngle) * 0.1;
+    const oz = Math.sin(a) * rr + Math.sin(clusterAngle) * 0.1;
     const fa = rng() * Math.PI * 2;
     const dx = Math.cos(fa);
     const dz = Math.sin(fa);
-    const h = 0.38 + rng() * 0.24;
-    const w = 0.05 + rng() * 0.02;
-    const lean = 0.1 + rng() * 0.12; // 叶尖微后仰
+    const h = 0.34 + rng() * 0.18;
+    const w = 0.016 + rng() * 0.012;
+    const lean = 0.055 + rng() * 0.095;
     const bx = -dz * w;
     const bz = dx * w;
-    pos.push(ox - bx, 0, oz - bz, ox + bx, 0, oz + bz, ox + dx * lean, h, oz + dz * lean);
-    nrm.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
-    col.push(0.62, 0.62, 0.62, 0.62, 0.62, 0.62, 1.12, 1.12, 1.1);
+    const midX = ox + dx * lean * 0.34;
+    const midZ = oz + dz * lean * 0.34;
+    const mx = bx * 0.58;
+    const mz = bz * 0.58;
+    const tipX = ox + dx * lean;
+    const tipZ = oz + dz * lean;
+    pos.push(
+      ox - bx, 0, oz - bz,
+      ox + bx, 0, oz + bz,
+      midX - mx, h * 0.58, midZ - mz,
+      ox + bx, 0, oz + bz,
+      midX + mx, h * 0.58, midZ + mz,
+      midX - mx, h * 0.58, midZ - mz,
+      midX - mx, h * 0.58, midZ - mz,
+      midX + mx, h * 0.58, midZ + mz,
+      tipX, h, tipZ,
+    );
+    for (let vertex = 0; vertex < 9; vertex++) nrm.push(0, 1, 0);
+    col.push(
+      0.58, 0.6, 0.55, 0.58, 0.6, 0.55,
+      0.92, 0.96, 0.84, 0.58, 0.6, 0.55,
+      0.92, 0.96, 0.84, 0.92, 0.96, 0.84,
+      0.92, 0.96, 0.84, 0.92, 0.96, 0.84, 1.12, 1.14, 0.98,
+    );
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

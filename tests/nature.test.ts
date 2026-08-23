@@ -30,6 +30,8 @@ describe('地形与自然环境重制', () => {
     const compact = naturalDetailBudget(4);
     const full = naturalDetailBudget(10);
     expect(compact.grass).toBeLessThan(full.grass);
+    expect(compact.nearGrass).toBeLessThan(full.nearGrass);
+    expect(compact.nearGrass).toBeGreaterThanOrEqual(4000);
     expect(compact.grass).toBeGreaterThanOrEqual(12000);
     expect(compact.understory).toBeGreaterThan(0);
     expect(compact.flowers).toBeGreaterThan(0);

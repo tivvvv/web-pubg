@@ -375,9 +375,9 @@ describe('画面回归保护', () => {
     const rainyNight = environmentLighting(0, 0.86, 0.76, 0.16);
 
     expect(day.hemiIntensity).toBeCloseTo(1.22, 5);
-    expect(day.exposure).toBeCloseTo(1.14, 5);
+    expect(day.exposure).toBeCloseTo(1.08, 5);
     expect(clearNight.hemiIntensity).toBeGreaterThanOrEqual(0.85);
-    expect(clearNight.exposure).toBeCloseTo(1.35, 5);
+    expect(clearNight.exposure).toBeCloseTo(1.285, 5);
     expect(rainyNight.hemiIntensity).toBeGreaterThan(clearNight.hemiIntensity);
     expect(rainyNight.exposure).toBeGreaterThanOrEqual(clearNight.exposure);
   });
@@ -433,21 +433,27 @@ describe('画面回归保护', () => {
     });
     expect(snow.shadowRadius).toBeGreaterThan(clear.shadowRadius);
     expect(snow.fogFar).toBeGreaterThan(snow.fogNear + 100);
-    expect(snow.lighting.exposure).toBeGreaterThanOrEqual(1.14);
+    expect(snow.lighting.exposure).toBeGreaterThanOrEqual(1.08);
   });
 
   it('性能优化不能降低核心渲染质量基线', () => {
     expect(RENDER_QUALITY).toEqual({
       antialias: true,
-      maxPixelRatio: 1.5,
+      maxPixelRatio: 1.75,
       shadows: true,
-      shadowRefreshHz: 20,
-      baseExposure: 1.1,
-      saturation: 1.08,
-      contrast: 1.02,
+      shadowRefreshHz: 24,
+      baseExposure: 1.12,
+      saturation: 1.045,
+      contrast: 1.035,
+      environmentIntensity: 0.82,
     });
     expect(SUN_SHADOW_MAP_SIZE).toBe(2048);
     expect(RENDER_QUALITY.shadowRefreshHz).toBeGreaterThanOrEqual(20);
+    const rendering = readFileSync(join(process.cwd(), 'src/rendering.ts'), 'utf8');
+    expect(rendering).toContain('THREE.PCFShadowMap');
+    expect(rendering).not.toContain('THREE.PCFSoftShadowMap;');
+    expect(rendering).toContain('THREE.AgXToneMapping');
+    expect(rendering).toContain('scene.environment = this.environmentTarget.texture');
   });
 
   it('渲染上下文丢失和单帧异常均有恢复保护', () => {

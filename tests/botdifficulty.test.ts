@@ -26,12 +26,12 @@ describe('机器人难度分层', () => {
     const deck = buildBotDifficultyDeck(20, randomSource);
 
     expect(deck).toHaveLength(20);
-    expect(countTiers(deck)).toEqual({ rookie: 4, regular: 9, veteran: 5, elite: 2 });
+    expect(countTiers(deck)).toEqual({ rookie: 6, regular: 10, veteran: 3, elite: 1 });
     expect(deck).not.toEqual([
-      ...Array<BotDifficultyTier>(4).fill('rookie'),
-      ...Array<BotDifficultyTier>(9).fill('regular'),
-      ...Array<BotDifficultyTier>(5).fill('veteran'),
-      ...Array<BotDifficultyTier>(2).fill('elite'),
+      ...Array<BotDifficultyTier>(6).fill('rookie'),
+      ...Array<BotDifficultyTier>(10).fill('regular'),
+      ...Array<BotDifficultyTier>(3).fill('veteran'),
+      ...Array<BotDifficultyTier>(1).fill('elite'),
     ]);
   });
 
@@ -46,7 +46,7 @@ describe('机器人难度分层', () => {
   it('六十四人对局的六十名机器人保持完整难度梯度', () => {
     const deck = buildBotDifficultyDeck(60, () => 0.5);
     expect(deck).toHaveLength(60);
-    expect(countTiers(deck)).toEqual({ rookie: 12, regular: 27, veteran: 15, elite: 6 });
+    expect(countTiers(deck)).toEqual({ rookie: 18, regular: 30, veteran: 9, elite: 3 });
   });
 
   it('高阶机器人感知更远反应更快但仍保留射击误差', () => {

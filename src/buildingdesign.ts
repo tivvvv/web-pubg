@@ -48,8 +48,8 @@ export interface RegionalBuildingStyle {
 
 export const REGIONAL_BUILDING_STYLES: Readonly<Record<RegionId, RegionalBuildingStyle>> = {
   stonegate: {
-    walls: [0xd7d2c8, 0xb9c3c6, 0xc6aa92], roofs: [0x787d82, 0x8b5b47],
-    accent: 0x756e64, secondary: 0xb06b4f, chimneyChance: 0.34, acChance: 0.62,
+    walls: [0xe1d5bd, 0xc8d0cb, 0xd4b99b], roofs: [0x5f6a70, 0x934f3f],
+    accent: 0x877b68, secondary: 0xb85f45, chimneyChance: 0.34, acChance: 0.62,
   },
   ironring: {
     walls: [0xb7b9b2, 0x9fa7a5, 0xc3b9aa], roofs: [0x676d70, 0x80564a],

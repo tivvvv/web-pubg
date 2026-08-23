@@ -100,10 +100,10 @@ export function environmentLighting(
     hemiIntensity: 1.04 + daylight * 0.18 * light + rainFill,
     moonIntensity: 0.74 * light + rain * 0.04,
     exposure: clamp(
-      1.17 - daylight * 0.035 + (1 - light) * 0.07 + rain * 0.075 + storm * 0.025
+      1.105 - daylight * 0.025 + (1 - light) * 0.07 + rain * 0.075 + storm * 0.025
         + (1 - daylight) * 0.18,
-      1.14,
-      1.42,
+      1.08,
+      1.34,
     ),
   };
 }
@@ -145,8 +145,8 @@ export function environmentVisualProfile(input: {
     fogNear: Math.max(24, input.fogNear),
     fogFar: Math.max(input.fogNear + 120, input.fogFar),
     rainOpacity: clamp(rain * (0.54 + daylight * 0.1), 0, 0.64),
-    saturation: clamp(1.08 - cloud * 0.03 - rain * 0.015 - snow * 0.012 + twilight * 0.012, 1.005, 1.09),
-    contrast: clamp(1.02 - cloud * 0.008 - rain * 0.006 + (1 - daylight) * 0.008, 1.008, 1.035),
+    saturation: clamp(1.15 - cloud * 0.04 - rain * 0.018 - snow * 0.014 + twilight * 0.012, 1.075, 1.15),
+    contrast: clamp(1.058 - cloud * 0.012 - rain * 0.008 + (1 - daylight) * 0.006, 1.035, 1.064),
     warmth,
   };
 }
@@ -233,7 +233,7 @@ export class EnvironmentSystem {
   private readonly sunDir = new THREE.Vector3(0.7, 0.6, 0.35).normalize();
   private readonly lightDir = new THREE.Vector3();
   private readonly dayZenith = new THREE.Color(0x529dd8);
-  private readonly dayHorizon = new THREE.Color(0xe7eee8);
+  private readonly dayHorizon = new THREE.Color(0xc9e0ec);
   private readonly dawnZenith = new THREE.Color(0x405f91);
   private readonly dawnHorizon = new THREE.Color(0xefa16c);
   private readonly nightZenith = new THREE.Color(0x0d203a);
@@ -243,9 +243,9 @@ export class EnvironmentSystem {
   private readonly cloudFog = new THREE.Color(0x8798a2);
   private readonly warmSun = new THREE.Color(0xffa268);
   private readonly daySun = new THREE.Color(0xffefcf);
-  private readonly dayHemi = new THREE.Color(0x9fc7e4);
+  private readonly dayHemi = new THREE.Color(0x8ebbd9);
   private readonly nightHemi = new THREE.Color(0x9aabc4);
-  private readonly dayGround = new THREE.Color(0x7b8969);
+  private readonly dayGround = new THREE.Color(0x60774e);
   private readonly nightGround = new THREE.Color(0x718097);
   private readonly stormWater = new THREE.Color(0x294b5b);
   private current = copyProfile(WEATHER.clear);

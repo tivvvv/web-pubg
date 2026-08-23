@@ -546,11 +546,12 @@ describe('地图与建筑终极几何巡检', () => {
     expect(regionAt((plot.minX + plot.maxX) * 0.5, (plot.minZ + plot.maxZ) * 0.5)?.id).toBe('stonegate');
   });
 
-  it('两栋高楼拥有高密度豪华立面细节', () => {
+  it('两栋高楼使用克制且没有重复叠层的完整立面', () => {
     const world = createWorld();
     const apartmentCount = (world.buildings.plots as Plot[]).filter((plot) => plot.arch === 'apartment').length;
     expect(apartmentCount).toBe(2);
-    expect(world.buildings.europeanFacadeDetailsByArch.apartment).toBeGreaterThan(430);
+    expect(world.buildings.europeanFacadeDetailsByArch.apartment).toBeGreaterThanOrEqual(20);
+    expect(world.buildings.europeanFacadeDetailsByArch.apartment).toBeLessThanOrEqual(32);
   });
 
   it('体育馆拥有独立场馆立面和高密度视觉细节', () => {
@@ -709,8 +710,9 @@ describe('地图与建筑终极几何巡检', () => {
     expect(roadVerge).toBeUndefined();
     if (!furrows || !rails || !road) return;
 
-    const trackMaterial = road.material as THREE.MeshBasicMaterial;
-    expect(trackMaterial).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const trackMaterial = road.material as THREE.MeshStandardMaterial;
+    expect(trackMaterial).toBeInstanceOf(THREE.MeshStandardMaterial);
+    expect(trackMaterial.roughness).toBeGreaterThanOrEqual(0.95);
     expect(trackMaterial.color.getHex()).toBe(0x948267);
     expect(road.userData.roadSurfaceLift).toBeGreaterThanOrEqual(0.028);
     expect(road.userData.roadSurfaceLift).toBeLessThanOrEqual(0.04);
@@ -1112,7 +1114,8 @@ describe('地图与建筑终极几何巡检', () => {
     expect(world.buildings.assetUsage.count('building.module.european-facade')).toBe(world.buildings.plots.length);
     expect(world.buildings.europeanFacadeDetailCount).toBeGreaterThan(world.buildings.plots.length * 45);
     for (const [arch, count] of Object.entries(world.buildings.europeanFacadeDetailsByArch)) {
-      expect(count, `${arch} 没有完整欧式立面`).toBeGreaterThanOrEqual(45);
+      const minimum = arch === 'apartment' ? 20 : 45;
+      expect(count, `${arch} 没有完整欧式立面`).toBeGreaterThanOrEqual(minimum);
     }
   });
 });

@@ -38,6 +38,10 @@ describe('美术与音效静态资产', () => {
       expect(profile.roughnessVariation).toBeLessThanOrEqual(0.3);
       expect(profile.reliefContrast).toBeGreaterThan(0);
       expect(profile.reliefContrast).toBeLessThanOrEqual(0.5);
+      expect(profile.bumpStrength).toBeGreaterThan(0);
+      expect(profile.bumpStrength).toBeLessThanOrEqual(0.6);
+      expect(profile.detailCenter).toBeGreaterThan(0.5);
+      expect(profile.detailCenter).toBeLessThanOrEqual(0.9);
     }
     expect(SURFACE_PBR_PROFILES.stonegateBrick.reliefContrast).toBeGreaterThan(SURFACE_PBR_PROFILES.stone.reliefContrast);
   });

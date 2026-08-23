@@ -181,7 +181,7 @@ function scenarioBuildingPlot(game: Game, params: URLSearchParams) {
     return game.world.buildings.plots[game.world.buildings.verticalSlicePlotIndex];
   }
   const requestedIndex = Number(params.get('plotIndex'));
-  if (Number.isInteger(requestedIndex) && requestedIndex >= 0 && requestedIndex < game.world.buildings.plots.length) {
+  if (params.has('plotIndex') && Number.isInteger(requestedIndex) && requestedIndex >= 0 && requestedIndex < game.world.buildings.plots.length) {
     return game.world.buildings.plots[requestedIndex];
   }
   const matches = game.world.buildings.plots.filter((candidate) => candidate.arch === scenarioBuildingArch(params));
@@ -1372,8 +1372,8 @@ function setupStairs(game: Game): void {
     const halfX = (plot.maxX - plot.minX) / 2;
     const halfZ = (plot.maxZ - plot.minZ) / 2;
     const showcaseOffset = params.get('slice') === '1' ? -halfX * 0.68 : 0;
-    const tallFacade = plot.arch === 'apartment' && (plot.storeys ?? 3) > 3;
-    const facadeDistance = tallFacade ? 15.5 : 7.5;
+    const tallFacade = (plot.arch === 'apartment' && (plot.storeys ?? 3) > 3) || plot.arch === 'gym';
+    const facadeDistance = plot.arch === 'gym' ? 24 : tallFacade ? 15.5 : 7.5;
     const candidates = [
       // 垂直切片观察点略偏离门轴，避免门廊立柱遮住砖石细节。
       { x: cx + showcaseOffset, z: cz - halfZ - facadeDistance },
@@ -2201,6 +2201,21 @@ function setupParachute(game: Game, params: URLSearchParams): void {
     const z = (lane[1] + lane[3]) * 0.5;
     const y = game.world.getHeight(x, z) + 58;
     const canopyColors = [0xd8843c, 0x9ab86a, 0x6e7a8a, 0x8a7a5e, 0x5e7a72, 0x7d6f8a] as const;
+    const resolveSafeDrop = (desiredX: number, desiredZ: number): { x: number; z: number } => {
+      for (let ring = 0; ring <= 18; ring++) {
+        const radius = ring * 4;
+        const samples = ring === 0 ? 1 : Math.max(8, ring * 3);
+        for (let sample = 0; sample < samples; sample++) {
+          const angle = sample * Math.PI * 2 / samples + ring * 0.47;
+          const candidateX = desiredX + Math.cos(angle) * radius;
+          const candidateZ = desiredZ + Math.sin(angle) * radius;
+          if (game.world.pointFree(candidateX, candidateZ, 0.68, WATER_Y + 0.2, 17)) {
+            return { x: candidateX, z: candidateZ };
+          }
+        }
+      }
+      return { x, z };
+    };
     const configure = (character: Character, offsetX: number, offsetZ: number, color: number): void => {
       character.alive = true;
       character.hp = 100;
@@ -2231,8 +2246,11 @@ function setupParachute(game: Game, params: URLSearchParams): void {
       bot.jumpS = -1;
       bot.descent = 'canopy';
       bot.vy = CANOPY_DEPLOY_VELOCITY;
-      bot.dropTarget.set(x + (column - 2) * 5, z + 9 + row * 4.5);
-      configure(bot.char, (column - 2) * 5, 9 + row * 4.5, canopyColors[i % canopyColors.length]);
+      const desiredX = x + (column - 2) * 5;
+      const desiredZ = z + 9 + row * 4.5;
+      const safeDrop = resolveSafeDrop(desiredX, desiredZ);
+      bot.dropTarget.set(safeDrop.x, 0, safeDrop.z);
+      configure(bot.char, safeDrop.x - x, safeDrop.z - z, canopyColors[i % canopyColors.length]);
     }
     return;
   }

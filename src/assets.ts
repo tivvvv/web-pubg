@@ -39,7 +39,7 @@ export type AudioAssetId =
 
 export const SURFACE_ASSET_URLS: Readonly<Record<SurfaceAssetId, string>> = Object.freeze({
   plaster: '/assets/textures/plaster-detail.png',
-  terrain: '/assets/textures/terrain-detail.png',
+  terrain: '/assets/textures/terrain-detail-v2.png',
   wood: '/assets/textures/wood-detail.png',
   metal: '/assets/textures/metal-detail.png',
   fabric: '/assets/textures/fabric-detail.png',
@@ -54,21 +54,23 @@ export const SURFACE_ASSET_URLS: Readonly<Record<SurfaceAssetId, string>> = Obje
 export interface SurfacePbrProfile {
   roughnessVariation: number;
   reliefContrast: number;
+  bumpStrength: number;
+  detailCenter: number;
 }
 
 // 颜色细节、微表面粗糙度使用同一套资产定义，避免视觉层和物理材质参数各自漂移。
 export const SURFACE_PBR_PROFILES: Readonly<Record<SurfaceAssetId, SurfacePbrProfile>> = Object.freeze({
-  plaster: { roughnessVariation: 0.1, reliefContrast: 0.18 },
-  terrain: { roughnessVariation: 0.18, reliefContrast: 0.3 },
-  wood: { roughnessVariation: 0.16, reliefContrast: 0.3 },
-  metal: { roughnessVariation: 0.22, reliefContrast: 0.2 },
-  fabric: { roughnessVariation: 0.12, reliefContrast: 0.22 },
-  stone: { roughnessVariation: 0.2, reliefContrast: 0.38 },
-  concrete: { roughnessVariation: 0.16, reliefContrast: 0.28 },
-  roof: { roughnessVariation: 0.19, reliefContrast: 0.34 },
-  foliage: { roughnessVariation: 0.13, reliefContrast: 0.2 },
-  paintedMetal: { roughnessVariation: 0.24, reliefContrast: 0.2 },
-  stonegateBrick: { roughnessVariation: 0.27, reliefContrast: 0.5 },
+  plaster: { roughnessVariation: 0.1, reliefContrast: 0.18, bumpStrength: 0.2, detailCenter: 0.875 },
+  terrain: { roughnessVariation: 0.12, reliefContrast: 0.2, bumpStrength: 0.16, detailCenter: 0.61 },
+  wood: { roughnessVariation: 0.16, reliefContrast: 0.3, bumpStrength: 0.38, detailCenter: 0.875 },
+  metal: { roughnessVariation: 0.22, reliefContrast: 0.2, bumpStrength: 0.18, detailCenter: 0.875 },
+  fabric: { roughnessVariation: 0.12, reliefContrast: 0.22, bumpStrength: 0.24, detailCenter: 0.875 },
+  stone: { roughnessVariation: 0.2, reliefContrast: 0.38, bumpStrength: 0.5, detailCenter: 0.875 },
+  concrete: { roughnessVariation: 0.16, reliefContrast: 0.28, bumpStrength: 0.34, detailCenter: 0.875 },
+  roof: { roughnessVariation: 0.19, reliefContrast: 0.34, bumpStrength: 0.46, detailCenter: 0.875 },
+  foliage: { roughnessVariation: 0.13, reliefContrast: 0.2, bumpStrength: 0.22, detailCenter: 0.875 },
+  paintedMetal: { roughnessVariation: 0.24, reliefContrast: 0.2, bumpStrength: 0.2, detailCenter: 0.875 },
+  stonegateBrick: { roughnessVariation: 0.27, reliefContrast: 0.5, bumpStrength: 0.58, detailCenter: 0.875 },
 });
 
 export const AUDIO_ASSET_URLS: Readonly<Record<AudioAssetId, string>> = Object.freeze({
@@ -196,7 +198,7 @@ export function surfaceTexture(id: SurfaceAssetId): THREE.Texture {
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.colorSpace = THREE.NoColorSpace;
-  texture.anisotropy = 4;
+  texture.anisotropy = 8;
   textureCache.set(id, texture);
   return texture;
 }
@@ -220,6 +222,8 @@ export function applySurfaceAsset(
     shader.uniforms.uSurfaceStrength = { value: strength };
     shader.uniforms.uSurfaceRoughnessVariation = { value: pbr.roughnessVariation };
     shader.uniforms.uSurfaceReliefContrast = { value: pbr.reliefContrast };
+    shader.uniforms.uSurfaceBumpStrength = { value: pbr.bumpStrength };
+    shader.uniforms.uSurfaceDetailCenter = { value: pbr.detailCenter };
     shader.uniforms.uAssetWetness = surfaceEnvironmentUniforms.wetness;
     shader.uniforms.uAssetCloudiness = surfaceEnvironmentUniforms.cloudiness;
     shader.uniforms.uAssetDaylight = surfaceEnvironmentUniforms.daylight;
@@ -247,6 +251,8 @@ uniform float uSurfaceScale;
 uniform float uSurfaceStrength;
 uniform float uSurfaceRoughnessVariation;
 uniform float uSurfaceReliefContrast;
+uniform float uSurfaceBumpStrength;
+uniform float uSurfaceDetailCenter;
 uniform float uAssetWetness;
 uniform float uAssetCloudiness;
 uniform float uAssetDaylight;
@@ -254,19 +260,42 @@ uniform float uAssetRain;
 uniform float uAssetWarmth;
 varying vec3 vAssetLocalPosition;
 varying vec3 vAssetLocalNormal;
-varying vec3 vAssetWorldPosition;`,
+varying vec3 vAssetWorldPosition;
+
+float surfaceAssetDetail(vec3 samplePosition, vec3 sampleWeights) {
+  float sampleX = texture2D(uSurfaceAsset, samplePosition.yz * uSurfaceScale).r;
+  float sampleY = texture2D(uSurfaceAsset, samplePosition.xz * uSurfaceScale).r;
+  float sampleZ = texture2D(uSurfaceAsset, samplePosition.xy * uSurfaceScale).r;
+  return sampleX * sampleWeights.x + sampleY * sampleWeights.y + sampleZ * sampleWeights.z;
+}
+
+vec3 perturbSurfaceNormal(vec3 surfPosition, vec3 surfNormal, vec2 heightDerivative, float facing) {
+  vec3 sigmaX = normalize(dFdx(surfPosition));
+  vec3 sigmaY = normalize(dFdy(surfPosition));
+  vec3 r1 = cross(sigmaY, surfNormal);
+  vec3 r2 = cross(surfNormal, sigmaX);
+  float determinant = dot(sigmaX, r1) * facing;
+  vec3 gradient = sign(determinant) * (heightDerivative.x * r1 + heightDerivative.y * r2);
+  return normalize(abs(determinant) * surfNormal - gradient);
+}`,
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+  vec3 assetNormalWeights = abs(normalize(vAssetLocalNormal));
+  assetNormalWeights /= max(assetNormalWeights.x + assetNormalWeights.y + assetNormalWeights.z, 0.0001);
+  float assetBumpHeight = surfaceAssetDetail(${assetPosition}, assetNormalWeights);
+  vec2 assetHeightDerivative = vec2(dFdx(assetBumpHeight), dFdy(assetBumpHeight)) * uSurfaceBumpStrength;
+  normal = perturbSurfaceNormal(-vViewPosition, normal, assetHeightDerivative, faceDirection);`,
       )
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
   vec3 assetWeights = abs(normalize(vAssetLocalNormal));
   assetWeights /= max(assetWeights.x + assetWeights.y + assetWeights.z, 0.0001);
-  float assetX = texture2D(uSurfaceAsset, ${assetPosition}.yz * uSurfaceScale).r;
-  float assetY = texture2D(uSurfaceAsset, ${assetPosition}.xz * uSurfaceScale).r;
-  float assetZ = texture2D(uSurfaceAsset, ${assetPosition}.xy * uSurfaceScale).r;
-  float assetDetail = assetX * assetWeights.x + assetY * assetWeights.y + assetZ * assetWeights.z;
-  float assetRelief = (assetDetail - 0.875) * uSurfaceReliefContrast;
-  diffuseColor.rgb *= 1.0 + (assetDetail - 0.875) * uSurfaceStrength + assetRelief * 0.12;
+  float assetDetail = surfaceAssetDetail(${assetPosition}, assetWeights);
+  float assetRelief = (assetDetail - uSurfaceDetailCenter) * uSurfaceReliefContrast;
+  diffuseColor.rgb *= 1.0 + (assetDetail - uSurfaceDetailCenter) * uSurfaceStrength + assetRelief * 0.12;
   float assetWetNoise = sin(vAssetWorldPosition.x * 0.63 + vAssetWorldPosition.z * 0.37)
     * cos(vAssetWorldPosition.z * 0.51 - vAssetWorldPosition.y * 0.43) * 0.5 + 0.5;
   float assetUpward = max(normalize(vAssetLocalNormal).y, 0.0);
@@ -284,7 +313,7 @@ varying vec3 vAssetWorldPosition;`,
         '#include <roughnessmap_fragment>',
         `#include <roughnessmap_fragment>
   roughnessFactor = clamp(
-    roughnessFactor + (0.875 - assetDetail) * uSurfaceRoughnessVariation,
+    roughnessFactor + (uSurfaceDetailCenter - assetDetail) * uSurfaceRoughnessVariation,
     0.18,
     1.0
   );
